@@ -218,6 +218,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var roomClient: RoomClient?
     var roomRunning = RoomConfig()
     var roomMembersSent = -1
+    // ---- updates ----
+    let updater = Updater()
+    var updateTimer: Timer?
+    var manualCheck = false
+    var checkUpdates: Bool {
+        get { defaults.bool(forKey: "checkUpdates") }        // false until turned on in Settings
+        set { defaults.set(newValue, forKey: "checkUpdates"); if newValue { updater.check() } else { pushUpdate() } }
+    }
     var roomSharing: Bool {
         get { defaults.object(forKey: "roomSharing") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "roomSharing"); syncRoom() }
@@ -249,6 +257,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         NSApp.activate(ignoringOtherApps: true)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
         syncRoom()
+        updater.onChange = { [weak self] in self?.pushUpdate() }
+        // once a day, when turned on: at launch if the last look is a day old, then hourly re-checks of that
+        let daily = { [weak self] in
+            guard let self, self.checkUpdates else { return }
+            let last = self.defaults.double(forKey: "updateLastCheck")
+            if Date().timeIntervalSince1970 - last > 24 * 3600 || self.updater.status == "idle" { self.updater.check() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: daily)
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in daily() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.push() }
     }
 
@@ -300,6 +317,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         web.evaluateJavaScript("window.updateRoom && updateRoom(\(json))", completionHandler: nil)
     }
 
+    /// The update button's state, to the page. Nothing to show while checking is off and no
+    /// check was asked for by hand.
+    func pushUpdate() {
+        var o = updater.json
+        if !checkUpdates && !manualCheck && updater.status != "updating" { o["status"] = "idle" }
+        guard let d = try? JSONSerialization.data(withJSONObject: o), let json = String(data: d, encoding: .utf8) else { return }
+        web?.evaluateJavaScript("window.updateUpdate && updateUpdate(\(json))", completionHandler: nil)
+    }
+    @objc func checkForUpdates() {
+        manualCheck = true
+        updater.check { [weak self] in
+            guard let self else { return }
+            let a = NSAlert()
+            switch self.updater.status {
+            case "available": a.messageText = "Agent Office \(self.updater.latest) is available"
+                a.informativeText = "You have \(self.updater.current). Click Update at the top right of the office to install it."
+            case "current": a.messageText = "Agent Office is up to date"; a.informativeText = "You have \(self.updater.current), the latest release."
+            default: a.messageText = "Could not check for updates"; a.informativeText = self.updater.detail
+            }
+            a.runModal()
+        }
+    }
+
     func watchExits(_ snap: [String: Any]) {
         let pids = Set(((snap["sessions"] as? [[String: Any]]) ?? []).compactMap { $0["pid"] as? Int }.filter { $0 > 0 })
         for (pid, src) in exitWatch where !pids.contains(pid) { src.cancel(); exitWatch[pid] = nil }
@@ -325,8 +365,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
+        if body["update"] == "go" { updater.update() }
         if let r = body["room"] {
-            if r == "ready" { roomMembersSent = -1; pushRoom() }        // the page (re)loaded: send everything
+            if r == "ready" { roomMembersSent = -1; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
         }
         if let t = body["copy"], t.count < 200 {
@@ -508,6 +549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         app.addItem(withTitle: "Check Setup…", action: #selector(checkSetup), keyEquivalent: "")
+        app.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Hide Agent Office", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit Agent Office", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -523,7 +565,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 384),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 456),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -552,8 +594,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             lgn.frame = NSRect(x: 20, y: 342, width: 350, height: 22)
             let hint5 = NSTextField(wrappingLabelWithString: "Off by default. Starts Agent Office when you log in, so a room you host is there after a restart. macOS may ask you to allow it in Login Items.")
             hint5.frame = NSRect(x: 38, y: 296, width: 320, height: 44)
-            for h in [hint, hint2, hint3, hint4, hint5] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let upd = NSButton(checkboxWithTitle: "Check for updates once a day", target: self, action: #selector(toggleUpdates(_:)))
+            upd.state = checkUpdates ? .on : .off
+            upd.frame = NSRect(x: 20, y: 414, width: 350, height: 22)
+            let hint6 = NSTextField(wrappingLabelWithString: "Off by default. Asks GitHub for the latest release; a newer one shows an Update button that rebuilds the app from it and reopens it.")
+            hint6.frame = NSRect(x: 38, y: 368, width: 320, height: 44)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
@@ -565,6 +612,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
     @objc func toggleRoom(_ sender: NSButton) { roomSharing = sender.state == .on }
+    @objc func toggleUpdates(_ sender: NSButton) { checkUpdates = sender.state == .on }
     // Open at login: registers this app as a login item with macOS. When macOS wants the person
     // to approve it first, it opens Login Items in System Settings.
     @objc func toggleLogin(_ sender: NSButton) {
