@@ -254,7 +254,7 @@ function build(raw) {
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
            events, workspace: raw.workspace || "", slots: raw.slots || 5,
-           manager: raw.manager && (raw.manager.image || raw.manager.name) ? raw.manager : null };
+           manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null };
 }
 
 // ---------- arrivals, departures, chimes ----------
@@ -820,11 +820,20 @@ function drawLounge(L) {
   }
   // the espresso machine, while someone makes a coffee
   if (brewing && !energy) { px(21, y + 10, 1, 1 + frame % 2, "#6b4a32"); px(20 + frame % 2, y + 3 - frame % 3, 1, 2, "#ffffff70"); px(23, y + 7, 1, 1, "#5fbf7f"); }
-  label([mates ? `${mates} teammate${mates === 1 ? "" : "s"} here` : "", n ? `${n} on a break` : mates ? "" : "nobody on a break"].filter(Boolean).join(" · "),
+  label([mates ? `${mates + 1} people here` : "", n ? `${n} on a break` : mates ? "" : "nobody on a break"].filter(Boolean).join(" · "),
     (L.cols - 3) * P, (y + WALL + 2) * P, mates ? "#ffe7a8" : "#f1ebe2", 10, "right");
   const sorted = at.slice().sort((a, b) => a.spot.y - b.spot.y);
-  for (const { s, spot } of sorted) {
+  // someone doing something to someone walks over and stands next to them
+  const tNow = performance.now(), acting = new Map(), drawnAt = new Map();
+  actsOn = actsOn.filter(a => tNow - a.start < ACT_MS);
+  for (const a of actsOn) {
+    const to = at.find(x => x.s.id === entryOf(a.to));
+    if (to) acting.set(entryOf(a.from), { kind: "chat", x: to.spot.x + (to.spot.x + 20 < L.cols ? 9 : -9), y: Math.max(y + WALL + 4, to.spot.y - 2), act: true });
+  }
+  for (const entry of sorted) {
+    const s = entry.s, spot = acting.get(s.id) || entry.spot;
     const tk = team(s.cwd), p = placed(s.id, spot.x, spot.y, 7, y + WALL + 1, "lounge:" + spot.x + "," + spot.y);
+    drawnAt.set(s.id, p);
     const L2 = look(s.id, tk), wob = (frame + hash(s.id)) % 2;
     if (s.member) { drawMate(s, spot, p); continue; }
     if (p.walking) {
@@ -853,6 +862,10 @@ function drawLounge(L) {
     hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${doing}\n` +
         `comes back to a desk when it gets work\nclick: open it · right-click: more` });
+  }
+  for (const a of actsOn) {                 // the hug, the kiss, the pillow fight…
+    const f = drawnAt.get(entryOf(a.from)), t = drawnAt.get(entryOf(a.to));
+    if (f && t && !f.walking) drawAct(a.kind, f, t);
   }
   // the lounge's furniture is clickable: your character goes there
   if (loungePeople().some(x => x.self)) {
@@ -1083,6 +1096,14 @@ window.updateRoom = r => {
   if (before.status !== room.status && room.status === "joined") roomEvents.push({ t: now, text: `joined the room ${room.name}` });
   if (before.status === "joined" && room.status === "local") roomEvents.push({ t: now, text: `left the room ${room.name}: ${room.detail}` });
   if (roomEvents.length > 40) roomEvents = roomEvents.slice(-40);
+  if (r.members) for (const id of [...mateCuts.keys()]) if (!room.members.some(m => m.id === id)) mateCuts.delete(id);
+  if (r.acts) {
+    if (r.acts.length && Math.max(...r.acts.map(a => a.seq)) < lastActSeq) lastActSeq = 0;   // a new connection counts from 1
+    for (const a of r.acts) if (a.seq > lastActSeq) {
+      lastActSeq = a.seq;
+      if (now - a.at < 15) { startAct(a); roomEvents.push({ t: a.at, text: actText(a) }); }
+    }
+  }
   for (const m of room.members) {
     const c = mateCuts.get(m.id);
     if (m.avatar && (!c || c.src !== m.avatar)) {
@@ -1142,8 +1163,8 @@ function drawMate(s, spot, p) {
   if (s.self) hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, self: true,
     tip: `You · ${doing}${mySpot ? " (you sent yourself here)" : ""}\n` +
       (mySpot ? "click: back to your own routine" : "click the sofa, the coffee counter, the kitchen table\nor the high table to go there") });
-  else hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, chat: true,
-    tip: `${m.name}\nin the room ${room.name} · ${doing}\nclick: chat` });
+  else hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, mate: m,
+    tip: `${m.name}\nin the room ${room.name} · ${doing}\nclick: hug, high five, chat…` });
 }
 
 // the chat panel
@@ -1258,6 +1279,57 @@ function placeUpdate() {
 }
 updBtn.addEventListener("click", () => { if (upd.status !== "updating" && bridge) bridge.postMessage({ update: "go" }); });
 
+
+// ---------- things to do to a teammate ----------
+// Click a teammate in the lounge: hug, kiss, high five, pillow fight, bring a coffee, wave. The
+// room relays it to everyone, and every lounge plays it: you walk over, and the two of you hug.
+const ACT_MS = 6500;                      // walking over, then the act itself
+const ACTS = [["hug", "🤗 Hug", "hugged"], ["kiss", "😘 Kiss", "kissed"], ["highfive", "✋ High five", "high-fived"],
+              ["fight", "🥊 Pillow fight", "started a pillow fight with"], ["coffee", "☕ Bring a coffee", "brought a coffee to"],
+              ["wave", "👋 Wave", "waved at"]];
+let actsOn = [], lastActSeq = 0;
+function entryOf(memberId) { return memberId === room.you || memberId === "self" ? "self" : "m:" + memberId; }
+function startAct(a) { actsOn = actsOn.filter(x => x.from !== a.from).concat([Object.assign({}, a, { start: performance.now() })]); }
+function actText(a) {
+  const verb = (ACTS.find(x => x[0] === a.kind) || [0, 0, a.kind])[2];
+  const who = id => id === room.you ? null : id;
+  return `${who(a.from) ? a.fromName : "You"} ${verb} ${who(a.to) ? a.toName : "you"}`;
+}
+function mateMenu(ev, m) {
+  const items = ACTS.map(([kind, label]) => [label, () => {
+    if (bridge) bridge.postMessage({ act: kind + "|" + m.id });
+    else { const a = { from: room.you, to: m.id, kind, fromName: "You", toName: m.name, at: Date.now() / 1000 }; startAct(a); roomEvents.push({ t: a.at, text: actText(a) }); }
+  }]).concat([["💬 Chat", () => toggleChat(true)]]);
+  menu.innerHTML = `<div class="head">${esc(m.name)}</div>` + items.map((it, i) => `<button data-i="${i}">${esc(it[0])}</button>`).join("");
+  menu.querySelectorAll("button").forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.i][1](); });
+  menu.style.display = "block";
+  menu.style.left = Math.min(ev.clientX, window.innerWidth - menu.offsetWidth - 4) + "px";
+  menu.style.top = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
+}
+function heart(x, y, c) {
+  px(x, y, 2, 1, c); px(x + 3, y, 2, 1, c); px(x, y + 1, 5, 1, c); px(x + 1, y + 2, 3, 1, c); px(x + 2, y + 3, 1, 1, c);
+}
+// the act between two characters drawn at f and t (their top-left, art pixels)
+function drawAct(kind, f, t) {
+  const mx = Math.round((f.x + t.x) / 2) + 4, top = Math.min(f.y, t.y) - 3, k = energy ? 0 : frame;
+  if (kind === "hug" || kind === "kiss") {
+    for (let i = 0; i < (kind === "hug" ? 3 : 1); i++) heart(mx - 7 + i * 5, top - 3 - ((k + i * 2) % 5), kind === "kiss" ? "#e0405a" : "#ff7aa8");
+    if (kind === "kiss") text(k % 4 < 2 ? "mwah" : "💋", mx * P, (top - 11) * P, "#ffb3c4", 10, "center", "bold");
+  } else if (kind === "highfive") {
+    text("✋", mx * P, (top - 9) * P, "#fff", 14, "center");
+    if (k % 2) for (const [dx, dy] of [[-5, -2], [5, -2], [-4, 3], [4, 3]]) px(mx + dx, top + dy - 4, 1, 1, "#ffd27a");
+  } else if (kind === "fight") {
+    for (let i = 0; i < 9; i++) px(mx - 11 + (i * 5 + k * 3) % 22, top + 1 + (i * 7 + k * 2) % 13, 5, 4, i % 2 ? "#e2dccf" : "#bdb5a6");
+    text(["✦", "★", "✧"][k % 3], (mx - 8) * P, (top - 3) * P, "#ffd27a", 12, "center");
+    text(k % 2 ? "POW!" : "BAM!", (mx + 6) * P, (top - 7 - k % 2) * P, "#ff6b5b", 11, "center", "bold");
+  } else if (kind === "coffee") {
+    px(t.x + (f.x < t.x ? -2 : 8), t.y + 8, 2, 2, "#f4efe4"); if (k % 3 === 0) px(t.x + (f.x < t.x ? -2 : 8), t.y + 6, 1, 1, "#ffffff90");
+    text("☕", mx * P, (top - 9) * P, "#fff", 12, "center");
+  } else if (kind === "wave") {
+    text("👋", (f.x + 4) * P + (k % 2 ? 2 : -2), (f.y - 10) * P, "#fff", 13, "center");
+  }
+}
+
 // ---------- interaction ----------
 function hitAt(ev) {
   const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
@@ -1278,7 +1350,7 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal || h.goto || h.session || h.chat || h.stats || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -1372,7 +1444,7 @@ function renderStats() {
 wrap.addEventListener("scroll", closeMenu);
 
 function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
-window.updateOffice = raw => { lastRaw = raw; loadManager(raw.manager && raw.manager.image); const next = build(raw); track(next); snap = next; renderStats(); };
+window.updateOffice = raw => { lastRaw = raw; if (raw.manager && raw.manager.image !== undefined) loadManager(raw.manager.image); const next = build(raw); track(next); snap = next; renderStats(); };
 window.addEventListener("resize", () => snap && draw());
 // At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
 let lastDraw = 0;

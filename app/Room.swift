@@ -30,6 +30,7 @@ let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
 let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
+let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave"]   // what one member can do to another
 
 struct RoomConfig: Equatable {
     var name = ""
@@ -141,6 +142,8 @@ final class RoomHost {
     private func accept(_ c: NWConnection) {
         var ip = "?"
         if case .hostPort(let h, _) = c.endpoint { ip = "\(h)" }
+        failures = failures.filter { $0.value.until > Date() || $0.value.n < 3 && $0.value.until == .distantPast }
+        if failures.count > 1000 { failures = [:] }                          // never grows without bound
         if let f = failures[ip], f.until > Date() { c.cancel(); return }      // too many wrong passwords
         if peers.count >= ROOM_MAX_MEMBERS { c.cancel(); return }
         let p = Peer(c, ip: ip)
@@ -196,6 +199,15 @@ final class RoomHost {
             let text = cleanText(m["text"] as? String ?? "")
             guard !text.isEmpty else { return }
             broadcast(["t": "msg", "id": p.id, "from": p.name, "text": text, "at": now.timeIntervalSince1970])
+        case "act":
+            // a hug, a high five… for another member; counted with chat messages against the rate limit
+            let now = Date()
+            p.said = p.said.filter { now.timeIntervalSince($0) < 10 } + [now]
+            guard p.said.count <= 5, !p.name.isEmpty else { return }
+            let kind = m["kind"] as? String ?? "", to = m["to"] as? String ?? ""
+            guard ROOM_ACTS.contains(kind), to != p.id, let target = peers[to], !target.name.isEmpty else { return }
+            broadcast(["t": "act", "from": p.id, "to": to, "kind": kind, "fromName": p.name, "toName": target.name,
+                       "at": now.timeIntervalSince1970])
         default: break
         }
     }
@@ -212,6 +224,7 @@ final class RoomHost {
 // ---------- a member (the host is one too) ----------
 final class RoomClient {
     struct Message { let id: String, from: String, text: String, at: Double }
+    struct Act { let seq: Int, from: String, to: String, kind: String, fromName: String, toName: String, at: Double }
     let cfg: RoomConfig
     var profile: () -> (name: String, avatar: String)
     private var spot = ""                                 // the lounge spot this member chose, "" = routine
@@ -227,6 +240,8 @@ final class RoomClient {
     private(set) var you = ""
     private(set) var members: [String: [String: Any]] = [:]
     private(set) var messages: [Message] = []
+    private(set) var acts: [Act] = []                     // the latest few, for the page to play
+    private var actSeq = 0
     private(set) var membersVersion = 0
     private(set) var nextTry: Date?
 
@@ -293,6 +308,12 @@ final class RoomClient {
             }
         }
     }
+    /// Do something to another member: one of ROOM_ACTS.
+    func act(_ kind: String, to id: String) {
+        q.async { guard ROOM_ACTS.contains(kind), let c = self.conn, let k = self.key,
+                        let box = seal(["t": "act", "kind": kind, "to": id], k) else { return }
+            wsSend(c, box) }
+    }
     func say(_ text: String) {
         let t = cleanText(text)
         q.async { guard !t.isEmpty, let c = self.conn, let k = self.key, let box = seal(["t": "say", "text": t], k) else { return }
@@ -353,6 +374,13 @@ final class RoomClient {
             }
         case "leave":
             if let id = m["id"] as? String { set { $0.members[id] = nil; $0.membersVersion += 1 } }
+        case "act":
+            if let from = m["from"] as? String, let to = m["to"] as? String, let kind = m["kind"] as? String, ROOM_ACTS.contains(kind) {
+                let fn = cleanName(m["fromName"] as? String ?? ""), tn = cleanName(m["toName"] as? String ?? "")
+                let at = m["at"] as? Double ?? Date().timeIntervalSince1970
+                set { $0.actSeq += 1; $0.acts.append(Act(seq: $0.actSeq, from: from, to: to, kind: kind, fromName: fn, toName: tn, at: at))
+                      if $0.acts.count > 10 { $0.acts.removeFirst() } }
+            }
         case "msg":
             if let id = m["id"] as? String, let from = m["from"] as? String, let text = m["text"] as? String {
                 let at = m["at"] as? Double ?? Date().timeIntervalSince1970
@@ -397,7 +425,9 @@ final class RoomClient {
         var o: [String: Any] = ["status": status, "detail": detail, "name": cfg.name, "you": you, "host": cfg.host,
                                 "alwaysJoin": cfg.alwaysJoin, "nextTry": nextTry?.timeIntervalSince1970 ?? 0,
                                 "count": members.count,
-                                "messages": messages.map { ["id": $0.id, "from": $0.from, "text": $0.text, "at": $0.at] }]
+                                "messages": messages.map { ["id": $0.id, "from": $0.from, "text": $0.text, "at": $0.at] },
+                                "acts": acts.map { ["seq": $0.seq, "from": $0.from, "to": $0.to, "kind": $0.kind,
+                                                    "fromName": $0.fromName, "toName": $0.toName, "at": $0.at] }]
         if withMembers { o["members"] = Array(members.values) }
         return o
     }
