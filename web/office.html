@@ -503,7 +503,7 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = snap.manager ? 102 : 82, teamW = 64, loungeH = 70;
+  const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
@@ -974,8 +974,10 @@ function drawManager(L) {
   if (wk && wk.resetsAt) label("week " + untilText(wk.resetsAt), m.cx * P, (m.deskY + 28.5) * P, "#bdb3a8", 10, "center");
   const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
   const subsN = snap.all.reduce((t, s) => t + agentsOf(s).length, 0);
-  label([lives.length ? "$" + cost.toFixed(2) : "", `${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
-    m.cx * P, (m.deskY + (wk && wk.resetsAt ? 34.5 : 28.5)) * P, "#d9cfc3", 10, "center");
+  let ly = m.deskY + (wk && wk.resetsAt ? 34.5 : 28.5);
+  if (lives.length) { label("$" + cost.toFixed(2) + " spent", m.cx * P, ly * P, "#e3c74f", 10, "center"); ly += 6; }
+  label([`${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
+    m.cx * P, ly * P, "#d9cfc3", 10, "center");
   const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
     tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
