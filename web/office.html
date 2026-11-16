@@ -33,6 +33,11 @@
   #chatBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
   #chatBtn.unread { border-color: #ffb347; color: #ffc370; }
+  #updBtn { position: fixed; top: 6px; z-index: 4; font: 11px Menlo, monospace; color: #10241a; background: #8fd6b4;
+    border: 1px solid #5fbf7f; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
+  #updBtn:hover { background: #a6e3c6; }
+  #updBtn.busy { background: #2a2329e6; color: var(--text); border-color: #5a4a3e; cursor: progress; }
+  #updBtn.failed { background: #3a2226; color: #ff9a94; border-color: #a04848; }
   #chat { position: fixed; top: 34px; right: 10px; width: min(340px, calc(100vw - 20px)); bottom: calc(var(--log-h, 92px) + 8px);
     z-index: 5; display: none; flex-direction: column; background: #1f1a22f5; border: 1px solid #4a3d36; border-radius: 8px;
     box-shadow: 0 8px 30px #0008; overflow: hidden; }
@@ -91,6 +96,7 @@
 <div id="demo"></div>
 <button id="statsBtn" title="Usage and session details (S)">Stats</button>
 <button id="chatBtn" title="The shared room's chat (C)">Chat</button>
+<button id="updBtn"></button>
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
   <div id="msgs"></div>
@@ -1154,6 +1160,7 @@ function toggleChat(on) {
 }
 function renderChat() {
   chatBtn.style.display = room.status === "off" || chatWideNow ? "none" : "block";
+  if (typeof placeUpdate === "function") placeUpdate();
   if (room.status === "off" && chatOpen) toggleChat(false);
   const open = chatOpen || docked;
   const unread = open ? 0 : room.messages.slice(seenMsgs).filter(m => m.id !== room.you).length;
@@ -1196,6 +1203,29 @@ sayForm.addEventListener("submit", ev => {
   sayIn.value = "";
 });
 if (bridge) bridge.postMessage({ room: "ready" });
+
+
+// ---------- updates ----------
+// The app checks GitHub once a day when that is turned on in Settings; a newer release shows this
+// button, and a click rebuilds the app from it and reopens it.
+const updBtn = document.getElementById("updBtn");
+let upd = { status: "idle" };
+window.updateUpdate = u => { upd = u; placeUpdate(); };
+function placeUpdate() {
+  const show = ["available", "updating", "failed"].includes(upd.status) && upd.latest;
+  updBtn.style.display = show ? "block" : "none";
+  if (!show) return;
+  updBtn.className = upd.status === "updating" ? "busy" : upd.status === "failed" ? "failed" : "";
+  updBtn.textContent = upd.status === "updating" ? "Updating… " + (upd.detail || "")
+    : upd.status === "failed" ? "Update failed · retry" : `⬆ Update to v${upd.latest}`;
+  updBtn.title = upd.status === "failed" ? upd.detail
+    : upd.canBuild ? `You have v${upd.current}. Rebuilds Agent Office from v${upd.latest} and reopens it.`
+    : `You have v${upd.current}. Opens the release page.`;
+  // left of the Stats button, and of the Chat button when that shows
+  const chatShown = chatBtn.style.display === "block";
+  updBtn.style.right = (10 + statsBtn.offsetWidth + 6 + (chatShown ? chatBtn.offsetWidth + 6 : 0)) + "px";
+}
+updBtn.addEventListener("click", () => { if (upd.status !== "updating" && bridge) bridge.postMessage({ update: "go" }); });
 
 // ---------- interaction ----------
 function hitAt(ev) {

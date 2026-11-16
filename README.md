@@ -220,6 +220,7 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ## Settings
 
 Agent Office → Settings… (⌘,):
+- **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
   that hosts a room, so the room is back after a restart. macOS may ask you to approve it in
@@ -232,6 +233,24 @@ The rest are off by default:
 
 The window remembers its size and position. **Check Setup…** in the same menu says whether the
 hook is registered for every event and when a session last reported.
+
+## Updating
+
+By hand: `git pull && scripts/build-app.sh` in your checkout, then reopen the app.
+
+Or let the app do it: tick Settings → **Check for updates once a day** (or use Agent Office →
+**Check for Updates…** once). It asks GitHub for the repository's latest release and compares it
+with the release your app was built from; when there is a newer one, an **Update to vX** button
+appears at the top right. Clicking it:
+
+1. fetches the release into the checkout the app was built from and moves it there with
+   `git merge --ff-only <tag>`, so it never overwrites anything: local commits or uncommitted
+   changes in the way stop the update with the reason and the manual command;
+2. runs `scripts/build-app.sh` into the folder the app is in;
+3. reopens the new app.
+
+The steps are logged to `~/Library/Logs/agent-office-update.log`. The hook runs from the checkout,
+so it is updated in the same move. The companion mod is a plugin and updates through Claude Code.
 
 ## Configuration
 

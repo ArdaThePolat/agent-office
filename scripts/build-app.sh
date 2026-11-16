@@ -8,13 +8,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${1:-$HOME/Applications}"
 APP="$DEST/Agent Office.app"
+# what the in-app updater compares and updates: the newest release tag reachable from this commit,
+# the GitHub repository of the checkout's origin, and the checkout itself
+VERSION="$(git -C "$ROOT" describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0)"; VERSION="${VERSION#v}"
+REPO="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')"
+xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
 B="$BUILD/Agent Office.app/Contents"
 mkdir -p "$B/MacOS" "$B/Resources"
 
 # the file with the top-level startup code has to be called main.swift when there are several
 cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
-swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement
+swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement
 cp "$ROOT/web/office.html" "$B/Resources/"
 
 swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
@@ -35,7 +40,9 @@ cat > "$B/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>AgentOffice</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>$(xml "$VERSION")</string>
+  <key>AgentOfficeRepo</key><string>$(xml "$REPO")</string>
+  <key>AgentOfficeSource</key><string>$(xml "$ROOT")</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>The shared room: Agent Office finds your team's room on the local network and joins it, so your lounges are one. Only names, pictures and chat are shared.</string>
