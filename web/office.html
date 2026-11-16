@@ -145,8 +145,10 @@ function loadHidden(raw) {
   if (hiddenLoaded) return; hiddenLoaded = true;
   try { hidden = JSON.parse(bridge ? (raw.hidden || "{}") : (localStorage.getItem("agentOffice.hidden") || "{}")) || {}; } catch (e) { hidden = {}; }
 }
-function hideSession(s) { hidden[s.id] = { state: s.state || "", since: s.since || 0, title: s.title || "" }; saveHidden(); refresh(); }
-function unhideAll() { hidden = {}; saveHidden(); refresh(); }
+// release = the same, but the agent goes to the lounge and its desk is emptied
+function hideSession(s, release) { hidden[s.id] = { state: s.state || "", since: s.since || 0, title: s.title || "", release: !!release }; saveHidden(); refresh(); }
+function backToDesk(s) { delete hidden[s.id]; saveHidden(); refresh(); }
+function unhideAll() { for (const id of Object.keys(hidden)) if (!hidden[id].release) delete hidden[id]; saveHidden(); refresh(); }
 
 // pr-watch's log line → a general event, or null
 function reviewEvent(line) {
@@ -164,7 +166,7 @@ function reviewEvent(line) {
   return null;
 }
 
-let lastRaw = null;
+let lastRaw = null, layoutCache = null;
 function build(raw) {
   loadHidden(raw);
   const reviews = (raw.reviews || []).map(l => l.split("\t")).filter(f => f.length >= 8)
@@ -178,16 +180,25 @@ function build(raw) {
   let changed = false;
   const ids = new Set(sessions.map(s => s.id));
   for (const id of Object.keys(hidden)) if (!ids.has(id)) { delete hidden[id]; changed = true; }
-  const isHidden = s => {
-    const h = hidden[s.id]; if (!h) return false;
-    if (h.state === (s.state || "") && h.since === (s.since || 0)) return true;
-    delete hidden[s.id]; changed = true; return false;
+  // where each session is: hidden, in the lounge (released by you, or idle with nothing to do),
+  // or at its desk. A hidden or released session comes back the moment its state changes.
+  const now = raw.now || Date.now() / 1000;
+  const idle = s => !s.state || s.state === "idle" || (s.state === "done" && s.since && now - s.since > DONE_FRESH);
+  const where = s => {
+    const h = hidden[s.id];
+    if (h) {
+      if (h.state === (s.state || "") && h.since === (s.since || 0)) return h.release ? "lounge" : "hidden";
+      delete hidden[s.id]; changed = true;
+    }
+    return idle(s) ? "lounge" : "desk";
   };
   // people who need you first, then working, then the rest; only the first MAX_SESSIONS are drawn
   const rank = { waiting: 0, crashed: 1, done: 2, working: 3, compacting: 3, background: 3, idle: 4 };
   const all = sessions.filter(s => s.kind !== "review");
-  const visible = all.filter(s => !isHidden(s))
+  const at = new Map(all.map(s => [s.id, where(s)]));
+  const visible = all.filter(s => at.get(s.id) === "desk")
     .sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || (b.updated || 0) - (a.updated || 0));
+  const lounge = all.filter(s => at.get(s.id) === "lounge").sort((a, b) => hash(a.id) - hash(b.id));
   if (changed) saveHidden();
   const events = [];
   for (const l of raw.officeEvents || []) { const f = l.split("\t"); if (f.length >= 3) events.push({ t: +f[0], text: f.slice(2).join(" ") }); }
@@ -195,7 +206,7 @@ function build(raw) {
   events.sort((a, b) => b.t - a.t);
   energy = !!(raw.settings && raw.settings.energySaver);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
-           overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.length - visible.length,
+           overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
            events, workspace: raw.workspace || "", slots: raw.slots || 5,
            manager: raw.manager && (raw.manager.image || raw.manager.name) ? raw.manager : null };
 }
@@ -209,6 +220,7 @@ function track(next) {
   next.reviews.forEach(r => add("r:" + r.slug + r.id));
   next.manualReviews.forEach(s => add("r:" + s.id));
   next.others.forEach(s => { add(s.id); Object.keys(s.subagents || {}).forEach(a => add(a, true)); });
+  next.lounge.forEach(s => add(s.id));
   for (const [id, a] of actors) if (!ids.has(id) && a.gone === null) a.gone = seenOnce && a.last && !energy ? t : t - WALK_MS;
   for (const [id, a] of actors) if (a.gone !== null && t - a.gone > WALK_MS) actors.delete(id);
   // chimes: a session that has just started waiting for you, or just finished its turn
@@ -219,13 +231,27 @@ function track(next) {
   lastState.clear(); next.all.forEach(s => lastState.set(s.id, s.state));
   seenOnce = true;
 }
-// where a character is drawn: walking from the room's door while arriving
-function placed(id, x, y, doorX, doorY) {
+// where a character is drawn: walking from the room's door while arriving, and from where it was
+// when it changes zone (its desk ↔ the lounge)
+const MOVE_MS = 2000;
+function placed(id, x, y, doorX, doorY, zone) {
   const a = actors.get(id), t = performance.now();
-  if (a) a.last = { x, y, doorX, doorY };
-  if (!a || t - a.born >= WALK_MS) return { x, y, walking: false };
-  const k = (t - a.born) / WALK_MS;
-  return { x: Math.round(doorX + (x - doorX) * k), y: Math.round(doorY + (y - doorY) * k), walking: true };
+  if (!a) return { x, y, walking: false };
+  if (zone) {
+    if (a.zone && a.zone !== zone && a.drawn && !energy) { a.from = a.drawn; a.moved = t; }
+    a.zone = zone;
+  }
+  a.last = { x, y, doorX, doorY };
+  let r = { x, y, walking: false };
+  if (a.from && t - a.moved < MOVE_MS) {
+    const k = (t - a.moved) / MOVE_MS;
+    r = { x: Math.round(a.from.x + (x - a.from.x) * k), y: Math.round(a.from.y + (y - a.from.y) * k), walking: true };
+  } else if (t - a.born < WALK_MS) {
+    const k = (t - a.born) / WALK_MS;
+    r = { x: Math.round(doorX + (x - doorX) * k), y: Math.round(doorY + (y - doorY) * k), walking: true };
+  }
+  a.drawn = { x: r.x, y: r.y };
+  return r;
 }
 
 // ---------- drawing primitives (art pixels) ----------
@@ -388,13 +414,16 @@ function paintRooms(L) {
   sign("OTHERS", 13, oy + 3);
   // team rugs
   for (const c of L.cells) rug(c.x - 3, c.y + 1, L.teamW - 6, c.h - 4, c.rug);
+  paintLounge(L, sky);
   // night: the whole office a little dimmer
-  if (sky.kind === "night") px(0, 0, cols, L.reviewH + L.othersH + 3, "rgba(12,12,40,0.16)");
+  if (sky.kind === "night") px(0, 0, cols, L.ly + L.loungeH, "rgba(12,12,40,0.16)");
   // room edges
   px(0, 0, 1, L.reviewH, "#2c221e"); px(cols - 1, 0, 1, L.reviewH, "#2c221e");
   if (L.mw) px(L.mw, 0, 2, L.reviewH, "#2c221e");
   px(0, oy, 1, L.othersH, "#2c221e"); px(cols - 1, oy, 1, L.othersH, "#2c221e");
   px(0, L.reviewH, cols, 3, "#2c221e");
+  px(0, L.ly - 3, cols, 3, "#2c221e");
+  px(0, L.ly, 1, L.loungeH, "#2c221e"); px(cols - 1, L.ly, 1, L.loungeH, "#2c221e");
 }
 
 // ----- things drawn every frame -----
@@ -474,21 +503,21 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = 82, teamW = 64;
+  const reviewH = snap.manager ? 98 : 82, teamW = 64, loungeH = 66;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
   const rowH = rowsOf.map(r => r.some(s => agentsOf(s).length) ? 70 : 52);
   const contentH = WALL + 6 + rowH.reduce((a, b) => a + b, 0) + (snap.overflow || snap.hiddenCount ? 9 : 0);
   const oy = reviewH + 3;
-  const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1);
+  const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1 - loungeH - 3), ly = oy + othersH + 3;
   // the manager's room takes the top-left corner when one is configured and the window is wide enough
   const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
-  return { W, cols, H: (oy + othersH) * P, reviewH, oy, othersH, teamW, benchW, bx, mw, rx, cells, endY: ry };
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, cells, endY: ry };
 }
 
 function draw() {
@@ -496,7 +525,7 @@ function draw() {
   hits = [];
   if (!snap) { const W = Math.max(320, wrap.clientWidth); cv.width = W * dpr; cv.height = 60 * dpr; cv.style.width = W + "px"; cv.style.height = "60px";
     g = ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); text("waiting for data…", 12, 20, "#a79d93", 11); return; }
-  const L = layout(), W = L.W, H = L.H;
+  const L = layout(), W = L.W, H = L.H; layoutCache = L;
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
@@ -557,7 +586,7 @@ function draw() {
   const needs = cnt("waiting") + cnt("crashed");
   label(`${needs ? "⚠ " : ""}needs you ${needs} · working ${cnt("working") + cnt("compacting") + cnt("background")} · done ${cnt("done")}`,
     (cols - 3) * P, (oy + WALL + 2) * P, needs ? "#ffc370" : "#f1ebe2", 10, "right");
-  if (!snap.others.length) label(snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
+  if (!snap.others.length) label(snap.lounge.length ? "everyone is on a break" : snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
     24 * P, (oy + WALL + 8) * P, "#d9cfc3", 10);
   for (const c of L.cells) {
     const s = c.s, x = c.x, y = c.y, st = shown(s), tk = team(s.cwd), cx = x + 26;
@@ -569,7 +598,7 @@ function draw() {
     const subs = agentsOf(s);
     // head agent at the big desk
     chair(cx - 4, y + 7, 1);
-    const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1);
+    const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1, "desk");
     person(hp.x, hp.y, s.id, tk, st, false, hp.walking);
     desk(cx - 9, y + 23, 18, st === "working" || st === "compacting" || st === "background" ? "on" : st === "waiting" ? "wait" : st === "crashed" ? "err" : "off", false, hash(s.id));
     if (!hp.walking && st !== "working") bubble(cx + 5, y + 1, st);
@@ -615,6 +644,8 @@ function draw() {
   if (snap.hiddenCount) notes.push(`${snap.hiddenCount} hidden · right-click to show`);
   if (notes.length) label(notes.join(" · "), 6 * P, (L.endY + 1) * P, "#d9cfc3", 9);
 
+  drawLounge(L);
+
   // ----- people walking out -----
   const t = performance.now();
   for (const [id, a] of actors) if (a.gone !== null && a.last && t - a.gone < WALK_MS) {
@@ -630,6 +661,120 @@ function draw() {
   if (logEl.dataset.html !== html) { logEl.innerHTML = html; logEl.dataset.html = html; }
 }
 
+
+
+// ---------- the lounge ----------
+// Where agents with nothing to do go: sessions that are idle, and any you release (right-click →
+// Release). A kitchen with a coffee counter and a table, a high table to chat at, and a sofa in
+// front of a games console. They walk back to a desk the moment they get work.
+function loungeGeo(L) {
+  const y = L.ly, cols = L.cols;
+  const kw = Math.max(48, Math.floor(cols * 0.36)), gw = Math.max(46, Math.floor(cols * 0.3)), gx = cols - gw;
+  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(kw * 0.66);
+  const spots = [
+    { kind: "game", x: tvX - 14, y: y + 33 }, { kind: "game", x: tvX - 4, y: y + 33 }, { kind: "game", x: tvX + 6, y: y + 33 },
+    { kind: "coffee", x: 17, y: y + WALL + 2 }, { kind: "coffee", x: 29, y: y + WALL + 2 },
+    { kind: "table", x: tx - 14, y: y + 34 }, { kind: "table", x: tx + 6, y: y + 34 },
+    { kind: "chat", x: chatX - 15, y: y + 31 }, { kind: "chat", x: chatX + 7, y: y + 31 }, { kind: "chat", x: chatX - 4, y: y + 25 },
+  ];
+  return { y, kw, gx, gw, chatX, tvX, tx, spots };
+}
+function paintLounge(L, sky) {
+  const G = loungeGeo(L), y = G.y, cols = L.cols, H = L.loungeH;
+  wall(0, y, cols, "#8fae9f", "#6b8b7d");
+  // floors: kitchen tiles, a wooden middle, a soft rug by the console
+  for (let j = y + WALL; j < y + H; j += 4) for (let i = 0; i < G.kw; i += 4)
+    px(i, j, 4, 4, ((i + j) / 4) % 2 ? "#e2d8c6" : "#b9aa92"); px(i, j, 4, 1, "#ffffff18");
+  woodFloor(G.kw, y + WALL, cols - G.kw, H - WALL);
+  px(G.gx + 3, y + WALL + 14, G.gw - 6, H - WALL - 17, "#3f6f7a"); px(G.gx + 4, y + WALL + 15, G.gw - 8, H - WALL - 19, "#4b8290");
+  for (let k = 0; k < 3; k++) px(0, y + WALL + k, cols, 1, `rgba(0,0,0,${0.16 - k * 0.05})`);
+  // kitchen: upper cabinets, a fridge, the counter with a sink and a coffee machine
+  px(14, y + 3, Math.min(G.kw - 22, 40), 6, "#e7dccb"); for (let i = 14; i < 14 + Math.min(G.kw - 22, 40); i += 8) px(i, y + 3, 1, 6, "#c2b49d");
+  px(2, y + 4, 10, 24, "#e9eef0"); px(2, y + 4, 10, 1, "#ffffff"); px(2, y + 13, 10, 1, "#b9c3c7"); px(10, y + 7, 1, 4, "#9aa5aa"); px(10, y + 16, 1, 6, "#9aa5aa");
+  const cw = G.kw - 18;
+  px(13, y + 11, cw, 2, "#7a6a5a"); px(13, y + 13, cw, 6, "#b59874"); for (let i = 13; i < 13 + cw; i += 9) px(i, y + 13, 1, 6, "#8f7558");
+  px(13, y + 19, cw, 1, "#00000035");
+  coffee(18, y + 11); px(32, y + 10, 8, 1, "#9aa5aa"); px(35, y + 8, 1, 2, "#9aa5aa");      // coffee machine, sink + tap
+  if (cw > 40) { px(13 + cw - 12, y + 5, 10, 6, "#3a3f4b"); px(13 + cw - 11, y + 6, 6, 4, "#1d2330"); px(13 + cw - 4, y + 7, 1, 2, "#8fd6b4"); }   // microwave
+  // middle: a window, a water cooler, a plant
+  windowAt(G.chatX - 7, y + 4, 14, 7, sky, 17);
+  px(G.kw + 4, y + 9, 6, 12, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 5, "#9fd0ea"); px(G.kw + 6, y + 13, 2, 1, "#5b8def");
+  plant(G.gx - 11, y + WALL + 6, true);
+  // games corner: a TV on the wall, a console below it
+  const tw = Math.min(28, G.gw - 12), tvl = G.tvX - Math.floor(tw / 2);
+  px(tvl - 1, y + 2, tw + 2, 13, "#15161a");
+  px(G.tvX - 9, y + WALL, 18, 5, "#5e4232"); px(G.tvX - 9, y + WALL, 18, 1, "#7a5a44");
+  px(G.tvX - 3, y + WALL + 1, 7, 2, "#f2f2f4"); px(G.tvX - 3, y + WALL + 1, 7, 1, "#ffffff"); px(G.tvX + 3, y + WALL + 2, 1, 1, "#5b8def");
+  sign("LOUNGE", G.kw + 14, y + 3);
+}
+function drawLounge(L) {
+  const G = loungeGeo(L), y = G.y, n = snap.lounge.length;
+  // the TV: a little racing game while anyone is playing
+  const tw = Math.min(28, G.gw - 12), tvl = G.tvX - Math.floor(tw / 2);
+  const players = snap.lounge.slice(0, 3).length && assign().some(a => a.spot.kind === "game");
+  px(tvl, y + 3, tw, 11, players ? "#2b4f8f" : "#1d2026");
+  if (players) {
+    px(tvl, y + 10, tw, 4, "#3f8f4f");
+    for (let i = 0; i < tw; i += 4) px(tvl + (i + frame * 2) % tw, y + 11, 2, 1, "#e9e3d6");
+    px(tvl + (frame * 3) % (tw - 4), y + 8, 4, 2, "#e06c6c"); px(tvl + (frame * 2 + 9) % (tw - 4), y + 7, 4, 2, "#e3c74f");
+    px(tvl + 3, y + 4, 3, 2, "#ffffff");
+  }
+  label(n ? `${n} on a break` : "nobody on a break", (L.cols - 3) * P, (y + WALL + 2) * P, "#f1ebe2", 10, "right");
+  const placedAt = assign();
+  for (const { s, spot } of placedAt) {
+    const tk = team(s.cwd), p = placed(s.id, spot.x, spot.y, 7, y + WALL + 1, "lounge");
+    const L2 = look(s.id, tk);
+    if (p.walking) { person(p.x, p.y, s.id, tk, "working", false, true); continue; }
+    if (spot.kind === "game") {                 // from behind, on the sofa, controller in hand
+      px(p.x + 1, p.y, 6, 6, L2.hair); px(p.x + 1, p.y + 5, 6, 1, shade(L2.hair, -0.25));
+      px(p.x, p.y + 6, 8, 6, L2.shirt); px(p.x, p.y + 6, 8, 1, shade(L2.shirt, 0.2));
+      px(p.x - 1, p.y + 8 + (frame + hash(s.id)) % 2, 2, 2, L2.skin); px(p.x + 7, p.y + 8 + (frame + hash(s.id) + 1) % 2, 2, 2, L2.skin);
+    } else if (spot.kind === "table") {
+      chair(p.x, p.y, 1); person(p.x, p.y, s.id, tk, "lounge", false, false);
+    } else {                                    // standing: coffee in hand, or chatting
+      person(p.x, p.y, s.id, tk, "lounge", false, false);
+      px(p.x + 1, p.y + 12, 2, 3, L2.pants); px(p.x + 5, p.y + 12, 2, 3, L2.pants);
+      px(p.x + 1, p.y + 15, 2, 1, "#2a2320"); px(p.x + 5, p.y + 15, 2, 1, "#2a2320");
+      if (spot.kind === "coffee") { px(p.x + 8, p.y + 8, 2, 2, "#f4efe4"); px(p.x + 10, p.y + 8, 1, 1, "#f4efe4"); if (frame % 3 === 0) px(p.x + 8, p.y + 6, 1, 1, "#ffffff80"); }
+    }
+    hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
+      tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${
+        { game: "playing a game", coffee: "having a coffee", table: "having a snack", chat: "chatting" }[spot.kind]}\n` +
+        `comes back to a desk when it gets work\nclick: open it · right-click: more` });
+  }
+  // furniture in front of the people
+  const sx = G.tvX - 18;
+  px(sx, y + 41, 36, 7, "#6f5a8f"); px(sx, y + 41, 36, 1, "#8873a8"); px(sx - 2, y + 39, 3, 11, "#5e4b7c"); px(sx + 35, y + 39, 3, 11, "#5e4b7c");
+  px(sx, y + 48, 36, 2, "#5e4b7c"); px(sx, y + 50, 36, 1, "#00000035");
+  px(G.tx - 9, y + 45, 18, 2, "#a5794f"); px(G.tx - 9, y + 45, 18, 1, "#c49a6c"); px(G.tx - 1, y + 47, 2, 7, "#7a5a3c"); px(G.tx - 4, y + 54, 8, 1, "#5e4232");
+  px(G.tx - 6, y + 44, 2, 1, "#f4efe4"); px(G.tx + 3, y + 44, 3, 1, "#e3c74f");
+  px(G.chatX - 6, y + 39, 13, 2, "#3a3f4b"); px(G.chatX - 6, y + 39, 13, 1, "#565d6d"); px(G.chatX, y + 41, 1, 9, "#3a3f4b"); px(G.chatX - 3, y + 50, 7, 1, "#2c303a");
+  px(G.chatX - 3, y + 38, 2, 1, "#f4efe4"); px(G.chatX + 2, y + 38, 2, 1, "#f4efe4");
+  // whoever is chatting takes turns speaking
+  const talkers = placedAt.filter(a => a.spot.kind === "chat");
+  if (talkers.length > 1 && !energy) {
+    const t = talkers[Math.floor(frame / 3) % talkers.length].spot;
+    px(t.x + 6, t.y - 6, 9, 5, "#f4efe4"); px(t.x + 7, t.y - 1, 2, 1, "#f4efe4");
+    for (let k = 0; k < 3; k++) if (frame % 3 >= k) px(t.x + 8 + k * 2, t.y - 4, 1, 1, "#1b1820");
+  }
+  if (n > G.spots.length) label(`+${n - G.spots.length} more`, (G.kw + 3) * P, (y + L.loungeH - 7) * P, "#d9cfc3", 9);
+}
+// lounge spots: everyone keeps a favourite activity (by id) and takes the first free spot of it
+let assignKey = "", assignVal = [];
+function assign() {
+  const L = layoutCache, key = snap.lounge.map(s => s.id).join(",") + "|" + (L ? L.cols + "," + L.ly : "");
+  if (key === assignKey) return assignVal;
+  const spots = L ? loungeGeo(L).spots : [], free = spots.map(() => true), kinds = ["game", "coffee", "table", "chat"], out = [];
+  for (const s of snap.lounge) {
+    const want = kinds[hash(s.id + "lounge") % kinds.length];
+    let k = spots.findIndex((sp, i) => free[i] && sp.kind === want);
+    if (k < 0) k = free.indexOf(true);
+    if (k < 0) break;
+    free[k] = false; out.push({ s, spot: spots[k] });
+  }
+  assignKey = key; assignVal = out;
+  return out;
+}
 
 // ---------- the manager's room ----------
 // Optional: `manager.image` in the config is drawn as the manager. A plain or white background is
@@ -714,7 +859,7 @@ function paintManager(L, sky) {
   windowAt(mw - 19, 3, 13, 7, sky, 29);
   px(3, 2, Math.min(28, mw - 26), 11, "#1d2024"); px(4, 3, Math.min(28, mw - 26) - 2, 9, "#0e1a17");
   // plants in the corners
-  plant(5, H - 5, true); plant(mw - 13, H - 5, true);
+  plant(2, WALL + 14, true); plant(mw - 10, WALL + 14, true);
   // a high-backed leather chair behind the desk
   px(m.cx - 11, 21, 22, 1, "#3a2420"); px(m.cx - 12, 22, 24, 34, "#3a2420"); px(m.cx - 11, 23, 22, 32, "#5a3529");
   px(m.cx - 10, 23, 20, 1, "#6e4434");
@@ -760,11 +905,23 @@ function drawManager(L) {
     person(m.cx - 8, m.deskY - 25, id, id, c.working ? "working" : "idle", false, false, 2);
   }
   if (c.needs) bubble(m.cx + 9, 18, "waiting");
-  label(c.needs ? `${c.needs} need${c.needs === 1 ? "s" : ""} you` : c.working ? `${c.working} working` : "all quiet",
-    m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#d9cfc3", 10, "center");
+  // the account at a glance: who needs you, plan usage, what the open sessions cost
+  const parts = [];
+  if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
+  if (c.working) parts.push(`${c.working} working`);
+  label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 10, "center");
+  const wk = lim.find(l => l.kind === "seven_day"), fh = lim.find(l => l.kind === "five_hour");
+  const use = [wk && `week ${wk.percentUsed}%`, fh && `5h ${fh.percentUsed}%`].filter(Boolean).join(" · ");
+  const worst = Math.max(wk ? wk.percentUsed : 0, fh ? fh.percentUsed : 0);
+  label(use ? use + (wk && wk.resetsAt ? " · " + untilText(wk.resetsAt).replace("resets in ", "resets ") : "") : "plan usage: needs the mod",
+    m.cx * P, (m.deskY + 21.5) * P, use ? ctxColor(worst) : "#8ea3ad", 9, "center");
+  const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
+  const subsN = snap.all.reduce((t, s) => t + agentsOf(s).length, 0);
+  label([lives.length ? "$" + cost.toFixed(2) : "", `${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
+    m.cx * P, (m.deskY + 26.5) * P, "#bdb3a8", 9, "center");
   const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
-    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done` + (tipLim ? `\n${tipLim}` : "") + `\nclick: stats`});
+    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
 }
 
 // ---------- interaction ----------
@@ -801,9 +958,12 @@ document.addEventListener("contextmenu", ev => {
     items.push([where && where !== "headless" ? `Open in ${where}` : "Open the session", () => openSession(h.session)]);
     items.push(["Reveal folder", () => act(h)]);
     items.push(["Copy session id", () => bridge ? bridge.postMessage({ copy: h.session.id }) : navigator.clipboard && navigator.clipboard.writeText(h.session.id)]);
+    const rel = hidden[h.session.id] && hidden[h.session.id].release;
+    if (rel) items.push(["Back to the desk", () => backToDesk(h.session)]);
+    else if (!h.lounge) items.push(["Release to the lounge", () => hideSession(h.session, true)]);
     items.push(["Hide from view", () => hideSession(h.session)]);
   } else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
-  const hs = Object.values(hidden);
+  const hs = Object.values(hidden).filter(x => !x.release);
   if (hs.length) {
     items.push([`Show hidden agents (${hs.length})`, unhideAll]);
   }
@@ -907,6 +1067,11 @@ if (!bridge) {
       { id: "s3", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "TTS latency investigation", cwd: "/Users/me/code/web-app", state: "done", since: t0 - 200, beat: t0 - 200, subagents: {} },
       { id: "s5", kind: "session", model: "claude-opus-5-5", effort: "xhigh", title: "Infra cleanup", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 2000, beat: t0 - 1500, subagents: {} },
       { id: "s6", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Flaky test hunt", cwd: "/Users/me/code/web-app", state: "crashed", since: t0 - 90, beat: t0 - 90, subagents: {} },
+      { id: "s8", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "Release notes", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 3000, beat: t0 - 3000, subagents: {} },
+      { id: "s9", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Onboarding docs", cwd: "/Users/me/code/docs", state: "idle", since: t0 - 5000, beat: t0 - 5000, subagents: {} },
+      { id: "s10", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Log cleanup", cwd: "/Users/me/code/infra", state: "idle", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
+      { id: "s11", kind: "session", model: "claude-sonnet-5-5", effort: "high", title: "Cache warmup", cwd: "/Users/me/code/engine", state: "done", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
+      { id: "s12", kind: "session", model: "claude-opus-5-5", effort: "high", title: "API sketch", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 7000, beat: t0 - 7000, subagents: {} },
       { id: "s4", kind: "automation", model: "claude-sonnet-5-5", effort: "high", title: "clean-reports: infra", cwd: "/Users/me/code/infra", state: "compacting", since: t0 - 120, beat: Date.now() / 1000, subagents: {} },
     ],
     officeEvents: [`${Math.floor(t0 - 20)}\ts2\twaiting for you · Agent Office app`, `${Math.floor(t0 - 90)}\ts6\tstopped with an error · Flaky test hunt`,

@@ -2,7 +2,7 @@
 
 A small macOS window that shows your Claude Code agents at work, as a pixel-art office.
 
-![Agent Office: the manager at a desk in the corner office, two PR reviews at their desks and three in the queue on the sofa; below, Claude Code sessions with their subagents, each with its state, model and effort](docs/screenshot.png)
+![Agent Office: the manager in the corner office, the lounge at the bottom, two PR reviews at their desks and three in the queue on the sofa; below, Claude Code sessions with their subagents, each with its state, model and effort](docs/screenshot.png)
 
 *Demo data. Open `web/office.html` in a browser to see it live.*
 
@@ -59,8 +59,15 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
 
 - **Manager's room** (optional, top left): you, at your desk. A screen on the wall counts the
   sessions that need you, are working or are done, with your plan usage (5-hour and 7-day) when
-  the companion mod reports it; an orange **!** over your head when someone needs you. Click it
+  the companion mod reports it; an orange **!** over your head when someone needs you. Under the
+  desk: who needs you and who is working, your weekly and 5-hour usage with when the week
+  resets, and what the open sessions have cost. Click it
   for the stats screen. Set it up with `manager` under *Configuration*.
+- **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
+  minutes) leaves its desk for a coffee, a snack, a chat at the high table or a game on the sofa,
+  and walks back to a desk the moment it gets work. **Right-click → Release to the lounge** sends
+  one there yourself and empties its desk; it comes back on its own when you send it a message,
+  or with **Back to the desk**.
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
   been running, and a sofa for the queue. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
@@ -84,7 +91,7 @@ iTerm session asks once for permission to control that app. A review desk opens 
 Sessions already running when you install or update Agent Office learn where they run on their next
 message.
 
-**Right-click an agent** for *Open*, *Reveal folder*, *Copy session id* and *Hide from view*. A
+**Right-click an agent** for *Open*, *Reveal folder*, *Copy session id*, *Release to the lounge* and *Hide from view*. A
 hidden agent stays out of the office until something new happens to it (you send it a message, it
 asks for a permission, its turn ends, it errors); then it walks back in. Right-click anywhere →
 **Show hidden agents** brings them all back.
