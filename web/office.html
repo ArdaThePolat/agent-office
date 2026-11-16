@@ -942,19 +942,18 @@ function paintManager(L, sky) {
   px(plx, deskY + 5, pw, 5, "#c9a45a"); px(plx, deskY + 5, pw, 1, "#e3c47a"); px(plx, deskY + 9, pw, 1, "#94753c");
   text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
 }
-// a battery for one plan window, centred on cx: segments show what is left, the colour warns as
-// it runs low, and the text says how much is left
+// a small battery for one plan window, centred on cx: the charge is what is left and shrinks
+// smoothly, a hair per percent; it turns orange under 40% and red, blinking, under 15%
 function battery(cx, y, name, used, h, short) {
-  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 32, x = cx - 15, segs = 8, sw = (w - 2 - (segs - 1)) / segs;
+  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 22, x = cx - 10;
   const c = left > 40 ? "#5fbf7f" : left > 15 ? "#f0a35e" : "#e06c6c";
-  g.fillStyle = "#17131bcc"; g.fillRect((x - 13) * P, (y - 1) * P, (w + (short ? 27 : 34)) * P, (h + 2) * P);
+  g.fillStyle = "#17131bcc"; g.fillRect((x - 11) * P, (y - 1) * P, (w + (short ? 22 : 29)) * P, (h + 2) * P);
   text(name, (x - 2) * P, (y + h / 2) * P - 5, "#d9cfc3", 10, "right");
   px(x, y, w, h, "#d9cfc3"); px(x + 1, y + 1, w - 2, h - 2, "#2a2530"); px(x + w, y + 1, 1, h - 2, "#d9cfc3");
-  const full = Math.ceil(left / 100 * segs - 1e-9);
-  for (let k = 0; k < full; k++) {
-    const blink = k === full - 1 && left <= 15 && frame % 2 && !energy;
-    px(x + 1 + k * (sw + 1), y + 1, sw, h - 2, blink ? "#7a3434" : c);
-    px(x + 1 + k * (sw + 1), y + 1, sw, 1, blink ? "#7a3434" : shade(c, 0.25));
+  const inner = (w - 2) * P, fill = Math.round(inner * left / 100 * 2) / 2;
+  if (fill > 0 && !(left <= 15 && frame % 2 && !energy)) {
+    g.fillStyle = c; g.fillRect((x + 1) * P, (y + 1) * P, fill, (h - 2) * P);
+    g.fillStyle = shade(c, 0.25); g.fillRect((x + 1) * P, (y + 1) * P, fill, 1.5);
   }
   text(Math.round(left) + (short ? "%" : "% left"), (x + w + 3) * P, (y + h / 2) * P - 5, c, 10, "left");
 }
@@ -986,8 +985,8 @@ function drawManager(L) {
   const wk = lim.find(l => l.kind === "seven_day");
   // plan usage as batteries: what is LEFT of each window, draining as you use it
   let ly = m.deskY + 21;
-  const rows = [[wk, "week", 6]].filter(r => r[0]);
-  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 3; }
+  const rows = [[wk, "week", 4]].filter(r => r[0]);
+  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 2; }
   if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
   if (wk && wk.resetsAt) { label("week " + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, "#bdb3a8", 10, "center"); ly += 6; }
   const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
