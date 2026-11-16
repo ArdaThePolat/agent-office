@@ -29,6 +29,7 @@ let ROOM_MAX_FRAME = 200_000          // bytes, any message
 let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
+let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
 
 struct RoomConfig: Equatable {
     var name = ""
@@ -100,9 +101,9 @@ func cleanText(_ s: String) -> String {
 final class RoomHost {
     final class Peer {
         let conn: NWConnection, ip: String, id = String(UUID().uuidString.prefix(8)).lowercased()
-        var sn = Data(), key: SymmetricKey?, name = "", avatar = "", said: [Date] = []
+        var sn = Data(), key: SymmetricKey?, name = "", avatar = "", spot = "", said: [Date] = []
         init(_ c: NWConnection, ip: String) { conn = c; self.ip = ip }
-        var member: [String: Any] { ["id": id, "name": name, "avatar": avatar] }
+        var member: [String: Any] { ["id": id, "name": name, "avatar": avatar, "spot": spot] }
     }
     let cfg: RoomConfig
     private let q = DispatchQueue(label: "agent-office.room.host")
@@ -185,6 +186,8 @@ final class RoomHost {
             if p.name.isEmpty { p.name = "Teammate" }
             let a = m["avatar"] as? String ?? ""
             p.avatar = a.count <= ROOM_MAX_AVATAR && a.hasPrefix("data:image/png;base64,") ? a : ""
+            let sp = m["spot"] as? String ?? ""
+            p.spot = ROOM_SPOTS.contains(sp) ? sp : ""            // "" = their own routine
             broadcast(["t": first ? "join" : "profile", "member": p.member])
         case "say":
             let now = Date()
@@ -211,6 +214,11 @@ final class RoomClient {
     struct Message { let id: String, from: String, text: String, at: Double }
     let cfg: RoomConfig
     var profile: () -> (name: String, avatar: String)
+    private var spot = ""                                 // the lounge spot this member chose, "" = routine
+    /// Go to a spot in the lounge (one of ROOM_SPOTS), or back to the routine with "".
+    func setSpot(_ s: String) {
+        q.async { self.spot = ROOM_SPOTS.contains(s) ? s : ""; self.sendProfile() }
+    }
     var onChange: (() -> Void)?                          // called on the main queue
 
     // read on the main queue only
@@ -293,7 +301,7 @@ final class RoomClient {
     func sendProfile() {
         q.async { guard let c = self.conn, let k = self.key else { return }
             let p = DispatchQueue.main.sync { self.profile() }
-            if let box = seal(["t": "profile", "name": p.name, "avatar": p.avatar], k) { wsSend(c, box) } }
+            if let box = seal(["t": "profile", "name": p.name, "avatar": p.avatar, "spot": self.spot], k) { wsSend(c, box) } }
     }
 
     private func connect(_ endpoint: NWEndpoint) {

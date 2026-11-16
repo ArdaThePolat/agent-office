@@ -135,6 +135,12 @@ button (or **C**). **Hide** (or **C**) folds it away and gives the desks the roo
 stays on the right edge and rings, with the number of unread messages, when someone writes. Click
 it (or **C**) to bring the chat back. Hidden or shown is remembered.
 
+You are in the lounge too, as your own character, next to your teammates (two teammates in the
+room is three people in your lounge). Click a piece of the lounge (the coffee machine, the
+kitchen table, the high table, the sofa) and your character walks there and stays, in your
+office and in everyone else's; click it again, or click your character, and it goes back to its
+own routine.
+
 Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
 room, and your agents on a break in the lounge are drawn from your own sessions and are never
 sent anywhere, so each person sees their own agents next to the shared teammates. Only you see

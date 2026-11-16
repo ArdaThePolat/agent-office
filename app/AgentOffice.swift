@@ -375,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
+        if let sp = body["spot"] { roomClient?.setSpot(sp) }
         if body["update"] == "go" { updater.update() }
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
