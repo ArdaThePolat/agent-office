@@ -341,8 +341,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             guard let self else { return }
             let a = NSAlert()
             switch self.updater.status {
-            case "available": a.messageText = "Agent Office \(self.updater.latest) is available"
-                a.informativeText = "You have \(self.updater.current). Click Update at the top right of the office to install it."
+            case "available":
+                // asked for by hand, so offer to do it right here; the same update as the button
+                let build = self.updater.json["canBuild"] as? Bool ?? false
+                a.messageText = "Agent Office \(self.updater.latest) is available"
+                a.informativeText = "You have \(self.updater.current). " + (build
+                    ? "Update Now rebuilds Agent Office from the new release and reopens it."
+                    : "This copy was not built from a checkout, so it cannot rebuild itself: open the release page to get it.")
+                a.addButton(withTitle: build ? "Update Now" : "Open Release Page")
+                a.addButton(withTitle: "Later")
+                if a.runModal() == .alertFirstButtonReturn { self.updater.update() }
+                return
             case "current": a.messageText = "Agent Office is up to date"; a.informativeText = "You have \(self.updater.current), the latest release."
             default: a.messageText = "Could not check for updates"; a.informativeText = self.updater.detail
             }

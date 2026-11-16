@@ -260,8 +260,9 @@ hook is registered for every event and when a session last reported.
 
 By hand: `git pull && scripts/build-app.sh` in your checkout, then reopen the app.
 
-Or let the app do it: tick Settings → **Check for updates once a day** (or use Agent Office →
-**Check for Updates…** once). It asks GitHub for the repository's latest release and compares it
+Or let the app do it: tick Settings → **Check for updates once a day**, or use Agent Office →
+**Check for Updates…** once (when it finds a newer release, **Update Now** in its alert does the
+same as the button). It asks GitHub for the repository's latest release and compares it
 with the release your app was built from; when there is a newer one, an **Update to vX** button
 appears at the top right. Clicking it:
 
