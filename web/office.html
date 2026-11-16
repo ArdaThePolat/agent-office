@@ -503,7 +503,7 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = snap.manager ? 98 : 82, teamW = 64, loungeH = 66;
+  const reviewH = snap.manager ? 102 : 82, teamW = 64, loungeH = 70;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
@@ -665,93 +665,150 @@ function draw() {
 
 // ---------- the lounge ----------
 // Where agents with nothing to do go: sessions that are idle, and any you release (right-click →
-// Release). A kitchen with a coffee counter and a table, a high table to chat at, and a sofa in
-// front of a games console. They walk back to a desk the moment they get work.
+// Release). Each one follows its own routine (make a coffee, drink it at the table, play on the
+// console, chat), in its own order and at its own pace, and walks between the spots. They walk
+// back to a desk the moment they get work.
+const ROUTINE = [["make", 25], ["drink", 70], ["game", 110], ["chat", 60]];   // [activity, seconds]
+const ROUTINE_S = ROUTINE.reduce((t, r) => t + r[1], 0);
+function wants(s) {
+  const h = hash(s.id + "lounge"), rot = h % ROUTINE.length;
+  let t = (Date.now() / 1000 + h % ROUTINE_S) % ROUTINE_S;
+  for (let k = 0; k < ROUTINE.length; k++) { const r = ROUTINE[(k + rot) % ROUTINE.length]; if (t < r[1]) return r[0]; t -= r[1]; }
+  return "chat";
+}
 function loungeGeo(L) {
   const y = L.ly, cols = L.cols;
-  const kw = Math.max(48, Math.floor(cols * 0.36)), gw = Math.max(46, Math.floor(cols * 0.3)), gx = cols - gw;
-  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(kw * 0.66);
+  const kw = Math.max(56, Math.floor(cols * 0.36)), gw = Math.max(52, Math.floor(cols * 0.3)), gx = cols - gw;
+  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(14 + (kw - 14) * 0.6);
   const spots = [
-    { kind: "game", x: tvX - 14, y: y + 33 }, { kind: "game", x: tvX - 4, y: y + 33 }, { kind: "game", x: tvX + 6, y: y + 33 },
-    { kind: "coffee", x: 17, y: y + WALL + 2 }, { kind: "coffee", x: 29, y: y + WALL + 2 },
-    { kind: "table", x: tx - 14, y: y + 34 }, { kind: "table", x: tx + 6, y: y + 34 },
-    { kind: "chat", x: chatX - 15, y: y + 31 }, { kind: "chat", x: chatX + 7, y: y + 31 }, { kind: "chat", x: chatX - 4, y: y + 25 },
+    { kind: "make", x: 17, y: y + 19 }, { kind: "make", x: 29, y: y + 19 },
+    { kind: "drink", x: tx - 15, y: y + 40 }, { kind: "drink", x: tx + 7, y: y + 40 },
+    { kind: "game", x: tvX - 14, y: y + 38 }, { kind: "game", x: tvX - 4, y: y + 38 }, { kind: "game", x: tvX + 6, y: y + 38 },
+    { kind: "chat", x: chatX - 15, y: y + 33 }, { kind: "chat", x: chatX + 7, y: y + 33 }, { kind: "chat", x: chatX - 4, y: y + 27 },
   ];
+  if (gw >= 70) spots.push({ kind: "game", x: gx + 5, y: y + 47, bean: true });
   return { y, kw, gx, gw, chatX, tvX, tx, spots };
 }
 function paintLounge(L, sky) {
-  const G = loungeGeo(L), y = G.y, cols = L.cols, H = L.loungeH;
-  wall(0, y, cols, "#8fae9f", "#6b8b7d");
-  // floors: kitchen tiles, a wooden middle, a soft rug by the console
-  for (let j = y + WALL; j < y + H; j += 4) for (let i = 0; i < G.kw; i += 4)
-    px(i, j, 4, 4, ((i + j) / 4) % 2 ? "#e2d8c6" : "#b9aa92"); px(i, j, 4, 1, "#ffffff18");
+  const G = loungeGeo(L), y = G.y, cols = L.cols, H = L.loungeH, cw = G.kw - 20;
+  // walls: warm cream with a stripe; the games corner painted navy with an LED strip
+  wall(0, y, cols, "#e2d3b5", "#b09372");
+  for (let x = 3; x < cols; x += 6) px(x, y + 2, 1, 9, "rgba(150,120,80,0.10)");
+  px(G.gx, y + 2, G.gw, 9, "#2c3350"); px(G.gx, y + 11, G.gw, 4, "#232842"); px(G.gx, y + 11, G.gw, 1, "#3a4266");
+  for (let x = G.gx; x < cols; x++) px(x, y + 2, 1, 1, ["#b98be0", "#5b8def", "#4fc1c9", "#e06c6c"][Math.floor((x - G.gx) / 6) % 4]);
+  px(G.gx, y + 3, G.gw, 1, "rgba(185,139,224,0.25)");
+  // floors: terracotta and cream tiles in the kitchen, wood elsewhere
+  for (let j = y + WALL; j < y + H; j += 4) for (let i = 0; i < G.kw; i += 4) {
+    px(i, j, 4, 4, (i / 4 + (j - y - WALL) / 4) % 2 ? "#ebe1cd" : "#d39a7c"); px(i, j, 4, 1, "rgba(255,255,255,0.10)"); px(i, j + 3, 4, 1, "rgba(0,0,0,0.08)");
+  }
   woodFloor(G.kw, y + WALL, cols - G.kw, H - WALL);
-  px(G.gx + 3, y + WALL + 14, G.gw - 6, H - WALL - 17, "#3f6f7a"); px(G.gx + 4, y + WALL + 15, G.gw - 8, H - WALL - 19, "#4b8290");
-  for (let k = 0; k < 3; k++) px(0, y + WALL + k, cols, 1, `rgba(0,0,0,${0.16 - k * 0.05})`);
-  // kitchen: upper cabinets, a fridge, the counter with a sink and a coffee machine
-  px(14, y + 3, Math.min(G.kw - 22, 40), 6, "#e7dccb"); for (let i = 14; i < 14 + Math.min(G.kw - 22, 40); i += 8) px(i, y + 3, 1, 6, "#c2b49d");
-  px(2, y + 4, 10, 24, "#e9eef0"); px(2, y + 4, 10, 1, "#ffffff"); px(2, y + 13, 10, 1, "#b9c3c7"); px(10, y + 7, 1, 4, "#9aa5aa"); px(10, y + 16, 1, 6, "#9aa5aa");
-  const cw = G.kw - 18;
-  px(13, y + 11, cw, 2, "#7a6a5a"); px(13, y + 13, cw, 6, "#b59874"); for (let i = 13; i < 13 + cw; i += 9) px(i, y + 13, 1, 6, "#8f7558");
-  px(13, y + 19, cw, 1, "#00000035");
-  coffee(18, y + 11); px(32, y + 10, 8, 1, "#9aa5aa"); px(35, y + 8, 1, 2, "#9aa5aa");      // coffee machine, sink + tap
-  if (cw > 40) { px(13 + cw - 12, y + 5, 10, 6, "#3a3f4b"); px(13 + cw - 11, y + 6, 6, 4, "#1d2330"); px(13 + cw - 4, y + 7, 1, 2, "#8fd6b4"); }   // microwave
-  // middle: a window, a water cooler, a plant
+  for (let k = 0; k < 3; k++) px(0, y + WALL + k, cols, 1, `rgba(0,0,0,${0.18 - k * 0.05})`);
+  // kitchen: fridge, sage cabinets, a white tile backsplash, wood worktop
+  px(2, y + 3, 10, 26, "#cfd6da"); px(2, y + 3, 10, 1, "#eef2f4"); px(2, y + 13, 10, 1, "#9aa5aa"); px(3, y + 4, 1, 24, "#e4e9eb");
+  px(10, y + 6, 1, 5, "#7d878c"); px(10, y + 16, 1, 7, "#7d878c"); px(5, y + 8, 3, 2, "#e3c74f"); px(4, y + 18, 2, 2, "#5b8def"); px(2, y + 29, 10, 1, "#00000040");
+  const uw = Math.min(cw, 48);
+  px(14, y + 2, uw, 5, "#7f9a7a"); px(14, y + 6, uw, 1, "#61795c"); for (let i = 14; i < 14 + uw; i += 8) { px(i, y + 2, 1, 5, "#61795c"); px(i + 6, y + 4, 1, 1, "#d9c27a"); }
+  px(14, y + 7, cw, 5, "#f2efe8"); for (let i = 14; i < 14 + cw; i += 3) px(i, y + 7 + (i % 2), 1, 4, "#dcd6ca"); px(14, y + 9, cw, 1, "#dcd6ca");
+  px(13, y + 12, cw + 2, 2, "#b98a5a"); px(13, y + 12, cw + 2, 1, "#d2a574");
+  px(14, y + 14, cw, 8, "#7f9a7a"); for (let i = 14; i < 14 + cw; i += 8) { px(i, y + 14, 1, 8, "#61795c"); px(i + 3, y + 16, 2, 1, "#d9c27a"); }
+  px(14, y + 22, cw, 1, "#3f4a3c"); px(14, y + 23, cw, 1, "#00000030");
+  // on the worktop: an espresso machine, a kettle, the sink, a fruit bowl, a plant
+  px(18, y + 6, 7, 6, "#2b2e35"); px(18, y + 5, 7, 1, "#9aa5aa"); px(19, y + 7, 5, 1, "#3d424c"); px(20, y + 9, 3, 1, "#c0c6ca"); px(23, y + 7, 1, 1, "#e06c6c");
+  px(29, y + 9, 4, 3, "#c9cfd2"); px(30, y + 8, 2, 1, "#c9cfd2"); px(33, y + 10, 1, 1, "#9aa5aa");
+  if (cw > 34) { px(37, y + 12, 9, 1, "#8a9499"); px(41, y + 9, 1, 3, "#b0b8bc"); px(41, y + 9, 3, 1, "#b0b8bc"); }
+  if (cw > 46) { px(50, y + 10, 6, 2, "#c49a6c"); px(51, y + 9, 2, 1, "#e06c6c"); px(53, y + 9, 2, 1, "#e3c74f"); px(52, y + 8, 1, 1, "#5fbf7f"); }
+  if (cw > 58) { px(14 + cw - 11, y + 6, 9, 6, "#3a3f4b"); px(14 + cw - 10, y + 7, 5, 4, "#1d2330"); px(14 + cw - 4, y + 8, 1, 2, "#8fd6b4"); }
+  // a round rug and a warm light pool under the kitchen table
+  px(G.tx - 18, y + 50, 36, 11, "#a85b48"); px(G.tx - 16, y + 49, 32, 13, "#a85b48"); px(G.tx - 15, y + 51, 30, 9, "#c27460");
+  px(G.tx - 12, y + 52, 24, 7, "rgba(255,226,160,0.12)");
+  // the middle: a window, framed art, a water cooler, a big rug, plants, a bookshelf
   windowAt(G.chatX - 7, y + 4, 14, 7, sky, 17);
-  px(G.kw + 4, y + 9, 6, 12, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 5, "#9fd0ea"); px(G.kw + 6, y + 13, 2, 1, "#5b8def");
-  plant(G.gx - 11, y + WALL + 6, true);
-  // games corner: a TV on the wall, a console below it
-  const tw = Math.min(28, G.gw - 12), tvl = G.tvX - Math.floor(tw / 2);
-  px(tvl - 1, y + 2, tw + 2, 13, "#15161a");
-  px(G.tvX - 9, y + WALL, 18, 5, "#5e4232"); px(G.tvX - 9, y + WALL, 18, 1, "#7a5a44");
-  px(G.tvX - 3, y + WALL + 1, 7, 2, "#f2f2f4"); px(G.tvX - 3, y + WALL + 1, 7, 1, "#ffffff"); px(G.tvX + 3, y + WALL + 2, 1, 1, "#5b8def");
+  frameArt(G.chatX + 12, y + 4, 4); if (G.chatX - 22 > G.kw + 12) frameArt(G.chatX - 21, y + 4, 2);
+  px(G.kw + 4, y + 10, 6, 13, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 6, "#9fd0ea"); px(G.kw + 5, y + 4, 4, 1, "#c4e6f7"); px(G.kw + 6, y + 14, 2, 1, "#5b8def");
+  px(G.chatX - 22, y + 44, 44, 16, "#5b6e8f"); px(G.chatX - 20, y + 45, 40, 14, "#6d82a5");
+  for (let i = G.chatX - 18; i < G.chatX + 18; i += 6) px(i, y + 51, 3, 2, "#e3c74f");
+  plant(G.gx - 11, y + WALL + 8, true); plant(G.kw + 13, y + H - 3, false);
+  // games corner: a big TV, a cabinet with the console standing on it, game shelves, a rug
+  const tw = Math.min(32, G.gw - 16), tvl = G.tvX - Math.floor(tw / 2);
+  px(tvl - 1, y + 3, tw + 2, 13, "#0c0d10");
+  px(G.tvX - 13, y + WALL + 1, 26, 6, "#3b2c27"); px(G.tvX - 13, y + WALL + 1, 26, 1, "#5e4232"); px(G.tvX - 12, y + WALL + 3, 10, 3, "#2a1f1b");
+  px(G.tvX + 5, y + WALL - 8, 4, 10, "#f4f4f6"); px(G.tvX + 6, y + WALL - 8, 2, 10, "#1b1b22"); px(G.tvX + 4, y + WALL - 7, 1, 8, "#f4f4f6"); px(G.tvX + 9, y + WALL - 7, 1, 8, "#f4f4f6");
+  px(G.tvX + 6, y + WALL - 1, 2, 1, "#5b8def");
+  px(G.tvX - 10, y + WALL + 3, 3, 2, "#e9e9ee"); px(G.tvX - 6, y + WALL + 3, 3, 2, "#e9e9ee");   // two controllers charging
+  if (G.gw >= 60) {
+    const shx = cols - 12;
+    px(shx, y + 4, 9, 16, "#3b2c27"); for (let r = 0; r < 3; r++) { for (let i = 0; i < 7; i++) px(shx + 1 + i, y + 5 + r * 5, 1, 4, ["#5b8def", "#e06c6c", "#e3c74f", "#5fbf7f", "#b98be0"][(i + r) % 5]); px(shx, y + 9 + r * 5, 9, 1, "#5e4232"); }
+  }
+  px(G.gx + 3, y + WALL + 22, G.gw - 6, H - WALL - 25, "#283a5e"); px(G.gx + 5, y + WALL + 23, G.gw - 10, H - WALL - 27, "#334a75");
+  for (let i = G.gx + 8; i < cols - 8; i += 7) px(i, y + WALL + 30 + (i % 2) * 6, 2, 2, "#4fc1c9");
+  if (G.gw >= 70) { px(G.gx + 3, y + 54, 14, 8, "#e06c6c"); px(G.gx + 4, y + 53, 12, 1, "#f08a8a"); px(G.gx + 3, y + 61, 14, 1, "#00000040"); }   // bean bag
   sign("LOUNGE", G.kw + 14, y + 3);
 }
+// a figure from behind (facing a counter or the TV)
+function backView(x, y, L2, legs) {
+  px(x + 1, y, 6, 6, L2.hair); px(x + 1, y + 5, 6, 1, shade(L2.hair, -0.25));
+  px(x, y + 6, 8, 6, L2.shirt); px(x, y + 6, 8, 1, shade(L2.shirt, 0.2)); px(x + 3, y + 6, 2, 1, shade(L2.shirt, -0.2));
+  if (legs) { px(x + 1, y + 12, 2, 3, L2.pants); px(x + 5, y + 12, 2, 3, L2.pants); px(x + 1, y + 15, 2, 1, "#2a2320"); px(x + 5, y + 15, 2, 1, "#2a2320"); }
+}
 function drawLounge(L) {
-  const G = loungeGeo(L), y = G.y, n = snap.lounge.length;
-  // the TV: a little racing game while anyone is playing
-  const tw = Math.min(28, G.gw - 12), tvl = G.tvX - Math.floor(tw / 2);
-  const players = snap.lounge.slice(0, 3).length && assign().some(a => a.spot.kind === "game");
-  px(tvl, y + 3, tw, 11, players ? "#2b4f8f" : "#1d2026");
-  if (players) {
-    px(tvl, y + 10, tw, 4, "#3f8f4f");
-    for (let i = 0; i < tw; i += 4) px(tvl + (i + frame * 2) % tw, y + 11, 2, 1, "#e9e3d6");
-    px(tvl + (frame * 3) % (tw - 4), y + 8, 4, 2, "#e06c6c"); px(tvl + (frame * 2 + 9) % (tw - 4), y + 7, 4, 2, "#e3c74f");
-    px(tvl + 3, y + 4, 3, 2, "#ffffff");
+  const G = loungeGeo(L), y = G.y, n = snap.lounge.length, at = assign(G);
+  const tw = Math.min(32, G.gw - 16), tvl = G.tvX - Math.floor(tw / 2);
+  const playing = at.some(a => a.spot.kind === "game"), brewing = at.some(a => a.spot.kind === "make" && a.spot.x < 20);
+  // the TV: a racing game while someone plays, a screensaver otherwise
+  if (playing) {
+    for (let j = 0; j < 11; j++) px(tvl, y + 4 + j, tw, 1, j < 5 ? "#3b6fc4" : j < 7 ? "#7fb0e8" : "#3f8f4f");
+    px(tvl, y + 11, tw, 3, "#55595f");
+    for (let i = 0; i < tw; i += 5) px(tvl + (i + frame * 2) % tw, y + 12, 2, 1, "#e9e3d6");
+    px(tvl + (frame * 3) % (tw - 5), y + 10, 5, 2, "#e06c6c"); px(tvl + (frame * 2 + 11) % (tw - 5), y + 12, 5, 2, "#e3c74f");
+    px(tvl + 2, y + 5, 4, 1, "#ffffff"); px(tvl + tw - 9, y + 5, 7, 1, "#ffffff");
+  } else {
+    px(tvl, y + 4, tw, 11, "#14182a");
+    px(tvl + (frame * 2) % (tw - 6), y + 6 + frame % 6, 6, 2, "#5b8def");
   }
+  // the espresso machine, while someone makes a coffee
+  if (brewing && !energy) { px(21, y + 10, 1, 1 + frame % 2, "#6b4a32"); px(20 + frame % 2, y + 3 - frame % 3, 1, 2, "#ffffff70"); px(23, y + 7, 1, 1, "#5fbf7f"); }
   label(n ? `${n} on a break` : "nobody on a break", (L.cols - 3) * P, (y + WALL + 2) * P, "#f1ebe2", 10, "right");
-  const placedAt = assign();
-  for (const { s, spot } of placedAt) {
-    const tk = team(s.cwd), p = placed(s.id, spot.x, spot.y, 7, y + WALL + 1, "lounge");
-    const L2 = look(s.id, tk);
-    if (p.walking) { person(p.x, p.y, s.id, tk, "working", false, true); continue; }
-    if (spot.kind === "game") {                 // from behind, on the sofa, controller in hand
-      px(p.x + 1, p.y, 6, 6, L2.hair); px(p.x + 1, p.y + 5, 6, 1, shade(L2.hair, -0.25));
-      px(p.x, p.y + 6, 8, 6, L2.shirt); px(p.x, p.y + 6, 8, 1, shade(L2.shirt, 0.2));
-      px(p.x - 1, p.y + 8 + (frame + hash(s.id)) % 2, 2, 2, L2.skin); px(p.x + 7, p.y + 8 + (frame + hash(s.id) + 1) % 2, 2, 2, L2.skin);
-    } else if (spot.kind === "table") {
+  const sorted = at.slice().sort((a, b) => a.spot.y - b.spot.y);
+  for (const { s, spot } of sorted) {
+    const tk = team(s.cwd), p = placed(s.id, spot.x, spot.y, 7, y + WALL + 1, "lounge:" + spot.x + "," + spot.y);
+    const L2 = look(s.id, tk), wob = (frame + hash(s.id)) % 2;
+    if (p.walking) {
+      person(p.x, p.y, s.id, tk, "working", false, true);
+      if (spot.kind === "drink") px(p.x + 8, p.y + 8, 2, 2, "#f4efe4");             // carrying the coffee to the table
+    } else if (spot.kind === "make") {
+      backView(p.x, p.y, L2, true);
+      px(p.x - 1, p.y + 7 + wob, 2, 2, L2.skin); px(p.x + 7, p.y + 7, 2, 2, L2.skin);
+    } else if (spot.kind === "game" && spot.bean) {
+      person(p.x, p.y, s.id, tk, "lounge", false, false);
+      px(p.x + 2, p.y + 9, 4, 2, "#e9e9ee"); px(p.x + 1, p.y + 9 + wob, 1, 1, L2.skin); px(p.x + 6, p.y + 9 + (1 - wob), 1, 1, L2.skin);
+    } else if (spot.kind === "game") {
+      backView(p.x, p.y, L2, false);
+      px(p.x - 1, p.y + 8 + wob, 2, 2, L2.skin); px(p.x + 7, p.y + 8 + (1 - wob), 2, 2, L2.skin);
+    } else if (spot.kind === "drink") {
       chair(p.x, p.y, 1); person(p.x, p.y, s.id, tk, "lounge", false, false);
-    } else {                                    // standing: coffee in hand, or chatting
+      const sip = !energy && (frame + hash(s.id)) % 9 < 2;
+      if (sip) { px(p.x + 5, p.y + 4, 2, 2, "#f4efe4"); px(p.x + 7, p.y + 4, 1, 1, "#f4efe4"); }
+      else { px(p.x + (spot.x < G.tx ? 8 : -2), p.y + 8, 2, 2, "#f4efe4"); if (frame % 3 === 0) px(p.x + (spot.x < G.tx ? 8 : -2), p.y + 6, 1, 1, "#ffffff80"); }
+    } else {                                    // chatting, standing
       person(p.x, p.y, s.id, tk, "lounge", false, false);
       px(p.x + 1, p.y + 12, 2, 3, L2.pants); px(p.x + 5, p.y + 12, 2, 3, L2.pants);
       px(p.x + 1, p.y + 15, 2, 1, "#2a2320"); px(p.x + 5, p.y + 15, 2, 1, "#2a2320");
-      if (spot.kind === "coffee") { px(p.x + 8, p.y + 8, 2, 2, "#f4efe4"); px(p.x + 10, p.y + 8, 1, 1, "#f4efe4"); if (frame % 3 === 0) px(p.x + 8, p.y + 6, 1, 1, "#ffffff80"); }
     }
+    const doing = { make: "making a coffee", drink: "drinking a coffee", game: "playing on the console", chat: "chatting" }[spot.kind];
     hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
-      tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${
-        { game: "playing a game", coffee: "having a coffee", table: "having a snack", chat: "chatting" }[spot.kind]}\n` +
+      tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${doing}\n` +
         `comes back to a desk when it gets work\nclick: open it · right-click: more` });
   }
-  // furniture in front of the people
+  // furniture in front of the people: the sofa, the kitchen table, the high table
   const sx = G.tvX - 18;
-  px(sx, y + 41, 36, 7, "#6f5a8f"); px(sx, y + 41, 36, 1, "#8873a8"); px(sx - 2, y + 39, 3, 11, "#5e4b7c"); px(sx + 35, y + 39, 3, 11, "#5e4b7c");
-  px(sx, y + 48, 36, 2, "#5e4b7c"); px(sx, y + 50, 36, 1, "#00000035");
-  px(G.tx - 9, y + 45, 18, 2, "#a5794f"); px(G.tx - 9, y + 45, 18, 1, "#c49a6c"); px(G.tx - 1, y + 47, 2, 7, "#7a5a3c"); px(G.tx - 4, y + 54, 8, 1, "#5e4232");
-  px(G.tx - 6, y + 44, 2, 1, "#f4efe4"); px(G.tx + 3, y + 44, 3, 1, "#e3c74f");
-  px(G.chatX - 6, y + 39, 13, 2, "#3a3f4b"); px(G.chatX - 6, y + 39, 13, 1, "#565d6d"); px(G.chatX, y + 41, 1, 9, "#3a3f4b"); px(G.chatX - 3, y + 50, 7, 1, "#2c303a");
-  px(G.chatX - 3, y + 38, 2, 1, "#f4efe4"); px(G.chatX + 2, y + 38, 2, 1, "#f4efe4");
+  px(sx, y + 46, 36, 7, "#6f5a8f"); px(sx, y + 46, 36, 1, "#8873a8"); px(sx - 2, y + 44, 3, 11, "#5e4b7c"); px(sx + 35, y + 44, 3, 11, "#5e4b7c");
+  px(sx, y + 53, 36, 2, "#5e4b7c"); px(sx, y + 55, 36, 1, "#00000035");
+  px(G.tx - 9, y + 51, 18, 2, "#a5794f"); px(G.tx - 9, y + 51, 18, 1, "#c49a6c"); px(G.tx - 1, y + 53, 2, 7, "#7a5a3c"); px(G.tx - 4, y + 60, 8, 1, "#5e4232");
+  px(G.tx - 2, y + 50, 4, 1, "#e3c74f");
+  px(G.chatX - 6, y + 41, 13, 2, "#3a3f4b"); px(G.chatX - 6, y + 41, 13, 1, "#565d6d"); px(G.chatX, y + 43, 1, 9, "#3a3f4b"); px(G.chatX - 3, y + 52, 7, 1, "#2c303a");
+  px(G.chatX - 3, y + 40, 2, 1, "#f4efe4"); px(G.chatX + 2, y + 40, 2, 1, "#f4efe4");
   // whoever is chatting takes turns speaking
-  const talkers = placedAt.filter(a => a.spot.kind === "chat");
+  const talkers = sorted.filter(a => a.spot.kind === "chat");
   if (talkers.length > 1 && !energy) {
     const t = talkers[Math.floor(frame / 3) % talkers.length].spot;
     px(t.x + 6, t.y - 6, 9, 5, "#f4efe4"); px(t.x + 7, t.y - 1, 2, 1, "#f4efe4");
@@ -759,19 +816,19 @@ function drawLounge(L) {
   }
   if (n > G.spots.length) label(`+${n - G.spots.length} more`, (G.kw + 3) * P, (y + L.loungeH - 7) * P, "#d9cfc3", 9);
 }
-// lounge spots: everyone keeps a favourite activity (by id) and takes the first free spot of it
+// lounge spots: each agent wants what its routine says now, and takes the first free spot of it
 let assignKey = "", assignVal = [];
-function assign() {
-  const L = layoutCache, key = snap.lounge.map(s => s.id).join(",") + "|" + (L ? L.cols + "," + L.ly : "");
+function assign(G) {
+  const want = snap.lounge.map(wants);
+  const key = snap.lounge.map((s, i) => s.id + want[i]).join(",") + "|" + G.y + "," + G.kw + "," + G.gx;
   if (key === assignKey) return assignVal;
-  const spots = L ? loungeGeo(L).spots : [], free = spots.map(() => true), kinds = ["game", "coffee", "table", "chat"], out = [];
-  for (const s of snap.lounge) {
-    const want = kinds[hash(s.id + "lounge") % kinds.length];
-    let k = spots.findIndex((sp, i) => free[i] && sp.kind === want);
-    if (k < 0) k = free.indexOf(true);
-    if (k < 0) break;
-    free[k] = false; out.push({ s, spot: spots[k] });
-  }
+  const free = G.spots.map(() => true), out = [], order = ["chat", "game", "drink", "make"];
+  snap.lounge.forEach((s, i) => {
+    let k = G.spots.findIndex((sp, j) => free[j] && sp.kind === want[i]);
+    for (const alt of order) if (k < 0) k = G.spots.findIndex((sp, j) => free[j] && sp.kind === alt);
+    if (k < 0) return;
+    free[k] = false; out.push({ s, spot: G.spots[k] });
+  });
   assignKey = key; assignVal = out;
   return out;
 }
@@ -890,14 +947,14 @@ function drawManager(L) {
   // the wall screen: who needs you, then plan usage
   const sw = Math.min(28, mw - 26), sx = 5 * P, rowH = 9.5;
   let ry = 3.3 * P;
-  text(`!${c.needs} ▶${c.working} ✓${c.done}`, sx, ry, c.needs ? (frame % 2 ? "#ffb347" : "#ffc370") : "#8fd6b4", 8);
+  text(`!${c.needs} ▶${c.working} ✓${c.done}`, sx, ry, c.needs ? (frame % 2 ? "#ffb347" : "#ffc370") : "#8fd6b4", 9);
   for (const l of lim.filter(l => l.kind !== "spend_limit").slice(0, 2)) {
     ry += rowH;
     const k = l.kind === "five_hour" ? "5h" : l.kind === "seven_day" ? "7d" : l.kind.slice(0, 2), bw = (sw - 14) * P;
-    text(k, sx, ry, "#9fd3c0", 8);
-    g.fillStyle = "#24302c"; g.fillRect(sx + 14, ry + 2, bw, 4);
-    g.fillStyle = ctxColor(l.percentUsed); g.fillRect(sx + 14, ry + 2, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
-    text(l.percentUsed + "%", sx + 17 + bw, ry, "#d9f2e8", 8);
+    text(k, sx, ry, "#9fd3c0", 9);
+    g.fillStyle = "#24302c"; g.fillRect(sx + 16, ry + 3, bw, 4);
+    g.fillStyle = ctxColor(l.percentUsed); g.fillRect(sx + 16, ry + 3, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
+    text(l.percentUsed + "%", sx + 19 + bw, ry, "#d9f2e8", 9);
   }
   // without a picture: a drawn manager, twice the size of everyone else
   if (!mgrCut) {
@@ -909,16 +966,16 @@ function drawManager(L) {
   const parts = [];
   if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
   if (c.working) parts.push(`${c.working} working`);
-  label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 10, "center");
+  label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 12, "center");
   const wk = lim.find(l => l.kind === "seven_day"), fh = lim.find(l => l.kind === "five_hour");
   const use = [wk && `week ${wk.percentUsed}%`, fh && `5h ${fh.percentUsed}%`].filter(Boolean).join(" · ");
   const worst = Math.max(wk ? wk.percentUsed : 0, fh ? fh.percentUsed : 0);
-  label(use ? use + (wk && wk.resetsAt ? " · " + untilText(wk.resetsAt).replace("resets in ", "resets ") : "") : "plan usage: needs the mod",
-    m.cx * P, (m.deskY + 21.5) * P, use ? ctxColor(worst) : "#8ea3ad", 9, "center");
+  label(use || "plan usage: needs the mod", m.cx * P, (m.deskY + 22.5) * P, use ? ctxColor(worst) : "#8ea3ad", 11, "center");
+  if (wk && wk.resetsAt) label("week " + untilText(wk.resetsAt), m.cx * P, (m.deskY + 28.5) * P, "#bdb3a8", 10, "center");
   const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
   const subsN = snap.all.reduce((t, s) => t + agentsOf(s).length, 0);
   label([lives.length ? "$" + cost.toFixed(2) : "", `${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
-    m.cx * P, (m.deskY + 26.5) * P, "#bdb3a8", 9, "center");
+    m.cx * P, (m.deskY + (wk && wk.resetsAt ? 34.5 : 28.5)) * P, "#d9cfc3", 10, "center");
   const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
     tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});

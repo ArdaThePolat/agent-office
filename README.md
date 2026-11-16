@@ -64,8 +64,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   resets, and what the open sessions have cost. Click it
   for the stats screen. Set it up with `manager` under *Configuration*.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
-  minutes) leaves its desk for a coffee, a snack, a chat at the high table or a game on the sofa,
-  and walks back to a desk the moment it gets work. **Right-click → Release to the lounge** sends
+  minutes) leaves its desk for the lounge and keeps itself busy there: it makes a coffee at the machine,
+  drinks it at the kitchen table, plays on the console, chats at the high table, each agent in
+  its own order, walking between spots. It walks back to a desk the moment it gets work. **Right-click → Release to the lounge** sends
   one there yourself and empties its desk; it comes back on its own when you send it a message,
   or with **Back to the desk**.
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
