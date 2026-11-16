@@ -128,7 +128,12 @@ without it.
 
 Teammates on the same office network can share their lounge. Everyone in the room appears in
 everyone's lounge as their own pixel character, their name over their head, drinking coffee and
-playing on the console, and **Chat** (top right, or **C**) talks to the whole room.
+playing on the console, and the chat talks to the whole room. With a room set up the chat is a
+fixed panel on the right of the others room, whether you are in the room or it is local right
+now (the panel then says so, with **Try now**); in a narrow window it moves behind a **Chat**
+button (or **C**). **Hide** (or **C**) folds it away and gives the desks the room back; a bell tab
+stays on the right edge and rings, with the number of unread messages, when someone writes. Click
+it (or **C**) to bring the chat back. Hidden or shown is remembered.
 
 Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
 room, and your agents on a break in the lounge are drawn from your own sessions and are never
