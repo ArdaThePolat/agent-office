@@ -503,7 +503,7 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
+  const reviewH = snap.manager ? 116 : 82, teamW = 64, loungeH = 70;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
@@ -942,6 +942,22 @@ function paintManager(L, sky) {
   px(plx, deskY + 5, pw, 5, "#c9a45a"); px(plx, deskY + 5, pw, 1, "#e3c47a"); px(plx, deskY + 9, pw, 1, "#94753c");
   text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
 }
+// a battery for one plan window, centred on cx: segments show what is left, the colour warns as
+// it runs low, and the text says how much is left
+function battery(cx, y, name, used, h, short) {
+  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 32, x = cx - 15, segs = 8, sw = (w - 2 - (segs - 1)) / segs;
+  const c = left > 40 ? "#5fbf7f" : left > 15 ? "#f0a35e" : "#e06c6c";
+  g.fillStyle = "#17131bcc"; g.fillRect((x - 13) * P, (y - 1) * P, (w + (short ? 27 : 34)) * P, (h + 2) * P);
+  text(name, (x - 2) * P, (y + h / 2) * P - 5, "#d9cfc3", 10, "right");
+  px(x, y, w, h, "#d9cfc3"); px(x + 1, y + 1, w - 2, h - 2, "#2a2530"); px(x + w, y + 1, 1, h - 2, "#d9cfc3");
+  const full = Math.ceil(left / 100 * segs - 1e-9);
+  for (let k = 0; k < full; k++) {
+    const blink = k === full - 1 && left <= 15 && frame % 2 && !energy;
+    px(x + 1 + k * (sw + 1), y + 1, sw, h - 2, blink ? "#7a3434" : c);
+    px(x + 1 + k * (sw + 1), y + 1, sw, 1, blink ? "#7a3434" : shade(c, 0.25));
+  }
+  text(Math.round(left) + (short ? "%" : "% left"), (x + w + 3) * P, (y + h / 2) * P - 5, c, 10, "left");
+}
 function drawManager(L) {
   const m = managerGeo(L), c = managerCounts(), lim = planLimits(), mw = L.mw;
   // the wall screen: who needs you, then plan usage
@@ -968,13 +984,14 @@ function drawManager(L) {
   if (c.working) parts.push(`${c.working} working`);
   label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 12, "center");
   const wk = lim.find(l => l.kind === "seven_day"), fh = lim.find(l => l.kind === "five_hour");
-  const use = [wk && `week ${wk.percentUsed}%`, fh && `5h ${fh.percentUsed}%`].filter(Boolean).join(" · ");
-  const worst = Math.max(wk ? wk.percentUsed : 0, fh ? fh.percentUsed : 0);
-  label(use || "plan usage: needs the mod", m.cx * P, (m.deskY + 22.5) * P, use ? ctxColor(worst) : "#8ea3ad", 11, "center");
-  if (wk && wk.resetsAt) label("week " + untilText(wk.resetsAt), m.cx * P, (m.deskY + 28.5) * P, "#bdb3a8", 10, "center");
+  // plan usage as batteries: what is LEFT of each window, draining as you use it
+  let ly = m.deskY + 21;
+  const rows = [[wk, "week", 6], [fh, "5h", 5]].filter(r => r[0]);
+  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 3; }
+  if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
+  if (wk && wk.resetsAt) { label("week " + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, "#bdb3a8", 10, "center"); ly += 6; }
   const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
-  const subsN = snap.all.reduce((t, s) => t + agentsOf(s).length, 0);
-  let ly = m.deskY + (wk && wk.resetsAt ? 34.5 : 28.5);
+  ly += 0.5;
   if (lives.length) { label("$" + cost.toFixed(2) + " spent", m.cx * P, ly * P, "#e3c74f", 10, "center"); ly += 6; }
   label([`${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
     m.cx * P, ly * P, "#d9cfc3", 10, "center");

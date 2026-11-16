@@ -60,8 +60,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
 - **Manager's room** (optional, top left): you, at your desk. A screen on the wall counts the
   sessions that need you, are working or are done, with your plan usage (5-hour and 7-day) when
   the companion mod reports it; an orange **!** over your head when someone needs you. Under the
-  desk: who needs you and who is working, your weekly and 5-hour usage with when the week
-  resets, and what the open sessions have cost. Click it
+  desk: who needs you and who is working, your weekly and 5-hour usage as batteries that drain
+  as you use them (orange, then red and blinking as they run low), when the week resets, and
+  what the open sessions have cost. Click it
   for the stats screen. Set it up with `manager` under *Configuration*.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
   minutes) leaves its desk for the lounge and keeps itself busy there: it makes a coffee at the machine,
