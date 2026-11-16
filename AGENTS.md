@@ -1,0 +1,81 @@
+# Installing Agent Office (instructions for a coding agent)
+
+You are helping someone install Agent Office on their Mac. Follow these steps in order. Each
+step says how to check it worked. Two steps change things outside this folder; ask the person
+before each of them, as marked.
+
+## 0. Check the machine
+
+```bash
+sw_vers -productVersion          # needs 13 or later
+xcode-select -p                  # needs a path; if it fails, the person runs: xcode-select --install
+command -v jq                    # needs a path; if missing: brew install jq
+command -v claude                # Claude Code must be installed
+```
+
+If `xcode-select -p` fails, stop and ask the person to run `xcode-select --install` themselves
+(it opens a system dialog). Do not try to install Xcode tools another way.
+
+## 1. Build the app
+
+```bash
+scripts/build-app.sh
+```
+
+It compiles `app/AgentOffice.swift`, bundles `web/office.html` and installs
+`~/Applications/Agent Office.app` (ad-hoc signed, so it runs on this Mac only). Check:
+`ls ~/Applications/"Agent Office.app"`.
+
+## 2. Register the hook (ASK FIRST)
+
+The hook is how sessions report to the office. Installing it edits the person's Claude Code user
+settings, `~/.claude/settings.json`. Show them the change, then ask before applying it:
+
+```bash
+scripts/install-hook.sh --dry-run    # prints the diff; show it to the person
+scripts/install-hook.sh              # only after they agree
+```
+
+It adds one command hook per event and leaves every existing hook alone. It keeps a backup at
+`~/.claude/settings.json.agent-office-backup`. Never edit `settings.json` by hand for this.
+
+## 3. Open it and verify
+
+```bash
+open ~/Applications/"Agent Office.app"
+```
+
+Sessions that started **before** the hook was installed do not report; tell the person to start
+a new Claude Code session (or send a message in an existing one: its next turn reports). Then:
+
+```bash
+ls ~/.local/state/agent-office/sessions/      # one <session-id>.json per running session
+"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --dump-snapshot | head -c 600
+```
+
+In the app, **Agent Office → Check Setup…** says whether every hook event is registered and when
+a session last reported.
+
+## 4. Optional: a PR-review room (ASK FIRST)
+
+The review room shows headless PR reviews only if the person runs a reviewer that writes a
+`running/` folder, a `queue` file and a log (see the README, *Configuration*). If they do not,
+skip this step: the room just stays empty. If they do, write `~/.config/agent-office/config.json`
+with their paths. That file belongs to the person and stays out of this repository; ask before
+creating or changing it, and never add their values to the repo.
+
+## Uninstall
+
+```bash
+scripts/install-hook.sh --uninstall           # removes exactly the entries it added
+rm -rf ~/Applications/"Agent Office.app"      # ask first
+rm -rf ~/.local/state/agent-office            # ask first: the session files and event log
+```
+
+## Rules
+
+- Do not change `hook/agent-office-hook.sh` to record prompts, tool names or arguments. The
+  office shows states only, by design.
+- Do not commit anything from `~/.config/agent-office/` or `~/.local/state/agent-office/`.
+- The hook must stay fast and silent: it always exits 0 and prints nothing, or it would slow down
+  or break the person's sessions.
