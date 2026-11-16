@@ -177,6 +177,22 @@ yourself in the manager's chair.
 5. Not in the office, or the host's app closed? Your office is simply local, and it looks for the
    room again every 15 minutes (or click **Try now** in the chat panel).
 
+**The chat says "the room is not on this network"?** Some networks hide devices from each other's
+discovery (company Wi-Fi often does, and so does a VPN exit node, such as Tailscale's: turn on
+**Allow Local Network Access** in its Exit Node menu, or turn the exit node off). Join by address
+instead: the host's IP address (on the host: `ipconfig getifaddr en0`) or its `.local` name, in
+the same env file:
+
+```bash
+printf 'AGENT_OFFICE_ROOM_ADDRESS=10.20.30.40\n' >> ~/.config/agent-office/env
+```
+
+The app still looks for the room by name first and tries the address after 3 seconds. The host
+listens on port 48731 (`"port"` in the host's room block changes it; then add `:<port>` to the
+address). An IP address can change when the host reconnects to the Wi-Fi; the `.local` name
+does not, but it needs the same discovery some networks block. To check from a member's Mac
+whether the host is reachable at all: `nc -vz <host address> 48731`.
+
 To leave, untick Settings → **Join the shared room**.
 
 #### Details
@@ -260,7 +276,8 @@ file, not in the repository. Every key is optional.
 ```json
 { "officeState": "~/.local/state/agent-office",
   "manager": { "name": "Alex", "image": "~/agent-office/local/manager.png" },
-  "room": { "name": "team-lounge", "password": "<password>", "host": false, "alwaysJoin": true },
+  "room": { "name": "team-lounge", "password": "<password>", "host": false, "alwaysJoin": true,
+            "address": "10.20.30.40" },
   "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
                "slots": 5, "bitbucketWorkspace": "<workspace>" },
   "sessionKinds": [

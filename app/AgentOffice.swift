@@ -67,6 +67,8 @@ struct Config {
             if let s = env["AGENT_OFFICE_ROOM_HOST"] { c.room.host = ["1", "true", "yes"].contains(s.lowercased()) }
             if let s = env["AGENT_OFFICE_ROOM_ALWAYS_JOIN"] { c.room.alwaysJoin = !["0", "false", "no"].contains(s.lowercased()) }
             if let s = env["AGENT_OFFICE_ROOM_ENABLED"] { c.roomOff = ["0", "false", "no"].contains(s.lowercased()) }
+            if let s = env["AGENT_OFFICE_ROOM_ADDRESS"], !s.isEmpty { c.room.address = s }
+            if let s = env["AGENT_OFFICE_ROOM_PORT"], let p = UInt16(s) { c.room.port = p }
         }
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
@@ -87,6 +89,8 @@ struct Config {
             if let b = r["host"] as? Bool { c.room.host = b }
             if let b = r["alwaysJoin"] as? Bool { c.room.alwaysJoin = b }
             if let b = r["enabled"] as? Bool { c.roomOff = !b }
+            if let s = r["address"] as? String { c.room.address = s }
+            if let n = r["port"] as? Int, n > 0, n < 65536 { c.room.port = UInt16(n) }
         }
         return c
     }
