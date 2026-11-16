@@ -135,6 +135,12 @@ button (or **C**). **Hide** (or **C**) folds it away and gives the desks the roo
 stays on the right edge and rings, with the number of unread messages, when someone writes. Click
 it (or **C**) to bring the chat back. Hidden or shown is remembered.
 
+You are in the lounge too, as your own character, next to your teammates (two teammates in the
+room is three people in your lounge). Click a piece of the lounge (the coffee machine, the
+kitchen table, the high table, the sofa) and your character walks there and stays, in your
+office and in everyone else's; click it again, or click your character, and it goes back to its
+own routine.
+
 Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
 room, and your agents on a break in the lounge are drawn from your own sessions and are never
 sent anywhere, so each person sees their own agents next to the shared teammates. Only you see
@@ -358,6 +364,9 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 
 - `"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --dump-snapshot` prints exactly
   what the window is given.
+- `"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --check-room` prints the room
+  settings the app sees (config.json, the env file and the environment together; the password
+  only as its length) and whether it will join.
 - `ls ~/.local/state/agent-office/sessions/` should hold one file per running session; if it is
   empty, check **Check Setup…** and that `jq` is installed (the hook needs it).
 - Open `web/office.html` in a browser to see the demo.

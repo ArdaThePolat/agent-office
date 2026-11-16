@@ -267,6 +267,8 @@ function track(next) {
   next.manualReviews.forEach(s => add("r:" + s.id));
   next.others.forEach(s => { add(s.id); Object.keys(s.subagents || {}).forEach(a => add(a, true)); });
   next.lounge.forEach(s => add(s.id));
+  if (next.manager || room.status !== "off") add("self");             // you and your teammates, in the lounge
+  roomMates().forEach(m => add("m:" + m.id));
   for (const [id, a] of actors) if (!ids.has(id) && a.gone === null) a.gone = seenOnce && a.last && !energy ? t : t - WALK_MS;
   for (const [id, a] of actors) if (a.gone !== null && t - a.gone > WALK_MS) actors.delete(id);
   // chimes: a session that has just started waiting for you, or just finished its turn
@@ -721,6 +723,7 @@ function draw() {
 const ROUTINE = [["make", 25], ["drink", 70], ["game", 110], ["chat", 60]];   // [activity, seconds]
 const ROUTINE_S = ROUTINE.reduce((t, r) => t + r[1], 0);
 function wants(s) {
+  if (s.pin) return s.pin;                  // a spot someone chose by clicking
   const h = hash(s.id + "lounge"), rot = h % ROUTINE.length;
   let t = (Date.now() / 1000 + h % ROUTINE_S) % ROUTINE_S;
   for (let k = 0; k < ROUTINE.length; k++) { const r = ROUTINE[(k + rot) % ROUTINE.length]; if (t < r[1]) return r[0]; t -= r[1]; }
@@ -850,6 +853,15 @@ function drawLounge(L) {
     hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${doing}\n` +
         `comes back to a desk when it gets work\nclick: open it · right-click: more` });
+  }
+  // the lounge's furniture is clickable: your character goes there
+  if (loungePeople().some(x => x.self)) {
+    const cw = G.kw - 20, area = (x, yy, w, h, kind, what) => hits.push({ x: x * P, y: yy * P, w: w * P, h: h * P, goto: kind,
+      tip: mySpot === kind ? `${what}\nclick: back to your own routine` : `${what}\nclick: go there` });
+    area(13, y + 4, cw + 2, 20, "make", "The coffee machine");
+    area(G.tx - 20, y + 36, 40, 26, "drink", "The kitchen table");
+    area(G.chatX - 22, y + 24, 44, 30, "chat", "The high table");
+    area(G.gx, y + 2, G.gw, L.loungeH - 4, "game", "The sofa and the console");
   }
   // furniture in front of the people: the sofa, the kitchen table, the high table
   const sx = G.tvX - 18;
@@ -1082,8 +1094,18 @@ window.updateRoom = r => {
 };
 function roomMates() { return room.status === "joined" ? room.members.filter(m => m.id !== room.you && m.name) : []; }
 // teammates come first, so they always have a spot; idle agents fill the rest
+let mySpot = "";                            // where you sent your own character, "" = its routine
 function loungePeople() {
-  return roomMates().map(m => ({ id: "m:" + m.id, title: m.name, cwd: "", member: m })).concat(snap.lounge);
+  const me = snap.manager || room.status !== "off"
+    ? [{ id: "self", title: "you", cwd: "", self: true, pin: mySpot,
+         member: { id: "self", name: (snap.manager && snap.manager.name) || "You", avatar: "" } }] : [];
+  return me.concat(roomMates().map(m => ({ id: "m:" + m.id, title: m.name, cwd: "", member: m, pin: m.spot || "" })), snap.lounge);
+}
+// click a piece of the lounge: your character goes there; click it again (or yourself) to let it wander
+function setMySpot(kind) {
+  mySpot = kind === mySpot ? "" : kind;
+  if (bridge) bridge.postMessage({ spot: mySpot });
+  assignKey = "";
 }
 function pixelSprite(cut, th) {
   const tw = Math.max(1, Math.round(cut.w * th / cut.h));
@@ -1096,8 +1118,14 @@ function pixelSprite(cut, th) {
   return c;
 }
 // a teammate in the lounge: their picture (or a drawn person), their name above
+let selfSprite = null, selfSrc = null;
 function drawMate(s, spot, p) {
-  const m = s.member, c = mateCuts.get(m.id);
+  const m = s.member;
+  let c = mateCuts.get(m.id);
+  if (s.self) {                             // you: your manager picture
+    if (selfSrc !== mgrCut) { selfSrc = mgrCut; selfSprite = mgrCut ? pixelSprite(mgrCut, 20) : null; }
+    c = selfSprite ? { sprite: selfSprite } : null;
+  }
   if (c && c.cut && !c.sprite) c.sprite = pixelSprite(c.cut, 20);
   let top = p.y - 1;
   if (c && c.sprite) {
@@ -1109,9 +1137,12 @@ function drawMate(s, spot, p) {
   } else {
     person(p.x, p.y, s.id, s.id, p.walking ? "working" : "lounge", false, p.walking);
   }
-  label(clip(m.name, 12), (p.x + 4) * P, (top - (spot.stagger && !p.walking ? 9.5 : 4.5)) * P, "#ffe7a8", 9, "center");
+  label(clip(m.name, 12), (p.x + 4) * P, (top - (spot.stagger && !p.walking ? 9.5 : 4.5)) * P, s.self ? "#9fe8b6" : "#ffe7a8", 9, "center");
   const doing = { make: "making a coffee", drink: "drinking a coffee", game: "playing on the console", chat: "chatting" }[spot.kind];
-  hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, chat: true,
+  if (s.self) hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, self: true,
+    tip: `You · ${doing}${mySpot ? " (you sent yourself here)" : ""}\n` +
+      (mySpot ? "click: back to your own routine" : "click the sofa, the coffee counter, the kitchen table\nor the high table to go there") });
+  else hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, chat: true,
     tip: `${m.name}\nin the room ${room.name} · ${doing}\nclick: chat` });
 }
 
@@ -1244,10 +1275,10 @@ cv.addEventListener("mousemove", ev => {
   if (!h) { tip.style.display = "none"; cv.style.cursor = "default"; return; }
   tip.textContent = h.tip; tip.style.display = "block";
   tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 330) + "px"; tip.style.top = (ev.clientY + 12) + "px";
-  cv.style.cursor = h.url || h.reveal ? "pointer" : "default";
+  cv.style.cursor = h.url || h.reveal || h.goto || h.session || h.chat || h.stats || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }

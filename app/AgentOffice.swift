@@ -55,21 +55,27 @@ struct Config {
         return e
     }
 
+    /// config.json, then the env file and the process environment on top of it. The env is
+    /// applied by a plain call on the way out: changes made in a `defer` after `return c` would be
+    /// made to a copy and lost.
     static func load() -> Config {
+        var c = Config.fromJSON()
+        let env = Config.env()
+        if let s = env["AGENT_OFFICE_MANAGER_NAME"], !s.isEmpty { c.managerName = s }
+        if let s = env["AGENT_OFFICE_MANAGER_IMAGE"], !s.isEmpty { c.managerImage = expand(s) }
+        if let s = env["AGENT_OFFICE_ROOM_NAME"], !s.isEmpty { c.room.name = s }
+        if let s = env["AGENT_OFFICE_ROOM_PASSWORD"], !s.isEmpty { c.room.password = s }
+        if let s = env["AGENT_OFFICE_ROOM_HOST"] { c.room.host = ["1", "true", "yes"].contains(s.lowercased()) }
+        if let s = env["AGENT_OFFICE_ROOM_ALWAYS_JOIN"] { c.room.alwaysJoin = !["0", "false", "no"].contains(s.lowercased()) }
+        if let s = env["AGENT_OFFICE_ROOM_ENABLED"] { c.roomOff = ["0", "false", "no"].contains(s.lowercased()) }
+        if let s = env["AGENT_OFFICE_ROOM_ADDRESS"], !s.isEmpty { c.room.address = s }
+        if let s = env["AGENT_OFFICE_ROOM_PORT"], let p = UInt16(s) { c.room.port = p }
+        return c
+    }
+
+    private static func fromJSON() -> Config {
         var c = Config()
         let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
-        let env = Config.env()
-        defer {
-            if let s = env["AGENT_OFFICE_MANAGER_NAME"], !s.isEmpty { c.managerName = s }
-            if let s = env["AGENT_OFFICE_MANAGER_IMAGE"], !s.isEmpty { c.managerImage = expand(s) }
-            if let s = env["AGENT_OFFICE_ROOM_NAME"], !s.isEmpty { c.room.name = s }
-            if let s = env["AGENT_OFFICE_ROOM_PASSWORD"], !s.isEmpty { c.room.password = s }
-            if let s = env["AGENT_OFFICE_ROOM_HOST"] { c.room.host = ["1", "true", "yes"].contains(s.lowercased()) }
-            if let s = env["AGENT_OFFICE_ROOM_ALWAYS_JOIN"] { c.room.alwaysJoin = !["0", "false", "no"].contains(s.lowercased()) }
-            if let s = env["AGENT_OFFICE_ROOM_ENABLED"] { c.roomOff = ["0", "false", "no"].contains(s.lowercased()) }
-            if let s = env["AGENT_OFFICE_ROOM_ADDRESS"], !s.isEmpty { c.room.address = s }
-            if let s = env["AGENT_OFFICE_ROOM_PORT"], let p = UInt16(s) { c.room.port = p }
-        }
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
         if let s = j["officeState"] as? String { c.officeState = expand(s) }
@@ -369,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
+        if let sp = body["spot"] { roomClient?.setSpot(sp) }
         if body["update"] == "go" { updater.update() }
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
@@ -672,6 +679,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 if CommandLine.arguments.contains("--dump-snapshot") {
     let data = try! JSONSerialization.data(withJSONObject: snapshot(Config.load()), options: [.prettyPrinted, .sortedKeys])
     print(String(decoding: data, as: UTF8.self)); exit(0)
+}
+
+// `AgentOffice --check-room` prints the room settings the app sees (config.json, the env file
+// and the environment together; the password only as its length), and exits.
+if CommandLine.arguments.contains("--check-room") {
+    let c = Config.load(), r = c.room
+    let sharing = UserDefaults.standard.object(forKey: "roomSharing") as? Bool ?? true
+    let verdict = r.enabled && !c.roomOff && sharing ? "the app joins this room"
+        : "the app joins NO room: " + (r.name.isEmpty ? "no room name" : r.password.isEmpty ? "no password"
+            : c.roomOff ? "turned off in the config" : "Settings → Join the shared room is off")
+    print("""
+    room name:     \(r.name.isEmpty ? "(none)" : r.name)
+    password:      \(r.password.isEmpty ? "(none)" : "set, \(r.password.count) characters")
+    host:          \(r.host ? "yes, on port \(r.port)" : "no")
+    address:       \(r.address.isEmpty ? "(none: by name only)" : r.address + (r.addressEndpoint == nil ? "  <- not a valid address" : ""))
+    always join:   \(r.alwaysJoin ? "yes" : "no")
+    Settings tick: \(sharing ? "on" : "off")
+    → \(verdict)
+    """)
+    exit(0)
 }
 
 let app = NSApplication.shared
