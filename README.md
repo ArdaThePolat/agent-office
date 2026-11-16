@@ -141,6 +141,10 @@ kitchen table, the high table, the sofa) and your character walks there and stay
 office and in everyone else's; click it again, or click your character, and it goes back to its
 own routine.
 
+Click a teammate for a menu: **Hug**, **Kiss**, **High five**, **Pillow fight**, **Bring a coffee**,
+**Wave**, or **Chat**. Your character walks over and the two of you do it, in every lounge in the
+room, and the log says so ("Alex hugged Jordan"). The lounge counts everyone in it, you included.
+
 Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
 room, and your agents on a break in the lounge are drawn from your own sessions and are never
 sent anywhere, so each person sees their own agents next to the shared teammates. Only you see

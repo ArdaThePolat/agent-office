@@ -140,7 +140,7 @@ func managerImageURL(_ path: String, maxH: Int = 160) -> String {
             }
         }
     }
-    imageCache = imageCache.filter { $0.key.hasPrefix(path + "@") && $0.key.hasSuffix("@" + String(maxH)) ? false : true }
+    imageCache = imageCache.filter { !$0.key.hasSuffix("@" + String(maxH)) }   // one picture per size: an old one is dropped
     imageCache[key] = url
     return url
 }
@@ -228,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var roomClient: RoomClient?
     var roomRunning = RoomConfig()
     var roomMembersSent = -1
+    var managerImageSent: String?
     // ---- updates ----
     let updater = Updater()
     var updateTimer: Timer?
@@ -287,6 +288,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         var snap = snapshot(Config.load())
         snap["settings"] = ["energySaver": energySaver]
         snap["hidden"] = defaults.string(forKey: "hidden") ?? "{}"
+        // the manager's picture only when it changed: it is most of a snapshot otherwise
+        if var m = snap["manager"] as? [String: Any], let img = m["image"] as? String {
+            m["hasImage"] = !img.isEmpty
+            if img == managerImageSent { m.removeValue(forKey: "image") } else { managerImageSent = img }
+            snap["manager"] = m
+        }
         watchExits(snap)
         guard let data = try? JSONSerialization.data(withJSONObject: snap),
               let json = String(data: data, encoding: .utf8) else { return }
@@ -385,9 +392,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
         if let sp = body["spot"] { roomClient?.setSpot(sp) }
+        if let a = body["act"] {                                  // "kind|member id"
+            let parts = a.split(separator: "|", maxSplits: 1).map(String.init)
+            if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
+        }
         if body["update"] == "go" { updater.update() }
         if let r = body["room"] {
-            if r == "ready" { roomMembersSent = -1; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
+            if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
         }
         if let t = body["copy"], t.count < 200 {
