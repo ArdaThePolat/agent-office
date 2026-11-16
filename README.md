@@ -67,14 +67,18 @@ Hover an agent for details. **Click a session to bring it to the front where it 
 | started in | a click |
 |---|---|
 | Terminal, iTerm2 | selects that exact tab (and iTerm pane) |
-| VS Code's Claude panel | opens that session's tab (`vscode://anthropic.claude-code/open?session=…`) |
-| a VS Code terminal | raises the VS Code window of that folder (a terminal tab inside it cannot be picked from outside) |
-| the Claude app | brings the Claude app forward (it has no link to one session) |
+| VS Code's Claude panel | brings that project's VS Code window forward and opens the session's tab in it |
+| a VS Code terminal | brings that project's VS Code window forward (a terminal tab inside it cannot be picked from outside) |
+| the Claude app | opens that session in the Claude app (`claude://code/continue?session=…`) |
 
-The first click on a Terminal or iTerm session asks once for permission to control that app;
-raising one VS Code window among several needs **Accessibility** for Agent Office (System Settings
-→ Privacy & Security → Accessibility), without which VS Code is just brought forward. A review desk
-opens its PR.
+VS Code (and Cursor, Windsurf, VSCodium) is found by the folder its window has open: the window
+whose folder holds the session's directory. If no open window holds it, Agent Office falls back to
+matching window titles, which needs **Accessibility** (System Settings → Privacy & Security →
+Accessibility); without it the editor is just brought forward. The first click on a Terminal or
+iTerm session asks once for permission to control that app. A review desk opens its PR.
+
+Sessions already running when you install or update Agent Office learn where they run on their next
+message.
 
 **Right-click an agent** for *Open*, *Reveal folder*, *Copy session id* and *Hide from view*. A
 hidden agent stays out of the office until something new happens to it (you send it a message, it

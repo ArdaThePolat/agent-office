@@ -15,7 +15,7 @@
 #          | background (its turn ended while subagents it started are still running)
 #          | compacting (summarising its context) | idle (started, nothing asked yet)
 #   pid    the Claude process the hook runs under; Agent Office drops a session whose pid is gone
-#   origin where the session runs, so a click can bring it to the front: {app, bundle, tty}
+#   origin where the session runs, so a click can bring it to the front: {app, bundle, tty, host?}
 #          app = terminal | iterm | vscode-terminal | vscode-panel | desktop | headless | other
 #
 # It also appends general events ("waiting for you", "subagent started") to $AGENT_OFFICE_STATE/events.log
@@ -141,11 +141,16 @@ esac
 pid="$(printf '%s' "$cur" | "$JQ" -r '.pid // empty' 2>/dev/null)"
 [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || pid="$(claude_pid)"
 
-# Where the session runs, worked out once per session from what it inherited: the app that
-# started it, and the terminal device a tab can be found by.
+# Where the session runs, worked out from what it inherited: the app that started it, the
+# terminal device a tab can be found by, and the Claude app's own id for the session (which a
+# claude://code/continue link opens). Worked out once, and again when that app id changes,
+# which it does when the app reattaches the session.
 origin=""
+host="${CLAUDE_CODE_HOST_SESSION_ID:-}"
+[[ "$host" =~ ^local_[A-Za-z0-9-]{1,64}$ ]] || host=""
 if [[ "$event" == "SessionStart" || "$event" == "UserPromptSubmit" ]] \
-   && ! printf '%s' "$cur" | grep -q '"origin"'; then
+   && { ! printf '%s' "$cur" | grep -q '"origin"' \
+        || { [[ -n "$host" ]] && ! printf '%s' "$cur" | grep -q "\"$host\""; }; }; then
   tty=""; [[ -n "$pid" ]] && tty="$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')"
   case "$tty" in ""|"??"|"?") tty="" ;; /dev/*) ;; *) tty="/dev/$tty" ;; esac
   bundle="${__CFBundleIdentifier:-}"
@@ -159,7 +164,8 @@ if [[ "$event" == "SessionStart" || "$event" == "UserPromptSubmit" ]] \
                              [[ -z "$tty" && "$bundle" == *[Vv][Ss][Cc]ode* ]] && app="vscode-panel" ;;
   esac
   [[ "$kind" != "session" ]] && app="headless"
-  origin="$("$JQ" -cn --arg app "$app" --arg bundle "$bundle" --arg tty "$tty" '{app: $app, bundle: $bundle, tty: $tty}')"
+  origin="$("$JQ" -cn --arg app "$app" --arg bundle "$bundle" --arg tty "$tty" --arg host "$host" \
+    '{app: $app, bundle: $bundle, tty: $tty} + (if $host != "" then {host: $host} else {} end)')"
 fi
 
 printf '%s' "$cur" | "$JQ" \

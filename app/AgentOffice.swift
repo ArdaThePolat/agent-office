@@ -256,12 +256,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             end tell
             """)
         case "vscode-panel":
-            raiseWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {
+            focusEditorWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {
                 let scheme = bundle.lowercased().contains("todesktop") ? "cursor" : "vscode"
                 if let u = URL(string: "\(scheme)://anthropic.claude-code/open?session=\(id)") { NSWorkspace.shared.open(u) }
             }
         case "vscode-terminal":
-            raiseWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {}
+            focusEditorWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {}
+        case "desktop":
+            // The Claude app opens one of its sessions by the id it gave it (`local_…`), which the
+            // hook records from CLAUDE_CODE_HOST_SESSION_ID.
+            let host = o["host"] as? String ?? ""
+            if host.range(of: "^local_[A-Za-z0-9-]{1,64}$", options: .regularExpression) != nil,
+               let u = URL(string: "claude://code/continue?session=\(host)") {
+                NSWorkspace.shared.open(u); return
+            }
+            if !bundle.isEmpty, activate(bundle: bundle) { return }
         default:
             if !bundle.isEmpty, activate(bundle: bundle) { return }
             if FileManager.default.fileExists(atPath: cwd) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)]) }
@@ -271,6 +280,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @discardableResult func activate(bundle: String) -> Bool {
         guard let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { return false }
         return a.activate()
+    }
+
+    // Bring forward the editor window whose workspace folder holds `folder`. VS Code and its
+    // forks list their open windows' folders in User/globalStorage/storage.json; opening the
+    // deepest folder that contains the session's directory focuses that window instead of
+    // starting a new one, and needs no permission. A folder no open window holds is never opened
+    // (that would create a window): the title match below is the fallback. `then` runs once the
+    // window is in front.
+    func focusEditorWindow(bundle: String, folder: String, then: @escaping () -> Void) {
+        if let root = editorWindowFolder(bundle: bundle, containing: folder) {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                p.arguments = ["-b", bundle, root]
+                p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+                try? p.run(); p.waitUntilExit()
+                // the window has to be the last active one before a vscode:// link is opened,
+                // because the editor hands such a link to its last active window
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: then)
+            }
+            return
+        }
+        raiseWindow(bundle: bundle, folder: folder, then: then)
+    }
+
+    func editorWindowFolder(bundle: String, containing folder: String) -> String? {
+        let b = bundle.lowercased()
+        let dir = b.contains("todesktop") ? "Cursor"
+            : b.contains("insiders") ? "Code - Insiders"
+            : b.contains("vscodium") ? "VSCodium"
+            : b.contains("windsurf") ? "Windsurf"
+            : "Code"
+        let path = NSHomeDirectory() + "/Library/Application Support/\(dir)/User/globalStorage/storage.json"
+        guard !folder.isEmpty, let d = FileManager.default.contents(atPath: path),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let ws = j["windowsState"] as? [String: Any] else { return nil }
+        var wins = ws["openedWindows"] as? [[String: Any]] ?? []
+        if let last = ws["lastActiveWindow"] as? [String: Any] { wins.append(last) }
+        let target = URL(fileURLWithPath: folder).standardizedFileURL.path
+        var best: String?
+        for w in wins {
+            guard let f = w["folder"] as? String, let u = URL(string: f), u.isFileURL else { continue }
+            let root = u.standardizedFileURL.path
+            guard target == root || target.hasPrefix(root.hasSuffix("/") ? root : root + "/") else { continue }
+            if root.count > (best?.count ?? -1) { best = root }
+        }
+        return best
     }
 
     // Raise the app's window whose title names one of the session folder's names (the folder,
