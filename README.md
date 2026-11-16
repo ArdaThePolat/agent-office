@@ -124,9 +124,54 @@ Needs Claude Code 2.1.287 or later. It writes one small file per session under
 `~/.local/state/agent-office/live/`, records no prompts or tool calls, and everything else works
 without it.
 
+### Shared room (optional): one lounge for the team
+
+Teammates on the same office network can share their lounge. Everyone in the room appears in
+everyone's lounge as their own pixel character, their name over their head, drinking coffee and
+playing on the console with the idle agents, and **Chat** (top right, or **C**) talks to the
+whole room. Everything else stays local: your desks, review room and manager's room are yours
+alone, and only you see yourself in the manager's chair.
+
+One Mac hosts the room (its Agent Office has to be open); everyone else needs only the room's
+name and password. Set them in `~/.config/agent-office/config.json`:
+
+```json
+"manager": { "name": "Alex", "image": "~/agent-office/local/me.png" },
+"room": { "name": "team-lounge", "password": "<long random password>", "host": true }
+```
+
+`host: true` on the host's Mac only. Or, on each member's Mac, in `~/.config/agent-office/env`
+(an app opened from the Dock does not see your shell's exports; this file it reads):
+
+```bash
+AGENT_OFFICE_ROOM_NAME=team-lounge
+AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
+```
+
+- **Your character** is your `manager` picture and name. Without a picture you get a drawn one.
+- **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts,
+  and again every 15 minutes while it is not in (`"alwaysJoin": false` looks only once; **Try
+  now** in the chat panel looks at once). If the room is not there, the office is simply local.
+  The first time, macOS asks to let Agent Office find devices on the local network: allow it.
+  On the host it also asks to accept incoming connections.
+- **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
+  block (`AGENT_OFFICE_ROOM_ENABLED=0`).
+- **What is shared:** your name, a small picture and your chat messages. Nothing about your
+  sessions, folders or prompts. Messages are kept in each app's memory only, and are gone when
+  it quits; someone who joins later does not see earlier ones.
+- **Security:** the password never crosses the network. Each connection derives a key from it
+  (HKDF-SHA256 over two fresh random values), proves it knows the password with that key, and
+  encrypts everything after that with AES-GCM, so others on the same network cannot read the
+  chat or join without it. Use a long random password: someone who records a join can try
+  guesses against it offline. After three wrong passwords from one address the host ignores it
+  for 10 minutes.
+
 ## Settings
 
-Agent Office → Settings… (⌘,), all off by default:
+Agent Office → Settings… (⌘,):
+- **Join the shared room** (on by default, does nothing until a room is configured).
+
+The rest are off by default:
 - **Keep on top**: float the window above other apps and across Spaces.
 - **Play a sound**: "Glass" when an agent waits for your permission, "Pop" when one finishes.
 - **Energy saver**: 2 redraws a second instead of 6, no walking or blinking.
@@ -142,6 +187,7 @@ file, not in the repository. Every key is optional.
 ```json
 { "officeState": "~/.local/state/agent-office",
   "manager": { "name": "Alex", "image": "~/agent-office/local/manager.png" },
+  "room": { "name": "team-lounge", "password": "<password>", "host": false, "alwaysJoin": true },
   "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
                "slots": 5, "bitbucketWorkspace": "<workspace>" },
   "sessionKinds": [
@@ -151,6 +197,7 @@ file, not in the repository. Every key is optional.
       "repoAfter": "for the repo '", "title": "clean-reports: {repo}" } ] }
 ```
 
+- **`room`** shares your lounge with your team: see *Shared room* above.
 - **`manager`** adds the manager's room. `image` is any picture of you (PNG, JPEG, WebP…). A plain
   white or transparent background is cut away and the rest redrawn as pixel art, so a pixel-art
   avatar looks best. `name` goes on the desk's name plate. With a name and no image, a drawn
@@ -188,7 +235,10 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
     single `grep`.
 - **`app/AgentOffice.swift`** is the window: a WKWebView around `web/office.html`.
   - It drops a session whose Claude process is gone, so a crashed session never lingers.
-  - There is no server and no port, and nothing runs while the window is closed.
+  - Without a shared room there is no server and no port, and nothing runs while the window is
+    closed.
+- **`app/Room.swift`** is the shared room: the host (a WebSocket listener advertised with
+  Bonjour) and the member connection, with the handshake and encryption described in its header.
 - **`web/office.html`** is the office, drawn in code. Opened in a browser on its own, it shows demo
   data.
 
@@ -198,7 +248,8 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
   prompt is read only to match `sessionKinds`, and the transcript only for the latest model and
   effort. Where a session runs (the app, its terminal device) is recorded so a click can open it.
   With the companion mod, each session's context use, cost, plan usage and subagent states too.
-  Everything stays on your Mac, under `~/.local/state/agent-office/`.
+  Everything stays on your Mac, under `~/.local/state/agent-office/`. The one exception is the
+  optional shared room, which sends your name, picture and chat messages to the room.
 - **CPU and memory:** the app runs at background priority and reads its state only while its window
   is visible. It redraws at most 6 times a second (none while hidden) and draws at most 30 sessions;
   walls, floors and furniture are painted once and cached. Measured on an M-series Mac with the

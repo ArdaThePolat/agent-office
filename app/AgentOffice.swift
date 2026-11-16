@@ -31,14 +31,41 @@ struct Config {
     var workspace = ""
     var managerName = ""
     var managerImage = ""
+    var room = RoomConfig()
+    var roomOff = false                                   // "enabled": false in the room block
+
+    /// KEY=VALUE lines from ~/.config/agent-office/env, then the process environment on top. An app
+    /// opened from the Finder or the Dock does not see a shell's exports, so the file is the way
+    /// to set these for it.
+    static func env() -> [String: String] {
+        var e: [String: String] = [:]
+        if let t = try? String(contentsOfFile: home + "/.config/agent-office/env", encoding: .utf8) {
+            for line in t.split(separator: "\n") {
+                let l = line.trimmingCharacters(in: .whitespaces)
+                guard !l.hasPrefix("#"), let eq = l.firstIndex(of: "=") else { continue }
+                var k = String(l[..<eq]).trimmingCharacters(in: .whitespaces)
+                if k.hasPrefix("export ") { k = String(k.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
+                var v = String(l[l.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+                if v.count >= 2, (v.hasPrefix("\"") && v.hasSuffix("\"")) || (v.hasPrefix("'") && v.hasSuffix("'")) { v = String(v.dropFirst().dropLast()) }
+                e[k] = v
+            }
+        }
+        for (k, v) in ProcessInfo.processInfo.environment where k.hasPrefix("AGENT_OFFICE_") { e[k] = v }
+        return e
+    }
 
     static func load() -> Config {
         var c = Config()
         let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
-        let env = ProcessInfo.processInfo.environment
+        let env = Config.env()
         defer {
             if let s = env["AGENT_OFFICE_MANAGER_NAME"], !s.isEmpty { c.managerName = s }
             if let s = env["AGENT_OFFICE_MANAGER_IMAGE"], !s.isEmpty { c.managerImage = expand(s) }
+            if let s = env["AGENT_OFFICE_ROOM_NAME"], !s.isEmpty { c.room.name = s }
+            if let s = env["AGENT_OFFICE_ROOM_PASSWORD"], !s.isEmpty { c.room.password = s }
+            if let s = env["AGENT_OFFICE_ROOM_HOST"] { c.room.host = ["1", "true", "yes"].contains(s.lowercased()) }
+            if let s = env["AGENT_OFFICE_ROOM_ALWAYS_JOIN"] { c.room.alwaysJoin = !["0", "false", "no"].contains(s.lowercased()) }
+            if let s = env["AGENT_OFFICE_ROOM_ENABLED"] { c.roomOff = ["0", "false", "no"].contains(s.lowercased()) }
         }
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
@@ -52,6 +79,13 @@ struct Config {
         if let m = j["manager"] as? [String: Any] {
             if let s = m["name"] as? String { c.managerName = s }
             if let s = m["image"] as? String { c.managerImage = expand(s) }
+        }
+        if let r = j["room"] as? [String: Any] {
+            if let s = r["name"] as? String { c.room.name = s }
+            if let s = r["password"] as? String { c.room.password = s }
+            if let b = r["host"] as? Bool { c.room.host = b }
+            if let b = r["alwaysJoin"] as? Bool { c.room.alwaysJoin = b }
+            if let b = r["enabled"] as? Bool { c.roomOff = !b }
         }
         return c
     }
@@ -72,18 +106,19 @@ func lines(_ path: String, tailBytes: Int = 0) -> [String] {
     return out
 }
 
-/// The manager's picture as a small PNG data URL: scaled to at most 160 px high, so it costs
-/// a few KB per snapshot however large the file is. Cached by path and modification time.
-var managerCache: (key: String, url: String) = ("", "")
-func managerImageURL(_ path: String) -> String {
+/// The manager's picture as a small PNG data URL: scaled to at most `maxH` px high (160 for the
+/// manager's room, less for the shared room), so it costs a few KB however large the file is.
+/// Cached by path, size and modification time.
+var imageCache: [String: String] = [:]
+func managerImageURL(_ path: String, maxH: Int = 160) -> String {
     guard !path.isEmpty, let attrs = try? FileManager.default.attributesOfItem(atPath: path),
           let m = attrs[.modificationDate] as? Date else { return "" }
-    let key = path + "@" + String(m.timeIntervalSince1970)
-    if managerCache.key == key { return managerCache.url }
+    let key = path + "@" + String(m.timeIntervalSince1970) + "@" + String(maxH)
+    if let hit = imageCache[key] { return hit }
     var url = ""
     if let img = NSImage(contentsOfFile: path),
        let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.height > 0 {
-        let h = min(160, cg.height), w = max(1, cg.width * h / cg.height)
+        let h = min(maxH, cg.height), w = max(1, cg.width * h / cg.height)
         if let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
             ctx.interpolationQuality = .high
@@ -94,7 +129,8 @@ func managerImageURL(_ path: String) -> String {
             }
         }
     }
-    managerCache = (key, url)
+    imageCache = imageCache.filter { $0.key.hasPrefix(path + "@") && $0.key.hasSuffix("@" + String(maxH)) ? false : true }
+    imageCache[key] = url
     return url
 }
 
@@ -174,6 +210,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // ends, instead of at the next poll.
     var exitWatch: [Int: DispatchSourceProcess] = [:]
 
+    // ---- the shared room ----
+    // On when the config names a room with a password, it is not turned off there ("enabled":
+    // false), and "Join the shared room" is ticked in Settings (on by default).
+    var roomHost: RoomHost?
+    var roomClient: RoomClient?
+    var roomRunning = RoomConfig()
+    var roomMembersSent = -1
+    var roomSharing: Bool {
+        get { defaults.object(forKey: "roomSharing") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "roomSharing"); syncRoom() }
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         setpriority(PRIO_PROCESS, 0, 10)                     // background priority: yield to real work
         buildMenu()
@@ -198,7 +246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.push() }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
+        syncRoom()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.push() }
     }
 
@@ -214,6 +263,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         guard let data = try? JSONSerialization.data(withJSONObject: snap),
               let json = String(data: data, encoding: .utf8) else { return }
         web.evaluateJavaScript("window.updateOffice && updateOffice(\(json))", completionHandler: nil)
+    }
+
+    /// Start, stop or restart the room host and the member connection to match the config.
+    func syncRoom() {
+        let cfg = Config.load()
+        let want = cfg.room.enabled && !cfg.roomOff && roomSharing ? cfg.room : RoomConfig()
+        guard want != roomRunning else { return }
+        roomHost?.stop(); roomHost = nil
+        roomClient?.stop(); roomClient = nil
+        roomRunning = want
+        roomMembersSent = -1
+        if want.enabled {
+            if want.host { let h = RoomHost(want); h.start(); roomHost = h }
+            let c = RoomClient(want) {
+                let cfg = Config.load()
+                return (cfg.managerName.isEmpty ? "Teammate" : cfg.managerName, managerImageURL(cfg.managerImage, maxH: 96))
+            }
+            c.onChange = { [weak self] in self?.pushRoom() }
+            // the host's own member waits a moment for its listener to be advertised
+            DispatchQueue.main.asyncAfter(deadline: .now() + (want.host ? 1.5 : 0)) { c.start() }
+            roomClient = c
+        }
+        pushRoom()
+    }
+    /// The room's state to the page; the members' pictures only when the member list changed.
+    func pushRoom() {
+        var o: [String: Any] = ["status": "off"]
+        if let c = roomClient {
+            let fresh = c.membersVersion != roomMembersSent
+            o = c.json(withMembers: fresh)
+            roomMembersSent = c.membersVersion
+        }
+        guard let d = try? JSONSerialization.data(withJSONObject: o), let json = String(data: d, encoding: .utf8) else { return }
+        web.evaluateJavaScript("window.updateRoom && updateRoom(\(json))", completionHandler: nil)
     }
 
     func watchExits(_ snap: [String: Any]) {
@@ -240,6 +323,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
+        if let t = body["say"] { roomClient?.say(t) }
+        if let r = body["room"] {
+            if r == "ready" { roomMembersSent = -1; pushRoom() }        // the page (re)loaded: send everything
+            if r == "join" { roomClient?.join() }
+        }
         if let t = body["copy"], t.count < 200 {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
         }
@@ -434,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 240),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 312),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -453,8 +541,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             eco.frame = NSRect(x: 20, y: 54, width: 350, height: 22)
             let hint3 = NSTextField(wrappingLabelWithString: "Off by default. Redraws 2 times a second instead of 6, with no walking or blinking.")
             hint3.frame = NSRect(x: 38, y: 18, width: 320, height: 32)
-            for h in [hint, hint2, hint3] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let shr = NSButton(checkboxWithTitle: "Join the shared room", target: self, action: #selector(toggleRoom(_:)))
+            shr.state = roomSharing ? .on : .off
+            shr.frame = NSRect(x: 20, y: 270, width: 350, height: 22)
+            let hint4 = NSTextField(wrappingLabelWithString: "On by default, when a room is set up in the config. Your lounge joins your teammates': names, pictures and chat. Nothing about your sessions is shared.")
+            hint4.frame = NSRect(x: 38, y: 224, width: 320, height: 44)
+            for h in [hint, hint2, hint3, hint4] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
@@ -465,6 +558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func toggleTop(_ sender: NSButton) { keepOnTop = sender.state == .on }
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
+    @objc func toggleRoom(_ sender: NSButton) { roomSharing = sender.state == .on }
 
     // Is the hook registered for every event, executable, and actually reporting?
     @objc func checkSetup() {
