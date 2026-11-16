@@ -207,11 +207,12 @@ final class RoomClient {
             }
         }
     }
-    func stop() { retry?.invalidate(); onChange = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
+    private var stopped = false
+    func stop() { stopped = true; retry?.invalidate(); onChange = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
 
     /// Look for the room on the network and join it; if it is not there within 8 seconds, stay local.
     func join() {
-        guard status != "joined" else { return }
+        guard status != "joined", !stopped else { return }
         attempt += 1
         let mine = attempt
         set { $0.status = "looking"; $0.detail = "looking for \($0.cfg.name)…" }
@@ -285,7 +286,7 @@ final class RoomClient {
             welcomed = true
             let list = (m["members"] as? [[String: Any]]) ?? []
             set {
-                $0.status = "joined"; $0.detail = ""; $0.you = m["you"] as? String ?? ""
+                $0.status = "joined"; $0.detail = ""; $0.quick = []; $0.nextTry = nil; $0.you = m["you"] as? String ?? ""
                 $0.members = Dictionary(list.compactMap { x in (x["id"] as? String).map { ($0, x) } }, uniquingKeysWith: { a, _ in a })
                 $0.membersVersion += 1
             }
@@ -308,14 +309,28 @@ final class RoomClient {
         guard conn != nil else { return }
         let wasIn = welcomed
         conn = nil; key = nil; welcomed = false
-        local(wasIn ? "lost the room" : "the room did not let us in (wrong password?)")
+        local(wasIn ? "lost the room" : "the room did not let us in (wrong password?)", lost: wasIn)
     }
-    private func local(_ why: String) {
+    /// Out of the room. Losing a room we were in is usually the host restarting its app or its Mac,
+    /// so the next looks come quickly (after 30 s, then 2 min) before falling back to the 15-minute
+    /// timer; without that, everyone would sit outside for up to 15 minutes after a host restart.
+    private func local(_ why: String, lost: Bool = false) {
         set {
             $0.status = "local"; $0.detail = why; $0.members = [:]; $0.membersVersion += 1
-            $0.nextTry = $0.cfg.alwaysJoin ? Date().addingTimeInterval(15 * 60) : nil
+            if lost { $0.quick = [30, 120] }
+            guard $0.cfg.alwaysJoin else { $0.nextTry = nil; return }
+            if !$0.quick.isEmpty {
+                let d = $0.quick.removeFirst()
+                $0.nextTry = Date().addingTimeInterval(d)
+                DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+                    if let s = self, s.status == "local" { s.join() }
+                }
+            } else {
+                $0.nextTry = Date().addingTimeInterval(15 * 60)
+            }
         }
     }
+    private var quick: [TimeInterval] = []                // main queue: the quick looks still to come
     private func set(_ f: @escaping (RoomClient) -> Void) {
         DispatchQueue.main.async { f(self); self.onChange?() }
     }

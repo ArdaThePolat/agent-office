@@ -19,6 +19,7 @@
 
 import Cocoa
 import WebKit
+import ServiceManagement
 
 let home = FileManager.default.homeDirectoryForCurrentUser.path
 func expand(_ p: String) -> String { p.hasPrefix("~/") ? home + p.dropFirst(1) : p }
@@ -522,7 +523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 312),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 384),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -546,8 +547,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             shr.frame = NSRect(x: 20, y: 270, width: 350, height: 22)
             let hint4 = NSTextField(wrappingLabelWithString: "On by default, when a room is set up in the config. Your lounge joins your teammates': names, pictures and chat. Nothing about your sessions is shared.")
             hint4.frame = NSRect(x: 38, y: 224, width: 320, height: 44)
-            for h in [hint, hint2, hint3, hint4] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let lgn = NSButton(checkboxWithTitle: "Open at login", target: self, action: #selector(toggleLogin(_:)))
+            lgn.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            lgn.frame = NSRect(x: 20, y: 342, width: 350, height: 22)
+            let hint5 = NSTextField(wrappingLabelWithString: "Off by default. Starts Agent Office when you log in, so a room you host is there after a restart. macOS may ask you to allow it in Login Items.")
+            hint5.frame = NSRect(x: 38, y: 296, width: 320, height: 44)
+            for h in [hint, hint2, hint3, hint4, hint5] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
@@ -559,6 +565,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
     @objc func toggleRoom(_ sender: NSButton) { roomSharing = sender.state == .on }
+    // Open at login: registers this app as a login item with macOS. When macOS wants the person
+    // to approve it first, it opens Login Items in System Settings.
+    @objc func toggleLogin(_ sender: NSButton) {
+        let svc = SMAppService.mainApp
+        do {
+            if sender.state == .on { try svc.register() } else { try svc.unregister() }
+        } catch {
+            let a = NSAlert(); a.messageText = "Could not change Open at login"
+            a.informativeText = error.localizedDescription + "\n\nYou can add Agent Office in System Settings → General → Login Items."
+            a.runModal()
+        }
+        if svc.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+        sender.state = svc.status == .enabled ? .on : .off
+    }
 
     // Is the hook registered for every event, executable, and actually reporting?
     @objc func checkSetup() {
