@@ -128,9 +128,50 @@ without it.
 
 Teammates on the same office network can share their lounge. Everyone in the room appears in
 everyone's lounge as their own pixel character, their name over their head, drinking coffee and
-playing on the console with the idle agents, and **Chat** (top right, or **C**) talks to the
-whole room. Everything else stays local: your desks, review room and manager's room are yours
-alone, and only you see yourself in the manager's chair.
+playing on the console, and **Chat** (top right, or **C**) talks to the whole room.
+
+Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
+room, and your agents on a break in the lounge are drawn from your own sessions and are never
+sent anywhere, so each person sees their own agents next to the shared teammates. Only you see
+yourself in the manager's chair.
+
+#### Create a room (one person, the host)
+
+1. Pick who hosts: a Mac that is on the office network and usually has Agent Office open. The
+   room exists only while that app is open.
+2. Make sure the host has a `manager` name (and picture, if they like) in
+   `~/.config/agent-office/config.json`: that is their character in the room.
+3. Add the room to the same file, with a long random password. This prints the password once,
+   to pass on to the team (`team-lounge` is your room's name, pick any):
+
+   ```bash
+   cd ~/.config/agent-office && P=$(openssl rand -base64 18) && jq --arg p "$P" '.room = {name: "team-lounge", password: $p, host: true}' config.json > config.json.new && mv config.json.new config.json && echo "room password: $P"
+   ```
+
+4. Restart Agent Office. macOS asks whether it may accept incoming connections and find devices
+   on the local network: allow both. The **Chat** button appears; it says *you host it*.
+5. Send the room name and password to your team over a private channel.
+
+#### Join a room (everyone else)
+
+1. Install or update Agent Office (`git pull`, then `scripts/build-app.sh`).
+2. Set your character: `manager.name` and `manager.image` in `~/.config/agent-office/config.json`
+   (see *Configuration*).
+3. Add the room's name and password to `~/.config/agent-office/env`:
+
+   ```bash
+   printf 'AGENT_OFFICE_ROOM_NAME=team-lounge\nAGENT_OFFICE_ROOM_PASSWORD=<the password>\n' >> ~/.config/agent-office/env
+   ```
+
+   (or a `room` block with `name` and `password` in `config.json`, without `host`).
+4. Restart Agent Office and allow it to find devices on the local network. Within a few seconds
+   the host and everyone else in the room walk into your lounge; **Chat** shows who is there.
+5. Not in the office, or the host's app closed? Your office is simply local, and it looks for the
+   room again every 15 minutes (or click **Try now** in the chat panel).
+
+To leave, untick Settings → **Join the shared room**.
+
+#### Details
 
 One Mac hosts the room (its Agent Office has to be open); everyone else needs only the room's
 name and password. Set them in `~/.config/agent-office/config.json`:
