@@ -21,6 +21,10 @@ import Network
 import CryptoKit
 
 let ROOM_SERVICE = "_agent-office._tcp"
+// The host listens here, so a member can also join by address when the network hides Bonjour
+// (Wi-Fi that blocks devices announcing themselves, a VPN exit node). Unregistered, and below
+// macOS's range for automatic ports (49152 and up), so the system never hands it out itself.
+let ROOM_PORT: UInt16 = 48731
 let ROOM_MAX_FRAME = 200_000          // bytes, any message
 let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
@@ -31,7 +35,27 @@ struct RoomConfig: Equatable {
     var password = ""
     var host = false
     var alwaysJoin = true
+    var port: UInt16 = ROOM_PORT          // the host's port
+    var address = ""                      // a member's fallback: "host" or "host:port"
     var enabled: Bool { !name.isEmpty && !password.isEmpty }
+
+    /// `address` as an endpoint: a name or an IPv4/IPv6 address, with an optional port.
+    var addressEndpoint: NWEndpoint? {
+        var a = address.trimmingCharacters(in: .whitespaces), port = ROOM_PORT
+        guard !a.isEmpty else { return nil }
+        if a.hasPrefix("["), let close = a.firstIndex(of: "]") {        // [v6]:port
+            let rest = a[a.index(after: close)...]
+            if rest.hasPrefix(":"), let p = UInt16(rest.dropFirst()) { port = p }
+            a = String(a[a.index(after: a.startIndex)..<close])
+        } else if a.filter({ $0 == ":" }).count == 1, let i = a.lastIndex(of: ":"), let p = UInt16(a[a.index(after: i)...]) {
+            port = p; a = String(a[..<i])
+        }
+        guard a.range(of: "^[A-Za-z0-9.:%-]{1,253}$", options: .regularExpression) != nil else { return nil }
+        // a WebSocket client builds its request from a URL, so the endpoint is one
+        let hostPart = a.contains(":") ? "[\(a)]" : a
+        guard let url = URL(string: "ws://\(hostPart):\(port)/") else { return nil }
+        return .url(url)
+    }
 }
 
 func roomKey(password: String, room: String, sn: Data, cn: Data) -> SymmetricKey {
@@ -89,13 +113,24 @@ final class RoomHost {
 
     init(_ cfg: RoomConfig) { self.cfg = cfg }
 
-    func start() {
-        guard let l = try? NWListener(using: wsParameters()) else { onState?("could not open the room"); return }
+    /// Listen on the room's port; if something else holds it, on any free port (members then find
+    /// the room by name only).
+    func start(anyPort: Bool = false) {
+        let port = anyPort ? nil : NWEndpoint.Port(rawValue: cfg.port)
+        guard let l = (try? port.map { try NWListener(using: wsParameters(), on: $0) } ?? NWListener(using: wsParameters())) else {
+            if !anyPort { start(anyPort: true) } else { onState?("could not open the room") }
+            return
+        }
         l.service = NWListener.Service(name: cfg.name, type: ROOM_SERVICE)
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         l.stateUpdateHandler = { [weak self] s in
-            if case .failed(let e) = s { self?.onState?("room stopped: \(e)") }
-            if case .ready = s { self?.onState?("hosting") }
+            guard let self else { return }
+            if case .failed(let e) = s {
+                l.cancel()
+                if !anyPort { self.onState?("port \(self.cfg.port) is taken (\(e)); using any port"); self.q.async { self.start(anyPort: true) } }
+                else { self.onState?("room stopped: \(e)") }
+            }
+            if case .ready = s { self.onState?("hosting on port \(l.port?.rawValue ?? 0)") }
         }
         l.start(queue: q)
         listener = l
@@ -192,6 +227,7 @@ final class RoomClient {
     private var conn: NWConnection?
     private var key: SymmetricKey?
     private var welcomed = false                          // the host accepted our password
+    private var gotHello = false                          // a room answered at all
     private var found = 0                                 // the attempt that found the room
     private var cn = Data()
     private var retry: Timer?
@@ -207,6 +243,7 @@ final class RoomClient {
             }
         }
     }
+    var discover = true                                   // look for the room by name (off: by address only)
     private var stopped = false
     func stop() { stopped = true; retry?.invalidate(); onChange = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
 
@@ -218,7 +255,7 @@ final class RoomClient {
         set { $0.status = "looking"; $0.detail = "looking for \($0.cfg.name)…" }
         q.async {
             self.browser?.cancel()
-            let b = NWBrowser(for: .bonjour(type: ROOM_SERVICE, domain: nil), using: .tcp)
+            let b = NWBrowser(for: .bonjour(type: self.discover ? ROOM_SERVICE : "_agent-office-none._tcp", domain: nil), using: .tcp)
             b.browseResultsChangedHandler = { [weak self] results, _ in
                 guard let self, self.conn == nil else { return }
                 for r in results {
@@ -231,10 +268,20 @@ final class RoomClient {
             }
             b.start(queue: self.q)
             self.browser = b
+            // not announced on this network within 3 s: try the address, when there is one
+            if let ep = self.cfg.addressEndpoint {
+                self.q.asyncAfter(deadline: .now() + 3) {
+                    guard self.attempt == mine, self.found != mine, self.conn == nil else { return }
+                    self.browser?.cancel(); self.browser = nil
+                    self.found = mine
+                    self.set { $0.detail = "trying \($0.cfg.address)…" }
+                    self.connect(ep)
+                }
+            }
             self.q.asyncAfter(deadline: .now() + 8) {
                 guard self.attempt == mine, self.found != mine, self.conn == nil else { return }
                 self.browser?.cancel(); self.browser = nil
-                self.local("the room is not on this network")
+                self.local("the room is not on this network" + (self.cfg.address.isEmpty ? "" : " or at \(self.cfg.address)"))
             }
         }
     }
@@ -251,7 +298,7 @@ final class RoomClient {
 
     private func connect(_ endpoint: NWEndpoint) {
         let c = NWConnection(to: endpoint, using: wsParameters())
-        conn = c; key = nil; welcomed = false
+        conn = c; key = nil; welcomed = false; gotHello = false
         c.stateUpdateHandler = { [weak self] s in
             switch s {
             case .failed, .cancelled: self?.closed()
@@ -273,6 +320,7 @@ final class RoomClient {
     private func handle(_ c: NWConnection, _ msg: [String: Any]) {
         if key == nil {
             guard msg["t"] as? String == "hello", let ss = msg["sn"] as? String, let sn = Data(base64Encoded: ss), sn.count == 16 else { return }
+            gotHello = true
             cn = randomBytes(16)
             let k = roomKey(password: cfg.password, room: cfg.name, sn: sn, cn: cn)
             let proof = Data(HMAC<SHA256>.authenticationCode(for: Data("member".utf8), using: k))
@@ -307,9 +355,10 @@ final class RoomClient {
     }
     private func closed() {
         guard conn != nil else { return }
-        let wasIn = welcomed
-        conn = nil; key = nil; welcomed = false
-        local(wasIn ? "lost the room" : "the room did not let us in (wrong password?)", lost: wasIn)
+        let wasIn = welcomed, answered = gotHello
+        conn = nil; key = nil; welcomed = false; gotHello = false
+        local(wasIn ? "lost the room" : answered ? "the room did not let us in (wrong password?)"
+              : "could not reach the room" + (cfg.address.isEmpty ? "" : " at \(cfg.address)"), lost: wasIn)
     }
     /// Out of the room. Losing a room we were in is usually the host restarting its app or its Mac,
     /// so the next looks come quickly (after 30 s, then 2 min) before falling back to the 15-minute
