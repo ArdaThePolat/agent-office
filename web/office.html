@@ -1,0 +1,666 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Office</title>
+<style>
+  :root { --bg: #1b1820; --panel: #241f27; --text: #f1ebe2; --muted: #a79d93; --line: #3d332e; --accent: #8fd6b4; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 12px/1.35 Menlo, ui-monospace, monospace; overflow: hidden; }
+  #wrap { position: absolute; inset: 0 0 var(--log-h, 92px) 0; overflow-y: auto; overflow-x: hidden; }
+  canvas { display: block; image-rendering: pixelated; }
+  #log { position: absolute; left: 0; right: 0; bottom: 0; height: var(--log-h, 92px);
+    background: var(--panel); border-top: 3px solid var(--line); padding: 6px 10px; overflow: hidden; }
+  #log .row { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #log .row:nth-child(n+2) { color: var(--muted); }
+  #log .t { color: var(--accent); margin-right: 8px; }
+  #tip { position: fixed; pointer-events: none; background: #15121aee; color: var(--text);
+    border: 1px solid #5a4a3e; padding: 6px 8px; max-width: 320px; display: none;
+    border-radius: 4px; z-index: 5; white-space: pre-wrap; }
+  #menu { position: fixed; display: none; z-index: 6; min-width: 190px; padding: 4px;
+    background: #211c24f5; border: 1px solid #5a4a3e; border-radius: 6px; box-shadow: 0 6px 20px #0008; }
+  #menu button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text);
+    font: inherit; padding: 5px 8px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #menu button:hover { background: #3a302c; }
+  #menu .head { color: var(--muted); padding: 3px 8px 5px; font-size: 11px; border-bottom: 1px solid #3a302c; margin-bottom: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  #demo { position: fixed; top: 6px; right: 8px; color: var(--muted); font-size: 10px; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="log"></div>
+<div id="tip"></div>
+<div id="menu"></div>
+<div id="demo"></div>
+<script>
+// Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
+// in a plain browser (no app bridge) it animates demo data. All art is drawn here, in code.
+//
+// Cost: at most FPS redraws a second (ENERGY_FPS with Energy saver on), none while the page is
+// hidden, and at most MAX_SESSIONS sessions drawn. The rooms themselves (walls, floors, windows,
+// furniture that never moves) are painted once into an offscreen layer and only repainted when
+// the layout or the minute changes; a frame paints that layer plus the people.
+"use strict";
+const cv = document.getElementById("c"), ctx = cv.getContext("2d");
+const tip = document.getElementById("tip"), logEl = document.getElementById("log"), wrap = document.getElementById("wrap");
+const menu = document.getElementById("menu");
+const P = 3;                          // one art pixel = P CSS pixels
+const FPS = 6, ENERGY_FPS = 2;        // redraws per second (pixel art needs no more)
+const MAX_SESSIONS = 30;              // drawn in the others room; the rest are counted
+const WALK_MS = 1400;                 // walking in or out of the door
+const DONE_FRESH = 30 * 60;           // "done, your turn" for this long, then plain idle
+const STALL_AFTER = 10 * 60;          // working with no heartbeat this long reads as stalled
+const WALL = 16;                      // height of a room's back wall, in art pixels
+let snap = null, hits = [], frame = 0, energy = false;
+const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.office;
+let g = ctx;                          // the canvas being painted: the screen, or the room layer
+
+// ---------- small helpers ----------
+function hash(s) { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+const SHIRTS = ["#5b8def", "#e06c6c", "#5fbf7f", "#b98be0", "#f0a35e", "#4fc1c9", "#e3c74f", "#8f9bd9", "#d77fae", "#7fbf4f"];
+const HAIRS = ["#2b1d14", "#5a3a22", "#a8723e", "#1b1b22", "#d9c27a", "#7a4b2a", "#3c3c46", "#b8483a"];
+const SKINS = ["#f1c9a5", "#e0ac83", "#c68b5e", "#8d5a3b", "#f5d6bd"];
+const PANTS = ["#3b4258", "#4a3b35", "#2f3a3a", "#4b4b55"];
+// Shirt = the team colour (one per repo folder); hair, skin and hairstyle = the individual.
+function look(id, team) {
+  const h = hash(id);
+  return { shirt: SHIRTS[hash(team || id) % SHIRTS.length], hair: HAIRS[(h >>> 4) % HAIRS.length], skin: SKINS[(h >>> 8) % 5],
+           style: (h >>> 12) % 5, pants: PANTS[(h >>> 16) % 4], seed: h };
+}
+function shade(hex, k) {   // k < 0 darker, k > 0 lighter
+  const n = parseInt(hex.slice(1, 7), 16), f = c => Math.max(0, Math.min(255, Math.round(k < 0 ? c * (1 + k) : c + (255 - c) * k)));
+  return "#" + [n >> 16, (n >> 8) & 255, n & 255].map(f).map(c => c.toString(16).padStart(2, "0")).join("");
+}
+function mins(sec) { const m = Math.max(0, Math.round(sec / 60)); return m < 60 ? m + "m" : Math.floor(m / 60) + "h" + String(m % 60).padStart(2, "0"); }
+function base(p) { return (p || "").split("/").filter(Boolean).slice(-2).join("/"); }
+function hhmm(t) { const d = new Date(t * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+function clip(s, n) { s = s || ""; return s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s; }
+function team(cwd) { return (cwd || "").split("/").filter(Boolean).slice(0, 6).join("/"); }
+// "claude-opus-5-5" → "Opus 5.5", "claude-sonnet-5-5-20261001" → "Sonnet 5.5"
+function modelName(m) {
+  const p = String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "").replace(/\[.*\]$/, "").split("-");
+  if (!p[0]) return "";
+  return p[0][0].toUpperCase() + p[0].slice(1) + (p.length > 1 ? " " + p.slice(1).join(".") : "");
+}
+function esc(s) { return String(s).replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "&amp;", '"': "&quot;" })[c]); }
+
+// What a session shows: its recorded state, with time taken into account.
+function shown(s) {
+  if (s.state === "working" && s.beat && snap.now - s.beat > STALL_AFTER) return "stalled";
+  if (s.state === "done" && s.since && snap.now - s.since > DONE_FRESH) return "idle";
+  return s.state || "idle";
+}
+
+// ---------- hidden agents ----------
+// Right-click → "Hide from view" stores the session's state and since. It stays hidden while both
+// are unchanged; the moment the session does something new (you send it a message, it asks for a
+// permission, its turn ends, it errors) the state changes and it walks back in. A hidden session
+// that ends is forgotten. The list lives in the app's preferences (in a browser: localStorage).
+let hidden = {}, hiddenLoaded = false;
+function saveHidden() {
+  const s = JSON.stringify(hidden);
+  if (bridge) bridge.postMessage({ hidden: s }); else try { localStorage.setItem("agentOffice.hidden", s); } catch (e) {}
+}
+function loadHidden(raw) {
+  if (hiddenLoaded) return; hiddenLoaded = true;
+  try { hidden = JSON.parse(bridge ? (raw.hidden || "{}") : (localStorage.getItem("agentOffice.hidden") || "{}")) || {}; } catch (e) { hidden = {}; }
+}
+function hideSession(s) { hidden[s.id] = { state: s.state || "", since: s.since || 0, title: s.title || "" }; saveHidden(); refresh(); }
+function unhideAll() { hidden = {}; saveHidden(); refresh(); }
+
+// pr-watch's log line → a general event, or null
+function reviewEvent(line) {
+  const m = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \[pr-watch\] (.*)$/); if (!m) return null;
+  const t = Date.parse(m[1].replace(" ", "T")) / 1000, msg = m[2];
+  const pr = (msg.match(/^([\w.-]+#\d+)/) || [])[1]; if (!pr) return null;
+  const rules = [
+    [/review started/, "🔍 review started"], [/posted comment/, "📝 review posted"],
+    [/Slack notified \(safe\)/, "✅ safe to merge"], [/Slack notified \(nits\)/, "🟢 safe, nits only"],
+    [/FAILED, temporary/, "↻ review hit a network error, will retry"], [/FAILED/, "⚠️ review failed"],
+    [/only a sync/, "↔ only a main sync, not re-reviewed"], [/you approved it/, "👍 approved by you, skipped"],
+    [/removed from the queue by you/, "✋ removed by you"],
+  ];
+  for (const [re, text] of rules) if (re.test(msg)) return { t, text: text + " · " + pr };
+  return null;
+}
+
+let lastRaw = null;
+function build(raw) {
+  loadHidden(raw);
+  const reviews = (raw.reviews || []).map(l => l.split("\t")).filter(f => f.length >= 8)
+    .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], started: f[5], title: f[7] }));
+  const queue = (raw.queue || []).map(l => l.split("\t")).filter(f => f.length >= 7)
+    .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], manual: f[5] === "manual", title: f[6] }));
+  const sessions = (raw.sessions || []).filter(s => s && s.id);
+  const reviewRepos = new Set(reviews.map(r => r.name));
+  const manualReviews = sessions.filter(s => s.kind === "review" && !reviewRepos.has((s.cwd || "").split("/").pop()));
+  // hidden sessions: still hidden while nothing new happened, back in view the moment it did
+  let changed = false;
+  const ids = new Set(sessions.map(s => s.id));
+  for (const id of Object.keys(hidden)) if (!ids.has(id)) { delete hidden[id]; changed = true; }
+  const isHidden = s => {
+    const h = hidden[s.id]; if (!h) return false;
+    if (h.state === (s.state || "") && h.since === (s.since || 0)) return true;
+    delete hidden[s.id]; changed = true; return false;
+  };
+  // people who need you first, then working, then the rest; only the first MAX_SESSIONS are drawn
+  const rank = { waiting: 0, crashed: 1, done: 2, working: 3, compacting: 3, background: 3, idle: 4 };
+  const all = sessions.filter(s => s.kind !== "review");
+  const visible = all.filter(s => !isHidden(s))
+    .sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || (b.updated || 0) - (a.updated || 0));
+  if (changed) saveHidden();
+  const events = [];
+  for (const l of raw.officeEvents || []) { const f = l.split("\t"); if (f.length >= 3) events.push({ t: +f[0], text: f.slice(2).join(" ") }); }
+  for (const l of raw.reviewLog || []) { const e = reviewEvent(l); if (e) events.push(e); }
+  events.sort((a, b) => b.t - a.t);
+  energy = !!(raw.settings && raw.settings.energySaver);
+  return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
+           overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.length - visible.length,
+           events, workspace: raw.workspace || "", slots: raw.slots || 5 };
+}
+
+// ---------- arrivals, departures, chimes ----------
+// actors: every character the office has seen, by id → {born, gone, small, last: where it was drawn}.
+const actors = new Map(); let seenOnce = false; const lastState = new Map();
+function track(next) {
+  const t = performance.now(), ids = new Set();
+  const add = (id, small) => { ids.add(id); if (!actors.has(id)) actors.set(id, { born: seenOnce && !energy ? t : -1e9, gone: null, small }); else actors.get(id).gone = null; };
+  next.reviews.forEach(r => add("r:" + r.slug + r.id));
+  next.manualReviews.forEach(s => add("r:" + s.id));
+  next.others.forEach(s => { add(s.id); Object.keys(s.subagents || {}).forEach(a => add(a, true)); });
+  for (const [id, a] of actors) if (!ids.has(id) && a.gone === null) a.gone = seenOnce && a.last && !energy ? t : t - WALK_MS;
+  for (const [id, a] of actors) if (a.gone !== null && t - a.gone > WALK_MS) actors.delete(id);
+  // chimes: a session that has just started waiting for you, or just finished its turn
+  if (seenOnce && bridge) for (const s of next.all) {
+    const before = lastState.get(s.id);
+    if (before && before !== s.state && (s.state === "waiting" || s.state === "done")) bridge.postMessage({ chime: s.state });
+  }
+  lastState.clear(); next.all.forEach(s => lastState.set(s.id, s.state));
+  seenOnce = true;
+}
+// where a character is drawn: walking from the room's door while arriving
+function placed(id, x, y, doorX, doorY) {
+  const a = actors.get(id), t = performance.now();
+  if (a) a.last = { x, y, doorX, doorY };
+  if (!a || t - a.born >= WALK_MS) return { x, y, walking: false };
+  const k = (t - a.born) / WALK_MS;
+  return { x: Math.round(doorX + (x - doorX) * k), y: Math.round(doorY + (y - doorY) * k), walking: true };
+}
+
+// ---------- drawing primitives (art pixels) ----------
+function px(x, y, w, h, c) { g.fillStyle = c; g.fillRect(x * P, y * P, w * P, h * P); }
+function text(s, x, y, color, size, align, weight) {
+  g.fillStyle = color || "#f1ebe2"; g.font = (weight || "") + " " + (size || 10) + "px Menlo, monospace";
+  g.textAlign = align || "left"; g.textBaseline = "top"; g.fillText(s, x, y);
+}
+// text on a small dark plate, so it reads on any floor
+function label(s, x, y, color, size, align) {
+  g.font = (size || 10) + "px Menlo, monospace";
+  const w = g.measureText(s).width, h = (size || 10) + 3, lx = align === "center" ? x - w / 2 : align === "right" ? x - w : x;
+  g.fillStyle = "#17131bcc"; g.fillRect(Math.round(lx - 3), Math.round(y - 1.5), Math.round(w + 6), h);
+  text(s, x, y, color, size, align);
+}
+
+// ----- the room layer: walls, floors, windows, furniture that never moves -----
+function skyFor(h) {
+  if (h >= 8 && h < 17) return { top: "#86c1ea", bot: "#c4e6f7", kind: "day" };
+  if ((h >= 17 && h < 20) || (h >= 6 && h < 8)) return { top: "#d9806a", bot: "#f6c48f", kind: "dusk" };
+  return { top: "#1a2140", bot: "#2b3560", kind: "night" };
+}
+function windowAt(x, y, w, h, sky, seed) {
+  px(x - 1, y - 1, w + 2, h + 2, "#eae2d2");                     // frame
+  for (let j = 0; j < h; j++) px(x, y + j, w, 1, j < h / 2 ? sky.top : sky.bot);
+  if (sky.kind === "day") { px(x + 2 + seed % 3, y + 2, 4, 1, "#ffffff"); px(x + 3 + seed % 3, y + 1, 2, 1, "#ffffff"); }
+  if (sky.kind === "night") {
+    for (let k = 0; k < 3; k++) px(x + 1 + (seed * (k + 3)) % (w - 2), y + 1 + (seed >> k) % 3, 1, 1, "#fff3c2");
+    for (let k = 0; k < w; k += 3) px(x + k, y + h - 2 - (seed + k) % 2, 2, 2 + (seed + k) % 2, "#202640");
+    px(x + 1 + seed % (w - 2), y + h - 2, 1, 1, "#f2c35e");
+  }
+  if (sky.kind === "dusk") px(x + w - 4, y + h - 3, 3, 2, "#ffd27a");
+  px(x + Math.floor(w / 2), y, 1, h, "#eae2d2"); px(x, y + Math.floor(h / 2), w, 1, "#eae2d2");   // mullions
+  px(x - 2, y + h + 1, w + 4, 1, "#cfc3ad");                      // sill
+}
+function wall(x, y, w, face, low) {
+  px(x, y, w, 2, "#3b2c27");                                      // ceiling trim
+  px(x, y + 2, w, 13, face);
+  px(x, y + 11, w, 4, low);                                       // wainscot
+  px(x, y + 11, w, 1, shade(low, 0.25));                          // chair rail
+  px(x, y + 15, w, 1, "#2c221e");                                 // skirting
+  for (let k = 0; k < 3; k++) px(x, y + 16 + k, w, 1, `rgba(0,0,0,${0.16 - k * 0.05})`);   // the wall's shadow on the floor
+}
+function woodFloor(x, y, w, h) {
+  const tones = ["#8c6446", "#83603f", "#93694a", "#7c5a3c"];
+  for (let j = 0, row = 0; j < h; j += 4, row++) {
+    px(x, y + j, w, Math.min(3, h - j), tones[(row * 3) % 4]);
+    if (j + 3 < h) px(x, y + j + 3, w, 1, "#5f4430");
+    const off = (row * 13) % 24;
+    for (let i = off; i < w; i += 24) px(x + i, y + j, 1, Math.min(3, h - j), "#5f4430");
+    for (let i = (row * 7) % 11; i < w; i += 11) px(x + i, y + j + 1, 2, 1, shade(tones[(row * 3) % 4], -0.07));
+  }
+}
+function carpet(x, y, w, h) {
+  px(x, y, w, h, "#45606a");
+  for (let j = 2; j < h; j += 5) for (let i = (j % 10 ? 2 : 4); i < w; i += 5) px(x + i, y + j, 1, 1, "#4f6d78");
+}
+function rug(x, y, w, h, c) {      // a soft rug in the team's colour, the floor showing through
+  const fill = c + "2e", edge = c + "66";
+  px(x + 1, y, w - 2, h, fill); px(x, y + 1, 1, h - 2, fill); px(x + w - 1, y + 1, 1, h - 2, fill);
+  px(x + 2, y + 2, w - 4, 1, edge); px(x + 2, y + h - 3, w - 4, 1, edge);
+  px(x + 2, y + 3, 1, h - 6, edge); px(x + w - 3, y + 3, 1, h - 6, edge);
+}
+function plant(x, y, tall) {        // (x, y) = bottom-left of the pot
+  const leaves = ["#3c6e3a", "#4f8a4a", "#68a85e"], hgt = tall ? 14 : 8;
+  px(x + 1, y + 1, 6, 1, "#00000030");
+  for (let k = 0; k < hgt; k++) {
+    const wv = tall ? 3 + (k % 3) : 2 + (k % 2), cx = x + 4 - Math.floor(wv / 2) + ((k % 4) - 1.5 > 0 ? 1 : -1);
+    px(cx, y - 5 - k, wv, 1, leaves[k % 3]);
+  }
+  px(x + 1, y - 7, 2, 2, leaves[2]); px(x + 5, y - 9, 2, 2, leaves[1]);
+  px(x + 1, y - 5, 6, 5, "#b5653f"); px(x + 1, y - 5, 6, 1, "#cf7c52"); px(x + 2, y - 1, 4, 1, "#954e30");
+}
+function door(x, y) {              // in a back wall whose top is y
+  px(x, y + 2, 9, 14, "#4a3426"); px(x + 1, y + 3, 7, 13, "#8c6446");
+  px(x + 2, y + 4, 5, 4, "#9c7454"); px(x + 2, y + 9, 5, 6, "#9c7454"); px(x + 7, y + 10, 1, 1, "#e3c74f");
+}
+function clock(x, y) {
+  const d = new Date(), hr = d.getHours() % 12, mn = d.getMinutes();
+  px(x + 1, y, 5, 7, "#3b2c27"); px(x, y + 1, 7, 5, "#3b2c27"); px(x + 1, y + 1, 5, 5, "#f4efe4");
+  const c = [x + 3, y + 3];
+  px(c[0], c[1], 1, 1, "#2a2a2a");
+  const mdir = [[0, -2], [1, -2], [2, -1], [2, 0], [2, 1], [1, 2], [0, 2], [-1, 2], [-2, 1], [-2, 0], [-2, -1], [-1, -2]][Math.floor(mn / 5)];
+  px(c[0] + mdir[0], c[1] + mdir[1], 1, 1, "#2a2a2a");
+  const hdir = [[0, -1], [1, -1], [1, -1], [1, 0], [1, 1], [1, 1], [0, 1], [-1, 1], [-1, 1], [-1, 0], [-1, -1], [-1, -1]][hr];
+  px(c[0] + hdir[0], c[1] + hdir[1], 1, 1, "#b8483a");
+}
+function frameArt(x, y, seed) {
+  const pals = [["#e3c74f", "#5b8def", "#5fbf7f"], ["#e06c6c", "#f0a35e", "#3b4258"], ["#8fd6b4", "#b98be0", "#f4efe4"]][seed % 3];
+  px(x, y, 9, 7, "#3b2c27"); px(x + 1, y + 1, 7, 5, pals[2]);
+  px(x + 2, y + 3, 3, 2, pals[0]); px(x + 4, y + 2, 3, 3, pals[1]);
+}
+function sign(s, x, y) {           // a wooden plaque on the wall
+  g.font = "bold 10px Menlo, monospace";
+  const w = Math.ceil(g.measureText(s).width / P) + 6;
+  px(x, y, w, 7, "#5e4232"); px(x + 1, y + 1, w - 2, 5, "#8c6446"); px(x + 1, y + 1, w - 2, 1, "#a37a58");
+  text(s, (x + 3) * P, (y + 1.6) * P, "#fbf3e4", 10, "left", "bold");
+}
+function bookshelf(x, y) {         // (x, y) = top-left; stands against the wall
+  px(x, y, 12, 17, "#5e4232"); px(x + 1, y + 1, 10, 15, "#3b2a22");
+  const books = ["#b8483a", "#5b8def", "#e3c74f", "#5fbf7f", "#b98be0", "#f0a35e"];
+  for (let s = 0; s < 3; s++) {
+    let bx = x + 1;
+    for (let k = 0; bx < x + 11; k++) { const bw = 1 + ((k + s) % 2); px(bx, y + 1 + s * 5 + ((k + s) % 3 === 0 ? 1 : 0), bw, 4 - ((k + s) % 3 === 0 ? 1 : 0), books[(k * 2 + s) % 6]); bx += bw; }
+    px(x + 1, y + 5 + s * 5, 10, 1, "#5e4232");
+  }
+  px(x + 1, y + 17, 10, 1, "#00000035");
+}
+function whiteboard(x, y, w) {
+  px(x, y, w, 8, "#cfc8bb"); px(x + 1, y + 1, w - 2, 6, "#f7f5f0");
+  px(x + 2, y + 2, Math.floor(w / 3), 1, "#5b8def"); px(x + 2, y + 4, Math.floor(w / 2), 1, "#e06c6c");
+  px(x + w - 7, y + 2, 4, 3, "#5fbf7f"); px(x + 2, y + 8, w - 4, 1, "#9c9387");
+}
+function coffee(x, y) {            // (x, y) = bottom-left
+  px(x, y - 3, 8, 3, "#9b7350"); px(x, y - 3, 8, 1, "#c49a6c");
+  px(x + 1, y - 10, 6, 7, "#3a3f4b"); px(x + 2, y - 9, 4, 2, "#8fd6b4"); px(x + 3, y - 6, 2, 1, "#1b1820");
+  px(x + 3, y - 5, 2, 2, "#f4efe4");
+}
+function sofaBack(x, y, w) { px(x, y, w, 7, "#6f5a8f"); px(x, y, w, 1, "#8873a8"); }
+function sofaFront(x, y, w) {
+  px(x + 2, y + 7, w - 4, 4, "#7d68a0"); px(x + 2, y + 7, w - 4, 1, "#9783b8");
+  px(x, y + 2, 3, 9, "#5e4b7c"); px(x + w - 3, y + 2, 3, 9, "#5e4b7c");
+  px(x + 1, y + 11, w - 2, 1, "#00000035");
+}
+
+// The room layer, for this layout and this minute.
+const layer = document.createElement("canvas"), lctx = layer.getContext("2d");
+let layerKey = "";
+function paintRooms(L) {
+  const sky = skyFor(new Date().getHours()), cols = L.cols;
+  // review room: blue-grey walls, carpet
+  wall(0, 0, cols, "#6f7f99", "#58667c");
+  carpet(0, WALL, cols, L.reviewH - WALL);
+  door(3, 0);
+  const winW = 16, from = 44, deskSpan = L.bx - 14 - from;
+  for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
+    windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
+  clock(L.bx - 10, 4);
+  whiteboard(L.bx + 4, 3, Math.max(12, Math.min(26, L.benchW - 16)));
+  plant(L.bx - 9, WALL + 9, true);
+  coffee(cols - 10, WALL + 9);
+  plant(L.cols - 9, L.reviewH - 2, false);
+  sign("REVIEW ROOM", 13, 3);
+  // the others room: warm walls, wood floor
+  const oy = L.oy;
+  wall(0, oy, cols, "#b9a184", "#8e7458");
+  woodFloor(0, oy + WALL, cols, L.othersH - WALL);
+  door(3, oy);
+  const span = cols - 40 - 20;
+  for (let k = 0, nW = Math.max(1, Math.floor(span / 48)); k < nW; k++) {
+    const wx = Math.round(40 + (k + 0.5) * span / nW - 8);
+    windowAt(wx, oy + 4, 16, 7, sky, 3 + k * 11);
+    if (sky.kind === "day") for (let j = 0; j < 16; j++) px(wx - 1 - Math.floor(j / 3), oy + WALL + j, 18 + Math.floor(j / 3) * 2, 1, "rgba(255,238,190,0.06)");
+    if (k < nW - 1) frameArt(Math.round(wx + span / nW / 2 + 3), oy + 4, k);
+  }
+  bookshelf(cols - 15, oy + WALL - 10);
+  plant(cols - 24, oy + WALL + 3, false);
+  sign("OTHERS", 13, oy + 3);
+  // team rugs
+  for (const c of L.cells) rug(c.x - 3, c.y + 1, L.teamW - 6, c.h - 4, c.rug);
+  // night: the whole office a little dimmer
+  if (sky.kind === "night") px(0, 0, cols, L.reviewH + L.othersH + 3, "rgba(12,12,40,0.16)");
+  // room edges
+  px(0, 0, 1, L.reviewH, "#2c221e"); px(cols - 1, 0, 1, L.reviewH, "#2c221e");
+  px(0, oy, 1, L.othersH, "#2c221e"); px(cols - 1, oy, 1, L.othersH, "#2c221e");
+  px(0, L.reviewH, cols, 3, "#2c221e");
+}
+
+// ----- things drawn every frame -----
+function chair(x, y, s) { // behind a seated person at (x, y)
+  const u = v => Math.round(v * s);
+  px(x - u(1), y + u(4), u(10), u(9), "#353a46"); px(x - u(1), y + u(4), u(10), 1, "#4a505f");
+}
+// A person seated (or walking); small = a subagent.
+function person(x, y, id, teamKey, state, small, walking) {
+  const L = look(id, teamKey), s = small ? 0.7 : 1, u = v => Math.max(1, Math.round(v * s));
+  const bob = (state === "working" && frame % 2) || (walking && frame % 2) ? 1 : 0;
+  const blink = !energy && ((performance.now() + (L.seed % 5000)) % (3600 + L.seed % 2400)) < 170;
+  const closed = blink || state === "idle";
+  const yb = y + bob, shirt = state === "crashed" ? "#8a4b4b" : L.shirt;
+  if (walking) px(x + u(1), y + u(15), u(6), 1, "#00000035");
+  // head
+  px(x + u(1), yb + u(1), u(6), u(5), L.skin);
+  px(x + u(1), yb + u(5), u(6), 1, shade(L.skin, -0.1));
+  // hair: 0 short, 1 long, 2 bun, 3 cap, 4 side part
+  px(x + u(1), yb, u(6), u(2), L.hair);
+  if (L.style === 1) { px(x, yb + u(1), u(1), u(5), L.hair); px(x + u(7), yb + u(1), u(1), u(5), L.hair); }
+  if (L.style === 2) px(x + u(3), yb - 1, u(2), 1, L.hair);
+  if (L.style === 3) { px(x + u(1), yb, u(6), u(2), shade(L.shirt, -0.3)); px(x + u(5), yb + u(1), u(3), 1, shade(L.shirt, -0.45)); }
+  if (L.style === 4) px(x + u(1), yb + u(2), u(2), 1, L.hair);
+  const eye = closed ? shade(L.skin, -0.2) : "#1b1820";
+  px(x + u(2), yb + u(3), 1, closed ? 0.34 : 1, eye); px(x + u(5), yb + u(3), 1, closed ? 0.34 : 1, eye);
+  if (!small && state !== "crashed" && state !== "waiting") px(x + u(3), yb + u(4) + 0.6, u(2), 0.4, shade(L.skin, -0.25));
+  if (state === "waiting" && !small) px(x + u(3) + 0.3, yb + u(4), 1, 1, shade(L.skin, -0.35));    // "o"
+  // body
+  px(x, y + u(6), u(8), u(6), shirt);
+  px(x, y + u(11), u(8), 1, shade(shirt, -0.25));
+  px(x + u(3), y + u(6), u(2), 1, shade(shirt, 0.35));            // collar
+  if (walking) {
+    px(x + u(1), y + u(12), u(2), u(3) - (frame % 2), L.pants); px(x + u(5), y + u(12), u(2), u(2) + (frame % 2), L.pants);
+  } else if (state === "working") {
+    px(x - 1, y + u(8) + (frame % 2), 2, 2, L.skin); px(x + u(8) - 1, y + u(8) + ((frame + 1) % 2), 2, 2, L.skin);
+  } else {
+    px(x - 1, y + u(7), 1, u(4), shade(shirt, -0.15)); px(x + u(8), y + u(7), 1, u(4), shade(shirt, -0.15));
+  }
+}
+const GLOW = () => ({ on: frame % 4 < 2 ? "#8fd6b4" : "#7cc6a4", wait: frame % 2 ? "#ffb347" : "#c98a35", err: "#c0605c", off: "#2c303a" });
+function desk(x, y, w, screen, small, seed) {
+  const mw = small ? 6 : 9, mh = small ? 4 : 6, mx = x + Math.round((w - mw) / 2);
+  px(mx, y - mh, mw, mh, "#22252c"); px(mx + 1, y - mh + 1, mw - 2, mh - 2, GLOW()[screen || "off"]);
+  if (screen === "on" && !small) { px(mx + 2, y - mh + 2, 3, 1, "#e8fff4"); px(mx + 2, y - mh + 3, 4, 1, "#5fa889"); }
+  px(mx + Math.floor(mw / 2) - 1, y - 1, 2, 1, "#22252c");       // stand
+  px(x, y, w, 3, "#c49a6c"); px(x, y, w, 1, "#dab387");           // top
+  px(x, y + 3, w, 4, "#9b7350"); px(x + 1, y + 4, w - 2, 1, "#8a6445");  // front panel
+  px(x + 1, y + 7, w - 2, 1, "#00000038");                          // shadow
+  if (!small) {
+    px(mx + 1, y + 1, mw - 2, 1, "#e4e2dc");                        // keyboard
+    if ((seed || 0) % 3 === 0) { px(x + w - 3, y - 1, 2, 2, "#f4efe4"); px(x + w - 1, y, 1, 1, "#f4efe4"); }   // mug
+    else if ((seed || 0) % 3 === 1) { px(x + 1, y - 1, 3, 1, "#e3c74f"); px(x + 1, y - 2, 3, 1, "#5b8def"); } // books
+  }
+}
+function bubble(x, y, kind) {
+  const box = (c, ch, tc) => {
+    px(x, y + 1, 7, 5, c); px(x + 1, y, 5, 7, c); px(x + 1, y + 7, 2, 1, c);
+    text(ch, (x + 3.5) * P, (y + 0.9) * P, tc || "#1b1820", 11, "center", "bold");
+  };
+  if (kind === "waiting") { if (frame % 2 || energy) box("#ffb347", "!"); }
+  else if (kind === "done") box("#5fbf7f", "✓");
+  else if (kind === "crashed") box("#e06c6c", "×", "#fff");
+  else if (kind === "compacting") box("#5b8def", "…", "#fff");
+  else if (kind === "stalled") box("#8a8096", "?", "#fff");
+  else if (kind === "background") {        // an hourglass: its turn is over, its subagents are not
+    px(x, y + 1, 7, 5, "#4fc1c9"); px(x + 1, y, 5, 7, "#4fc1c9"); px(x + 1, y + 7, 2, 1, "#4fc1c9");
+    const sand = frame % 4 < 2;
+    px(x + 2, y + 1, 3, 1, "#1b1820"); px(x + 2, y + 5, 3, 1, "#1b1820");
+    px(x + 2, y + 2, 3, 1, sand ? "#f4efe4" : "#4fc1c9"); px(x + 3, y + 3, 1, 1, "#f4efe4");
+    px(x + 2, y + 4, 3, 1, sand ? "#4fc1c9" : "#f4efe4");
+  }
+  else if (kind === "idle") text("z", (x + 1) * P, (y + 1 - (frame % 3)) * P, "#e8e0d6", 10, "left", "bold");
+}
+const NAME_COLOR = { background: "#9fe3e8", waiting: "#ffc370", working: "#f1ebe2", done: "#9fe8b6", crashed: "#ff9a94", compacting: "#a9c8ff", stalled: "#c9c0d3", idle: "#bdb3a8" };
+const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting for you", working: "working", done: "done, your turn", crashed: "stopped with an error", compacting: "compacting", stalled: "quiet", idle: "idle" };
+
+function layout() {
+  const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
+  const reviewH = 82, teamW = 64;
+  const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
+  const rowsOf = [];
+  snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
+  const rowH = rowsOf.map(r => r.some(s => Object.keys(s.subagents || {}).length) ? 70 : 52);
+  const contentH = WALL + 6 + rowH.reduce((a, b) => a + b, 0) + (snap.overflow || snap.hiddenCount ? 9 : 0);
+  const oy = reviewH + 3;
+  const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1);
+  const benchW = Math.min(52, Math.max(34, Math.floor(cols * 0.22))), bx = cols - benchW - 1;
+  const cells = []; let ry = oy + WALL + 9;
+  rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
+    rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
+  return { W, cols, H: (oy + othersH) * P, reviewH, oy, othersH, teamW, benchW, bx, cells, endY: ry };
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  hits = [];
+  if (!snap) { const W = Math.max(320, wrap.clientWidth); cv.width = W * dpr; cv.height = 60 * dpr; cv.style.width = W + "px"; cv.style.height = "60px";
+    g = ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); text("waiting for data…", 12, 20, "#a79d93", 11); return; }
+  const L = layout(), W = L.W, H = L.H;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
+  // the room layer, repainted only when the layout or the minute changes
+  const d = new Date();
+  const key = [W, H, dpr, d.getHours(), d.getMinutes(), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  if (key !== layerKey) {
+    layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
+    g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
+    lctx.fillStyle = "#1b1820"; lctx.fillRect(0, 0, W, H);
+    paintRooms(L);
+  }
+  g = ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(layer, 0, 0, W, H);
+
+  // ----- review room -----
+  const cols = L.cols, n = snap.slots, deskArea = L.bx - 8, slotW = Math.floor(deskArea / n);
+  const active = snap.reviews.length + snap.manualReviews.length;
+  label(`${active}/${n} desks · ${snap.queue.length} waiting`, (L.bx - 13) * P, (WALL + 2) * P, "#f1ebe2", 10, "right");
+  const desks = snap.reviews.map(r => ({ id: "r:" + r.slug + r.id, top: `${r.name}#${r.id}`, sub: r.author, title: r.title, since: r.started,
+      url: snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.slug}/pull-requests/${r.id}` : "" }))
+    .concat(snap.manualReviews.map(s => ({ id: "r:" + s.id, top: s.title, sub: "by hand", title: s.title + "\n" + s.cwd, start: s.since })));
+  for (let i = 0; i < n; i++) {
+    const x0 = 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
+    chair(x + 5, y - 16, 1);
+    if (dk) { const p = placed(dk.id, x + 5, y - 16, 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
+    desk(x, y, 18, dk ? "on" : "off", false, i);
+    const cx = (x0 + slotW / 2) * P;
+    if (dk) {
+      let el = "";
+      if (dk.since) { const [h, m] = dk.since.split(":").map(Number); const t = new Date(); t.setHours(h, m, 0, 0); el = mins((Date.now() - t) / 1000); }
+      else if (dk.start) el = mins(snap.now - dk.start);
+      const fitc = Math.max(6, Math.floor((slotW - 2) * P / 6.2)), parts = dk.top.split("#");
+      label(clip(parts[0], Math.max(5, Math.floor(fitc * 0.9))), cx, (y + 10) * P, "#f1ebe2", 11, "center");
+      label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + el : ""), fitc), cx, (y + 15) * P, "#8fd6b4", 9, "center");
+      label(clip(dk.sub, fitc), cx, (y + 19.5) * P, "#bdb3a8", 9, "center");
+      hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P,
+        tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}${dk.url ? "\nclick: open the PR" : ""}`, url: dk.url });
+    } else text("free", cx, (y + 10) * P, "#8ea3ad", 9, "center");
+  }
+  // waiting area: a sofa by the coffee machine
+  const sx = L.bx + 3, sw = L.benchW - 16;
+  label("WAITING", (sx + sw / 2) * P, (WALL + 4) * P, "#f1ebe2", 9, "center");
+  sofaBack(sx, 44, sw);
+  const fit = Math.max(1, Math.floor((sw - 6) / 9));
+  snap.queue.slice(0, fit).forEach((q, k) => {
+    const qx = sx + 3 + k * 9;
+    person(qx, 39, q.slug + q.id, q.name, "idle", true);
+    hits.push({ x: qx * P, y: 36 * P, w: 8 * P, h: 18 * P, tip: `#${k + 1} in line: ${q.name}#${q.id}\n${q.title}\n${q.author}${q.manual ? " · added by you" : ""}`,
+      url: snap.workspace ? `https://bitbucket.org/${snap.workspace}/${q.slug}/pull-requests/${q.id}` : "" });
+  });
+  sofaFront(sx, 44, sw);
+  if (snap.queue.length > fit) label(`+${snap.queue.length - fit}`, (sx + sw / 2) * P, 59 * P, "#bdb3a8", 9, "center");
+  if (!snap.queue.length) label("nobody", (sx + sw / 2) * P, 59 * P, "#8ea3ad", 9, "center");
+
+  // ----- others room -----
+  const oy = L.oy, states = snap.others.map(shown);
+  const cnt = st => states.filter(x => x === st).length;
+  const needs = cnt("waiting") + cnt("crashed");
+  label(`${needs ? "⚠ " : ""}needs you ${needs} · working ${cnt("working") + cnt("compacting") + cnt("background")} · done ${cnt("done")}`,
+    (cols - 3) * P, (oy + WALL + 2) * P, needs ? "#ffc370" : "#f1ebe2", 10, "right");
+  if (!snap.others.length) label(snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
+    24 * P, (oy + WALL + 8) * P, "#d9cfc3", 10);
+  for (const c of L.cells) {
+    const s = c.s, x = c.x, y = c.y, st = shown(s), tk = team(s.cwd), cx = x + 26;
+    if (st === "waiting" || st === "crashed") {
+      const col = st === "crashed" ? "rgba(224,108,108,0.30)" : (frame % 2 ? "rgba(255,179,71,0.38)" : "rgba(255,179,71,0.18)");
+      px(x - 3, c.y + 1, L.teamW - 6, 1, col); px(x - 3, c.y + c.h - 4, L.teamW - 6, 1, col);
+      px(x - 3, c.y + 1, 1, c.h - 4, col); px(x + L.teamW - 10, c.y + 1, 1, c.h - 4, col);
+    }
+    const subs = Object.entries(s.subagents || {});
+    // head agent at the big desk
+    chair(cx - 4, y + 7, 1);
+    const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1);
+    person(hp.x, hp.y, s.id, tk, st, false, hp.walking);
+    desk(cx - 9, y + 23, 18, st === "working" || st === "compacting" || st === "background" ? "on" : st === "waiting" ? "wait" : st === "crashed" ? "err" : "off", false, hash(s.id));
+    if (!hp.walking && st !== "working") bubble(cx + 5, y + 1, st);
+    // subagents: their own row of small desks under the head agent
+    subs.slice(0, 3).forEach(([aid], j) => {
+      const wx = x + j * 18, wy = y + 33;
+      chair(wx + 4, wy, 0.7);
+      const wp = placed(aid, wx + 4, wy, cx, y + 20);
+      person(wp.x, wp.y, aid, tk, "working", true, wp.walking);
+      desk(wx + 1, wy + 9, 13, "on", true);
+    });
+    if (subs.length > 3) label(`+${subs.length - 3}`, (x + 55) * P, (y + 37) * P, "#d9cfc3", 9);
+    const ly = subs.length ? y + 50 : y + 32;
+    const chars = Math.max(10, Math.floor((L.teamW - 8) * P / 6.2)), big = Math.max(8, Math.floor((L.teamW - 8) * P / 7.3));
+    label(clip((s.kind === "automation" ? "⚙ " : "") + (s.title || "untitled"), big), x * P, ly * P, NAME_COLOR[st] || "#f1ebe2", 12);
+    const ago = st === "stalled" ? mins(snap.now - s.beat) : s.since ? mins(snap.now - s.since) : "";
+    label(clip(`${base(s.cwd)} · ${STATE_WORD[st] || st}${ago ? " " + ago : ""}`, chars + 2), x * P, (ly + 5.4) * P, "#d9cfc3", 9);
+    const me = [modelName(s.model), s.effort].filter(Boolean).join(" · ");
+    if (me) label(clip(me, chars + 2), x * P, (ly + 9.6) * P, "#9fd3c0", 9);
+    hits.push({ x: (x - 3) * P, y: y * P, w: (L.teamW - 6) * P, h: (c.h - 3) * P, session: s,
+      tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}` +
+        (s.model ? `\n${modelName(s.model)}${s.effort ? ", effort " + s.effort : ""}` : "") +
+        (subs.length ? `\nsubagents: ${subs.map(([, a]) => a.type || "agent").join(", ")}` : "") +
+        "\nclick: reveal the folder · right-click: hide", reveal: s.cwd });
+  }
+  const notes = [];
+  if (snap.overflow) notes.push(`+ ${snap.overflow} more session(s) not drawn`);
+  if (snap.hiddenCount) notes.push(`${snap.hiddenCount} hidden · right-click to show`);
+  if (notes.length) label(notes.join(" · "), 6 * P, (L.endY + 1) * P, "#d9cfc3", 9);
+
+  // ----- people walking out -----
+  const t = performance.now();
+  for (const [id, a] of actors) if (a.gone !== null && a.last && t - a.gone < WALK_MS) {
+    const k = (t - a.gone) / WALK_MS, A = a.last;
+    person(Math.round(A.x + (A.doorX - A.x) * k), Math.round(A.y + (A.doorY - A.y) * k), id, "", "working", a.small, true);
+  }
+
+  // ----- log strip (rebuilt only when it changes) -----
+  const rows = Math.max(1, Math.floor((logEl.clientHeight - 10) / 16));
+  const html = snap.events.slice(0, rows).map(e =>
+    `<div class="row"><span class="t">${hhmm(e.t)}</span>${esc(e.text)}</div>`).join("")
+    || `<div class="row" style="color:var(--muted)">no events yet</div>`;
+  if (logEl.dataset.html !== html) { logEl.innerHTML = html; logEl.dataset.html = html; }
+}
+
+// ---------- interaction ----------
+function hitAt(ev) {
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  return hits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+}
+function act(h) {
+  const msg = h.url ? { open: h.url } : h.reveal ? { reveal: h.reveal } : null;
+  if (msg && bridge) bridge.postMessage(msg); else if (h.url) window.open(h.url);
+}
+cv.addEventListener("mousemove", ev => {
+  if (menu.style.display === "block") return;
+  const h = hitAt(ev);
+  if (!h) { tip.style.display = "none"; cv.style.cursor = "default"; return; }
+  tip.textContent = h.tip; tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 330) + "px"; tip.style.top = (ev.clientY + 12) + "px";
+  cv.style.cursor = h.url || h.reveal ? "pointer" : "default";
+});
+cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (h) act(h); });
+
+// Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
+function closeMenu() { menu.style.display = "none"; }
+document.addEventListener("contextmenu", ev => {
+  ev.preventDefault(); tip.style.display = "none";
+  const h = ev.target === cv ? hitAt(ev) : null, items = [];
+  let head = "";
+  if (h && h.session) {
+    head = h.session.title || "untitled";
+    items.push(["Hide from view", () => hideSession(h.session)]);
+    items.push(["Reveal folder", () => act(h)]);
+  } else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
+  const hs = Object.values(hidden);
+  if (hs.length) {
+    items.push([`Show hidden agents (${hs.length})`, unhideAll]);
+  }
+  if (!items.length) { closeMenu(); return; }
+  menu.innerHTML = (head ? `<div class="head">${esc(head)}</div>` : "") + items.map((it, i) => `<button data-i="${i}">${esc(it[0])}</button>`).join("");
+  menu.querySelectorAll("button").forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.i][1](); });
+  menu.style.display = "block";
+  menu.style.left = Math.min(ev.clientX, window.innerWidth - menu.offsetWidth - 4) + "px";
+  menu.style.top = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
+});
+document.addEventListener("mousedown", ev => { if (!menu.contains(ev.target)) closeMenu(); });
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeMenu(); });
+wrap.addEventListener("scroll", closeMenu);
+
+function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
+window.updateOffice = raw => { lastRaw = raw; const next = build(raw); track(next); snap = next; };
+window.addEventListener("resize", () => snap && draw());
+// At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
+let lastDraw = 0;
+(function loop(ts) {
+  if (!document.hidden && ts - lastDraw >= 1000 / (energy ? ENERGY_FPS : FPS)) { lastDraw = ts; frame = Math.floor(ts / 420); if (snap) draw(); }
+  requestAnimationFrame(loop);
+})(0);
+
+// ---------- demo (no app bridge) ----------
+if (!bridge) {
+  document.getElementById("demo").textContent = "demo data";
+  const t0 = Date.now() / 1000, hm = m => { const d = new Date(Date.now() - m * 60000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  let tick = 0;
+  const demo = () => { tick++; return {
+    now: Date.now() / 1000, workspace: "example", slots: 5,
+    reviews: [
+      ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
+      ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],
+    ].concat(tick % 6 > 2 ? [["deploy-scripts", "deploy-scripts", "214", "abc", "Jordan K.", hm(0), "1", "Database migration"]] : []).map(f => f.join("\t")),
+    queue: [["infra", "infra", "109", "x", "Jordan K.", "auto", "Notifications table index"],
+            ["web-app", "web-app", "464", "x", "Jordan K.", "manual", "Expire old generation rows"],
+            ["deploy-scripts", "deploy-scripts", "217", "x", "Riley M.", "auto", "Rollout surge settings"]].map(f => f.join("\t")),
+    sessions: [
+      { id: "s1", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Checkout flow refactor", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 300, beat: Date.now() / 1000,
+        subagents: tick % 6 > 1 ? { a1: { type: "Explore" }, a2: { type: "general-purpose" } } : { a1: { type: "Explore" } } },
+      { id: "s2", kind: "session", model: "claude-sonnet-5-5", effort: "high", title: "Agent Office app", cwd: "/Users/me/code/agent-office", state: tick % 8 < 4 ? "waiting" : "working", since: tick % 8 < 4 ? t0 - 40 : t0 - 10, beat: Date.now() / 1000, subagents: {} },
+      { id: "s7", kind: "session", title: "Engine rewrite, phase 2", cwd: "/Users/me/code/engine", model: "claude-opus-5-5", effort: "xhigh", state: "background", since: t0 - 600, beat: Date.now() / 1000,
+        subagents: { b1: { type: "general-purpose" }, b2: { type: "general-purpose" }, b3: { type: "general-purpose" }, b4: { type: "general-purpose" } } },
+      { id: "s3", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "TTS latency investigation", cwd: "/Users/me/code/web-app", state: "done", since: t0 - 200, beat: t0 - 200, subagents: {} },
+      { id: "s5", kind: "session", model: "claude-opus-5-5", effort: "xhigh", title: "Infra cleanup", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 2000, beat: t0 - 1500, subagents: {} },
+      { id: "s6", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Flaky test hunt", cwd: "/Users/me/code/web-app", state: "crashed", since: t0 - 90, beat: t0 - 90, subagents: {} },
+      { id: "s4", kind: "automation", model: "claude-sonnet-5-5", effort: "high", title: "clean-reports: infra", cwd: "/Users/me/code/infra", state: "compacting", since: t0 - 120, beat: Date.now() / 1000, subagents: {} },
+    ],
+    officeEvents: [`${Math.floor(t0 - 20)}\ts2\twaiting for you · Agent Office app`, `${Math.floor(t0 - 90)}\ts6\tstopped with an error · Flaky test hunt`,
+                   `${Math.floor(t0 - 200)}\ts3\tdone, your turn · TTS latency investigation`],
+    reviewLog: [[14, "web-app#466: posted comment 1001"], [13, "web-app#466: Slack notified (safe)"], [12, "infra#123: review started"],
+                [6, "web-app#470: review started"], [0, "deploy-scripts#214: review started"]].map(([m, msg]) => {
+      const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
+  }; };
+  updateOffice(demo()); setInterval(() => updateOffice(demo()), 2000);
+}
+</script>
+</body>
+</html>

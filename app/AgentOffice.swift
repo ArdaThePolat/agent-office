@@ -1,0 +1,299 @@
+// Agent Office — a small macOS window showing the agents at work.
+//
+// The window hosts web/office.html (bundled as a resource) and hands it a snapshot every
+// couple of seconds: the Claude sessions the hook records (hook/agent-office-hook.sh), and,
+// when configured, a PR-review queue (a pr-watch layout: running/, queue, a log file).
+// Nothing runs while the app is closed except the hook itself; there is no server and no port.
+//
+// Configuration: ~/.config/agent-office/config.json, every key optional:
+//   { "officeState": "~/.local/state/agent-office",
+//     "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
+//                  "slots": 5, "bitbucketWorkspace": "<workspace>" } }
+// Without a "reviews" block the review room is shown empty.
+// Settings (⌘,): "Keep on top", "Play a sound" and "Energy saver", all off unless turned on.
+//
+// Cost: the app runs at background priority (it yields to everything you do), reads its state
+// files only while the window is actually visible on screen (not minimised, hidden or covered),
+// and the page redraws at most 6 times a second (2 with Energy saver), never while hidden.
+// Agent Office → Check Setup… says whether the hook is registered and reporting.
+
+import Cocoa
+import WebKit
+
+let home = FileManager.default.homeDirectoryForCurrentUser.path
+func expand(_ p: String) -> String { p.hasPrefix("~/") ? home + p.dropFirst(1) : p }
+
+struct Config {
+    var officeState = home + "/.local/state/agent-office"
+    var reviewState: String? = nil
+    var reviewLog: String? = nil
+    var slots = 5
+    var workspace = ""
+
+    static func load() -> Config {
+        var c = Config()
+        let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
+        guard let data = try? Data(contentsOf: url),
+              let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
+        if let s = j["officeState"] as? String { c.officeState = expand(s) }
+        if let r = j["reviews"] as? [String: Any] {
+            if let s = r["state"] as? String { c.reviewState = expand(s) }
+            if let s = r["log"] as? String { c.reviewLog = expand(s) }
+            if let n = r["slots"] as? Int { c.slots = n }
+            if let w = r["bitbucketWorkspace"] as? String { c.workspace = w }
+        }
+        return c
+    }
+}
+
+/// Is that process alive? (EPERM means it exists but belongs to someone else.)
+func alive(_ pid: Int) -> Bool { pid > 0 && (kill(pid_t(pid), 0) == 0 || errno == EPERM) }
+
+func lines(_ path: String, tailBytes: Int = 0) -> [String] {
+    guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
+    defer { try? fh.close() }
+    if tailBytes > 0, let end = try? fh.seekToEnd(), end > UInt64(tailBytes) {
+        try? fh.seek(toOffset: end - UInt64(tailBytes))
+    }
+    let data = (try? fh.readToEnd()) ?? Data()
+    var out = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    if tailBytes > 0, !out.isEmpty { out.removeFirst() }   // the first line may be cut in half
+    return out
+}
+
+func snapshot(_ cfg: Config) -> [String: Any] {
+    let fm = FileManager.default
+    var sessions: [[String: Any]] = []
+    let sdir = cfg.officeState + "/sessions"
+    let now = Date().timeIntervalSince1970
+    for name in (try? fm.contentsOfDirectory(atPath: sdir)) ?? [] where name.hasSuffix(".json") {
+        let path = sdir + "/" + name
+        guard let data = fm.contents(atPath: path),
+              let s = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+        let pid = (s["pid"] as? Int) ?? 0
+        let updated = (s["updated"] as? Double) ?? (s["updated"] as? Int).map(Double.init) ?? 0
+        // A session whose Claude process is gone ended without saying so: forget it.
+        if pid > 0 ? !alive(pid) : now - updated > 12 * 3600 {
+            try? fm.removeItem(atPath: path); continue
+        }
+        // the file's mtime is the session's heartbeat (the hook touches it on every event)
+        var s2 = s
+        if let m = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date { s2["beat"] = m.timeIntervalSince1970 }
+        sessions.append(s2)
+    }
+    var reviews: [String] = [], queue: [String] = [], reviewLog: [String] = []
+    if let rs = cfg.reviewState {
+        for name in (try? fm.contentsOfDirectory(atPath: rs + "/running")) ?? [] {
+            guard let l = lines(rs + "/running/" + name).first else { continue }
+            let f = l.split(separator: "\t", omittingEmptySubsequences: false)
+            if f.count >= 7, let pid = Int(f[6]), alive(pid) { reviews.append(l) }
+        }
+        queue = lines(rs + "/queue")
+    }
+    if let rl = cfg.reviewLog { reviewLog = lines(rl, tailBytes: 24_000) }
+    return [
+        "now": now, "slots": cfg.slots, "workspace": cfg.workspace,
+        "sessions": sessions, "reviews": reviews, "queue": queue,
+        "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
+        "reviewLog": Array(reviewLog.suffix(120)),
+    ]
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate {
+    var window: NSWindow!
+    var web: WKWebView!
+    var settings: NSWindow?
+    var timer: Timer?
+    let defaults = UserDefaults.standard
+
+    var keepOnTop: Bool {
+        get { defaults.bool(forKey: "keepOnTop") }          // false until turned on in Settings
+        set { defaults.set(newValue, forKey: "keepOnTop"); applyKeepOnTop() }
+    }
+    var sound: Bool {
+        get { defaults.bool(forKey: "sound") }              // false until turned on in Settings
+        set { defaults.set(newValue, forKey: "sound") }
+    }
+    var energySaver: Bool {
+        get { defaults.bool(forKey: "energySaver") }        // false until turned on in Settings
+        set { defaults.set(newValue, forKey: "energySaver"); push() }
+    }
+    // One exit watcher per session process: the window updates the moment a session's process
+    // ends, instead of at the next poll.
+    var exitWatch: [Int: DispatchSourceProcess] = [:]
+
+    func applicationDidFinishLaunching(_ n: Notification) {
+        setpriority(PRIO_PROCESS, 0, 10)                     // background priority: yield to real work
+        buildMenu()
+        let conf = WKWebViewConfiguration()
+        conf.userContentController.add(self, name: "office")
+        web = WKWebView(frame: .zero, configuration: conf)
+        web.setValue(false, forKey: "drawsBackground")
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "Agent Office"
+        window.minSize = NSSize(width: 380, height: 300)
+        window.contentView = web
+        window.delegate = self
+        // Catch up at once when the window comes back into view.
+        NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in self?.push() }
+        window.backgroundColor = NSColor(red: 0.11, green: 0.10, blue: 0.15, alpha: 1)
+        window.center()
+        window.setFrameAutosaveName("AgentOfficeMain")       // remembers size and position
+        applyKeepOnTop()
+        if let page = Bundle.main.url(forResource: "office", withExtension: "html") {
+            web.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.push() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.push() }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+
+    func push() {
+        // Nothing on screen (minimised, hidden, or covered by other windows): skip the work.
+        guard window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) else { return }
+        var snap = snapshot(Config.load())
+        snap["settings"] = ["energySaver": energySaver]
+        snap["hidden"] = defaults.string(forKey: "hidden") ?? "{}"
+        watchExits(snap)
+        guard let data = try? JSONSerialization.data(withJSONObject: snap),
+              let json = String(data: data, encoding: .utf8) else { return }
+        web.evaluateJavaScript("window.updateOffice && updateOffice(\(json))", completionHandler: nil)
+    }
+
+    func watchExits(_ snap: [String: Any]) {
+        let pids = Set(((snap["sessions"] as? [[String: Any]]) ?? []).compactMap { $0["pid"] as? Int }.filter { $0 > 0 })
+        for (pid, src) in exitWatch where !pids.contains(pid) { src.cancel(); exitWatch[pid] = nil }
+        for pid in pids where exitWatch[pid] == nil {
+            let src = DispatchSource.makeProcessSource(identifier: pid_t(pid), eventMask: .exit, queue: .main)
+            src.setEventHandler { [weak self] in self?.exitWatch[pid]?.cancel(); self?.exitWatch[pid] = nil; self?.push() }
+            src.resume()
+            exitWatch[pid] = src
+        }
+    }
+
+    // office.html asks to open a PR (https only), reveal a session's folder, chime, or keep the
+    // list of agents hidden from view (a small JSON object it reads back in every snapshot).
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard let body = m.body as? [String: String] else { return }
+        if let h = body["hidden"], h.utf8.count < 64_000 { defaults.set(h, forKey: "hidden") }
+        if let kind = body["chime"], sound {
+            NSSound(named: kind == "waiting" ? "Glass" : "Pop")?.play()
+        }
+        if let u = body["open"], let url = URL(string: u), url.scheme == "https" { NSWorkspace.shared.open(url) }
+        if let p = body["reveal"], FileManager.default.fileExists(atPath: p) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        }
+    }
+
+    func applyKeepOnTop() {
+        window?.level = keepOnTop ? .floating : .normal
+        window?.collectionBehavior = keepOnTop ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
+    }
+
+    // ---- menu and settings ----
+    func buildMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem(); main.addItem(appItem)
+        let app = NSMenu()
+        app.addItem(withTitle: "About Agent Office", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        app.addItem(withTitle: "Check Setup…", action: #selector(checkSetup), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Hide Agent Office", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        app.addItem(withTitle: "Quit Agent Office", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = app
+        let winItem = NSMenuItem(); main.addItem(winItem)
+        let win = NSMenu(title: "Window")
+        win.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        win.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        winItem.submenu = win
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = win
+    }
+
+    @objc func showSettings() {
+        if settings == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 240),
+                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            w.title = "Agent Office Settings"
+            w.isReleasedWhenClosed = false
+            let box = NSButton(checkboxWithTitle: "Keep the window on top of other windows", target: self, action: #selector(toggleTop(_:)))
+            box.state = keepOnTop ? .on : .off
+            box.frame = NSRect(x: 20, y: 198, width: 350, height: 22)
+            let hint = NSTextField(wrappingLabelWithString: "Off by default. When on, the office floats above other apps and follows you across Spaces.")
+            hint.frame = NSRect(x: 38, y: 162, width: 320, height: 32)
+            let snd = NSButton(checkboxWithTitle: "Play a sound when an agent needs you or finishes", target: self, action: #selector(toggleSound(_:)))
+            snd.state = sound ? .on : .off
+            snd.frame = NSRect(x: 20, y: 126, width: 350, height: 22)
+            let hint2 = NSTextField(wrappingLabelWithString: "Off by default. \u{201C}Glass\u{201D} when one waits for your permission, \u{201C}Pop\u{201D} when one finishes its turn.")
+            hint2.frame = NSRect(x: 38, y: 90, width: 320, height: 32)
+            let eco = NSButton(checkboxWithTitle: "Energy saver", target: self, action: #selector(toggleEnergy(_:)))
+            eco.state = energySaver ? .on : .off
+            eco.frame = NSRect(x: 20, y: 54, width: 350, height: 22)
+            let hint3 = NSTextField(wrappingLabelWithString: "Off by default. Redraws 2 times a second instead of 6, with no walking or blinking.")
+            hint3.frame = NSRect(x: 38, y: 18, width: 320, height: 32)
+            for h in [hint, hint2, hint3] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            w.center()
+            settings = w
+        }
+        settings?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func toggleTop(_ sender: NSButton) { keepOnTop = sender.state == .on }
+    @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
+    @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
+
+    // Is the hook registered for every event, executable, and actually reporting?
+    @objc func checkSetup() {
+        let cfg = Config.load(), fm = FileManager.default
+        var lines: [String] = []
+        let needed = ["SessionStart", "UserPromptSubmit", "PermissionRequest", "Notification", "PostToolUse",
+                      "PreCompact", "Stop", "StopFailure", "SubagentStart", "SubagentStop", "SessionEnd"]
+        var hookPath: String?
+        if let data = fm.contents(atPath: home + "/.claude/settings.json"),
+           let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let hooks = j["hooks"] as? [String: Any] {
+            var missing: [String] = []
+            for e in needed {
+                let cmds = ((hooks[e] as? [[String: Any]]) ?? []).flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }
+                    .compactMap { $0["command"] as? String }.filter { $0.hasSuffix("agent-office-hook.sh") }
+                if let c = cmds.first { hookPath = c } else { missing.append(e) }
+            }
+            lines.append(missing.isEmpty ? "✅ Hook registered for all \(needed.count) events."
+                                         : "❌ Hook missing for: \(missing.joined(separator: ", ")). Run scripts/install-hook.sh.")
+        } else { lines.append("❌ Could not read ~/.claude/settings.json.") }
+        if let h = hookPath { lines.append(fm.isExecutableFile(atPath: h) ? "✅ Hook script is executable." : "❌ Hook script not found or not executable: \(h)") }
+        let sdir = cfg.officeState + "/sessions"
+        let files = ((try? fm.contentsOfDirectory(atPath: sdir)) ?? []).filter { $0.hasSuffix(".json") }
+        let newest = ([cfg.officeState + "/events.log"] + files.map { sdir + "/" + $0 })
+            .compactMap { (try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
+        if let n = newest {
+            let f = RelativeDateTimeFormatter(); f.unitsStyle = .full
+            lines.append("✅ Last report from a session: \(f.localizedString(for: n, relativeTo: Date())). Sessions on file: \(files.count).")
+        } else { lines.append("⚠️ No session has reported yet. Sessions started after the hook was installed appear here.") }
+        if let rs = cfg.reviewState {
+            lines.append(fm.fileExists(atPath: rs) ? "✅ Review room reads \(rs)." : "⚠️ Review state folder not found: \(rs)")
+        } else { lines.append("ℹ️ No review room configured (~/.config/agent-office/config.json).") }
+        let a = NSAlert(); a.messageText = "Agent Office setup"; a.informativeText = lines.joined(separator: "\n\n")
+        a.runModal()
+    }
+}
+
+// `AgentOffice --dump-snapshot` prints what the window would be given, and exits (for debugging).
+if CommandLine.arguments.contains("--dump-snapshot") {
+    let data = try! JSONSerialization.data(withJSONObject: snapshot(Config.load()), options: [.prettyPrinted, .sortedKeys])
+    print(String(decoding: data, as: UTF8.self)); exit(0)
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.regular)
+app.run()

@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# build-app.sh [<install-dir>] — build "Agent Office.app" from app/ and web/ and install it
+# (default ~/Applications). Needs the Xcode command-line tools (swiftc, iconutil, codesign).
+# The app is ad-hoc signed: it runs on this Mac; rebuilding replaces it in place.
+
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEST="${1:-$HOME/Applications}"
+APP="$DEST/Agent Office.app"
+BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
+B="$BUILD/Agent Office.app/Contents"
+mkdir -p "$B/MacOS" "$B/Resources"
+
+swiftc -O -o "$B/MacOS/AgentOffice" "$ROOT/app/AgentOffice.swift" -framework Cocoa -framework WebKit
+cp "$ROOT/web/office.html" "$B/Resources/"
+
+swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
+mkdir "$BUILD/AppIcon.iconset"
+for s in 16 32 128 256 512; do
+  sips -z $s $s "$BUILD/icon.png" --out "$BUILD/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
+  sips -z $((s * 2)) $((s * 2)) "$BUILD/icon.png" --out "$BUILD/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$BUILD/AppIcon.iconset" -o "$B/Resources/AppIcon.icns"
+
+cat > "$B/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Agent Office</string>
+  <key>CFBundleDisplayName</key><string>Agent Office</string>
+  <key>CFBundleIdentifier</key><string>local.agent-office</string>
+  <key>CFBundleExecutable</key><string>AgentOffice</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+codesign --force --deep --sign - "$BUILD/Agent Office.app" >/dev/null
+
+mkdir -p "$DEST"
+rm -rf "$APP"
+mv "$BUILD/Agent Office.app" "$APP"
+echo "Built: $APP"
