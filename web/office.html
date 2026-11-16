@@ -38,6 +38,16 @@
     box-shadow: 0 8px 30px #0008; overflow: hidden; }
   #chat.docked { position: absolute; z-index: 2; display: flex; border-radius: 6px; box-shadow: 0 2px 0 #00000055;
     border: 2px solid #5e4232; background: #1f1a22f7; }
+  #chatTab { position: absolute; z-index: 2; display: none; align-items: center; gap: 6px; font: 12px Menlo, monospace;
+    color: var(--text); background: #2a2329f0; border: 2px solid #5e4232; border-right: 0; border-radius: 8px 0 0 8px;
+    padding: 6px 10px 6px 8px; cursor: pointer; box-shadow: 0 2px 0 #00000055; }
+  #chatTab:hover { background: #3a302c; }
+  #chatTab .bell { display: inline-block; transform-origin: 50% 10%; }
+  #chatTab.unread { border-color: #ffb347; color: #ffc370; }
+  #chatTab.unread .bell { animation: ring 1.6s ease-in-out infinite; }
+  #chatTab .n { background: #e06c6c; color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; }
+  @keyframes ring { 0%, 50%, 100% { transform: rotate(0); } 10% { transform: rotate(16deg); } 20% { transform: rotate(-14deg); }
+    30% { transform: rotate(10deg); } 40% { transform: rotate(-6deg); } }
   #chat .head { padding: 9px 12px; border-bottom: 1px solid #3a302c; display: flex; align-items: center; gap: 8px; }
   #chat .head b { color: #ffe7a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #chat .head span { color: var(--muted); font-size: 11px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -81,7 +91,8 @@
 <div id="demo"></div>
 <button id="statsBtn" title="Usage and session details (S)">Stats</button>
 <button id="chatBtn" title="The shared room's chat (C)">Chat</button>
-<div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button></div>
+<div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
+<div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
   <div id="msgs"></div>
   <form id="say"><input id="sayIn" maxlength="500" placeholder="Message the room…" autocomplete="off"><button>Send</button></form></div>
 <div id="stats"></div>
@@ -534,7 +545,8 @@ function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
   const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
   // with a room set up (joined or not), the chat is docked on the others room's right side
-  const chatW = room.status !== "off" && cols >= 240 ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
+  const chatWide = room.status !== "off" && cols >= 240;
+  const chatW = chatWide && !chatHidden ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
   const perRow = Math.max(1, Math.floor((cols - 8 - chatW) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
@@ -548,7 +560,7 @@ function layout() {
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, chatW, cells, endY: ry };
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, chatW, chatWide, cells, endY: ry };
 }
 
 function draw() {
@@ -1101,11 +1113,24 @@ function drawMate(s, spot, p) {
 const chatEl = document.getElementById("chat"), chatBtn = document.getElementById("chatBtn"), msgsEl = document.getElementById("msgs");
 const sayForm = document.getElementById("say"), sayIn = document.getElementById("sayIn");
 wrap.appendChild(chatEl);              // docked, it scrolls with the office
-let docked = false;
+const chatTab = document.getElementById("chatTab"); wrap.appendChild(chatTab);
+let docked = false, chatHidden = false, chatWideNow = false;
+try { chatHidden = localStorage.getItem("agentOffice.chatHidden") === "1"; } catch (e) {}
+// Hide / show the docked chat; hidden, a bell tab stays on the others room's right edge
+function setChatHidden(h) {
+  chatHidden = h; if (h) chatOpen = false;
+  try { localStorage.setItem("agentOffice.chatHidden", h ? "1" : "0"); } catch (e) {}
+  layerKey = ""; if (snap) draw();
+  if (!h) setTimeout(() => sayIn.focus(), 0);
+}
 // Docked: a fixed panel on the right of the others room, always open, no button. Too narrow a
 // window for that: the floating panel behind the Chat button.
 function dockChat(L) {
   const want = L.chatW > 0;
+  chatWideNow = L.chatWide;
+  const tab = L.chatWide && chatHidden;
+  chatTab.style.display = tab ? "flex" : "none";
+  if (tab) Object.assign(chatTab.style, { right: "0px", left: "auto", top: (L.oy + WALL + 9) * P + "px" });
   if (want) {
     const x = (L.cols - L.chatW) * P, top = (L.oy + 3) * P;
     Object.assign(chatEl.style, { left: x + "px", top: top + "px", width: (L.chatW - 2) * P + "px",
@@ -1118,19 +1143,27 @@ function dockChat(L) {
   renderChat();
 }
 function toggleChat(on) {
-  if (docked) { if (on !== false) sayIn.focus(); return; }
+  if (chatWideNow) {                        // wide window: C and clicks hide or show the docked chat
+    const show = on === undefined ? chatHidden : on;
+    if (show === !chatHidden) { if (show) sayIn.focus(); return; }
+    return setChatHidden(!show);
+  }
   chatOpen = on === undefined ? !chatOpen : on;
   chatEl.style.display = chatOpen ? "flex" : "none";
   if (chatOpen) { seenMsgs = room.messages.length; renderChat(); setTimeout(() => sayIn.focus(), 0); }
 }
 function renderChat() {
-  chatBtn.style.display = room.status === "off" || docked ? "none" : "block";
+  chatBtn.style.display = room.status === "off" || chatWideNow ? "none" : "block";
   if (room.status === "off" && chatOpen) toggleChat(false);
   const open = chatOpen || docked;
   const unread = open ? 0 : room.messages.slice(seenMsgs).filter(m => m.id !== room.you).length;
   if (open) seenMsgs = room.messages.length;
   chatBtn.textContent = unread ? `Chat · ${unread}` : "Chat";
   chatBtn.classList.toggle("unread", unread > 0);
+  chatTab.classList.toggle("unread", unread > 0);
+  chatTab.querySelector(".n").textContent = unread ? String(unread) : "";
+  chatTab.querySelector(".n").style.display = unread ? "inline" : "none";
+  document.getElementById("chatHide").textContent = docked ? "Hide" : "×";
   document.getElementById("roomName").textContent = room.name || "";
   const n = roomMates().length;
   document.getElementById("roomState").textContent = room.status === "joined" ? `${n + 1} here${room.host ? " · you host it" : ""}`
@@ -1152,6 +1185,8 @@ function renderChat() {
   }
 }
 chatBtn.addEventListener("click", () => toggleChat());
+chatTab.addEventListener("click", () => toggleChat(true));
+document.getElementById("chatHide").addEventListener("click", () => toggleChat(false));
 document.getElementById("roomJoin").addEventListener("click", () => { if (bridge) bridge.postMessage({ room: "join" }); });
 sayForm.addEventListener("submit", ev => {
   ev.preventDefault();
