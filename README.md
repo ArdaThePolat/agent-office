@@ -58,10 +58,10 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   | **z** | idle |
 
 - **Manager's room** (optional, top left): you, at your desk. A screen on the wall counts the
-  sessions that need you, are working or are done, with your plan usage (5-hour and 7-day) when
+  sessions that need you, are working or are done, with your weekly plan usage when
   the companion mod reports it; an orange **!** over your head when someone needs you. Under the
-  desk: who needs you and who is working, your weekly and 5-hour usage as batteries that drain
-  as you use them (orange, then red and blinking as they run low), when the week resets, and
+  desk: who needs you and who is working, your weekly usage as a battery that drains
+  as you use it (orange, then red and blinking as they run low), when the week resets, and
   what the open sessions have cost. Click it
   for the stats screen. Set it up with `manager` under *Configuration*.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
@@ -102,7 +102,7 @@ asks for a permission, its turn ends, it errors); then it walks back in. Right-c
 
 **Stats** (top right, or press **S**) lists every session with where it runs, its state, model and
 effort, how full its context is, what it has cost and its subagents' states, plus your plan usage
-(5-hour and 7-day windows, when they reset). Click a row to open that session.
+(the weekly window, and when it resets). Click a row to open that session.
 
 ![The stats screen: plan usage, totals, and one row per session](docs/stats.png)
 

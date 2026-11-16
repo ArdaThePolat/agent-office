@@ -503,7 +503,7 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = snap.manager ? 116 : 82, teamW = 64, loungeH = 70;
+  const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
@@ -964,7 +964,7 @@ function drawManager(L) {
   const sw = Math.min(28, mw - 26), sx = 5 * P, rowH = 9.5;
   let ry = 3.3 * P;
   text(`!${c.needs} ▶${c.working} ✓${c.done}`, sx, ry, c.needs ? (frame % 2 ? "#ffb347" : "#ffc370") : "#8fd6b4", 9);
-  for (const l of lim.filter(l => l.kind !== "spend_limit").slice(0, 2)) {
+  for (const l of lim.filter(l => l.kind === "seven_day")) {
     ry += rowH;
     const k = l.kind === "five_hour" ? "5h" : l.kind === "seven_day" ? "7d" : l.kind.slice(0, 2), bw = (sw - 14) * P;
     text(k, sx, ry, "#9fd3c0", 9);
@@ -983,10 +983,10 @@ function drawManager(L) {
   if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
   if (c.working) parts.push(`${c.working} working`);
   label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 12, "center");
-  const wk = lim.find(l => l.kind === "seven_day"), fh = lim.find(l => l.kind === "five_hour");
+  const wk = lim.find(l => l.kind === "seven_day");
   // plan usage as batteries: what is LEFT of each window, draining as you use it
   let ly = m.deskY + 21;
-  const rows = [[wk, "week", 6], [fh, "5h", 5]].filter(r => r[0]);
+  const rows = [[wk, "week", 6]].filter(r => r[0]);
   for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 3; }
   if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
   if (wk && wk.resetsAt) { label("week " + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, "#bdb3a8", 10, "center"); ly += 6; }
@@ -1166,8 +1166,7 @@ if (!bridge) {
     s.origin = { app: ORIG[s.id] || "other" };
     const l = LIVE[s.id]; if (!l) return;
     s.live = { context: { percent: l.ctx }, costUsd: l.cost, updated: Date.now() / 1000,
-      rateLimits: [{ kind: "five_hour", percentUsed: 41, resetsAt: new Date(Date.now() + 2.3 * 3600e3).toISOString() },
-                   { kind: "seven_day", percentUsed: 28, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
+      rateLimits: [{ kind: "seven_day", percentUsed: 28, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
       agents: Object.entries(l.agents || {}).filter(([id]) => (s.subagents || {})[id]).map(([id, st]) => ({ id, type: "general-purpose", status: st })) };
   }); return r; };
   updateOffice(withLive(demo())); setInterval(() => updateOffice(withLive(demo())), 2000);
