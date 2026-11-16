@@ -358,6 +358,9 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 
 - `"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --dump-snapshot` prints exactly
   what the window is given.
+- `"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --check-room` prints the room
+  settings the app sees (config.json, the env file and the environment together; the password
+  only as its length) and whether it will join.
 - `ls ~/.local/state/agent-office/sessions/` should hold one file per running session; if it is
   empty, check **Check Setup…** and that `jq` is installed (the hook needs it).
 - Open `web/office.html` in a browser to see the demo.
