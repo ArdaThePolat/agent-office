@@ -93,3 +93,30 @@ rm -rf ~/.local/state/agent-office            # ask first: the session files and
 - Do not commit anything from `~/.config/agent-office/` or `~/.local/state/agent-office/`.
 - The hook must stay fast and silent: it always exits 0 and prints nothing, or it would slow down
   or break the person's sessions.
+
+## Changing this repository
+
+This repository is public. Everything specific to one person or one machine lives outside it:
+settings in `~/.config/agent-office/config.json`, state under `~/.local/state/agent-office/`, and
+files such as a manager picture under `local/`, which git ignores. When you change the code,
+docs or screenshots:
+
+- **No personal values in the repo.** No real names other than the project owner's (LICENSE,
+  plugin manifests, GitHub URLs), no email addresses, usernames, home paths (`/Users/<name>`),
+  company, team, workspace or repository names, hostnames, session ids or PR numbers from
+  someone's real work.
+- **No secrets.** No tokens, API keys, passwords, cookies or private keys, not even in a test or
+  a comment. The app and the hook need none.
+- **A setting that differs per person goes in `config.json`**, with a neutral example in the
+  README (`<workspace>`, `~/agent-office/...`) and a default that works without it. Never
+  hard-code the value you found on the machine you are working on.
+- **Demo data and screenshots are invented.** Use the demo in `web/office.html` (`/Users/me/...`,
+  first names with an initial, made-up repos like `web-app` and `infra`) and render screenshots
+  from it, never from someone's real office. Never commit a screenshot containing a real person's
+  picture: the README screenshot uses the drawn manager.
+- **Before every commit**, run `scripts/check-public.sh --staged`. It refuses home paths, emails,
+  common token formats, anything under `local/`, and every value in the runner's own
+  `config.json`. It cannot read images, so look at any image you add. If it flags something,
+  move the value to `config.json` or replace it with an invented one; do not weaken the check
+  to let it through.
+- **Commits are authored with the GitHub noreply address**, not a personal email.
