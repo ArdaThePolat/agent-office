@@ -151,6 +151,9 @@ yourself in the manager's chair.
 4. Restart Agent Office. macOS asks whether it may accept incoming connections and find devices
    on the local network: allow both. The **Chat** button appears; it says *you host it*.
 5. Send the room name and password to your team over a private channel.
+6. Tick Settings → **Open at login**, so the room comes back by itself after you restart your Mac.
+   The room's name and password stay in your config: closing and reopening the app hosts the same
+   room, and your team's password keeps working.
 
 #### Join a room (everyone else)
 
@@ -192,7 +195,9 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 - **Your character** is your `manager` picture and name. Without a picture you get a drawn one.
 - **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts,
   and again every 15 minutes while it is not in (`"alwaysJoin": false` looks only once; **Try
-  now** in the chat panel looks at once). If the room is not there, the office is simply local.
+  now** in the chat panel looks at once). When the room goes away while you are in it (the host
+  restarted its app or Mac), it looks again after 30 seconds and 2 minutes first, so everyone is
+  back soon after the host is. If the room is not there, the office is simply local.
   The first time, macOS asks to let Agent Office find devices on the local network: allow it.
   On the host it also asks to accept incoming connections.
 - **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
@@ -211,6 +216,9 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 
 Agent Office → Settings… (⌘,):
 - **Join the shared room** (on by default, does nothing until a room is configured).
+- **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
+  that hosts a room, so the room is back after a restart. macOS may ask you to approve it in
+  System Settings → General → Login Items.
 
 The rest are off by default:
 - **Keep on top**: float the window above other apps and across Spaces.
