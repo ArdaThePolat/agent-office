@@ -25,8 +25,17 @@ open ~/Applications/"Agent Office.app"
 Sessions report from their next turn on; start a new Claude Code session (or send a message in an
 open one) and it walks into the office.
 
-**Installing with a coding agent?** Point it at [`AGENTS.md`](AGENTS.md): it has the same steps with
-checks after each one, and asks you before it touches your Claude settings.
+### Or let your agent set it up
+
+Run this in a terminal; Claude Code clones the repo and installs it, step by step:
+
+```bash
+claude "Clone https://github.com/ArdaThePolat/agent-office into ~/agent-office, then install Agent Office by following its AGENTS.md exactly. Show me the change to my Claude settings and ask me before applying it."
+```
+
+Using another coding agent? Paste the same sentence into it. [`AGENTS.md`](AGENTS.md) has the
+steps with a check after each one, and the agent asks you before it touches your Claude settings
+or your config.
 
 Missing a prerequisite: `xcode-select --install` for the command-line tools, `brew install jq`.
 
