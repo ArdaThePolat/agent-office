@@ -62,10 +62,50 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
   review started / posted).
 
-Hover an agent for details. Click a session to reveal its folder in Finder, or a review desk to open
-the PR. **Right-click an agent → Hide from view** to take it out of the office until something new
-happens to it (you send it a message, it asks for a permission, its turn ends, it errors); then it
-walks back in. Right-click anywhere → **Show hidden agents** brings them all back.
+Hover an agent for details. **Click a session to bring it to the front where it runs:**
+
+| started in | a click |
+|---|---|
+| Terminal, iTerm2 | selects that exact tab (and iTerm pane) |
+| VS Code's Claude panel | opens that session's tab (`vscode://anthropic.claude-code/open?session=…`) |
+| a VS Code terminal | raises the VS Code window of that folder (a terminal tab inside it cannot be picked from outside) |
+| the Claude app | brings the Claude app forward (it has no link to one session) |
+
+The first click on a Terminal or iTerm session asks once for permission to control that app;
+raising one VS Code window among several needs **Accessibility** for Agent Office (System Settings
+→ Privacy & Security → Accessibility), without which VS Code is just brought forward. A review desk
+opens its PR.
+
+**Right-click an agent** for *Open*, *Reveal folder*, *Copy session id* and *Hide from view*. A
+hidden agent stays out of the office until something new happens to it (you send it a message, it
+asks for a permission, its turn ends, it errors); then it walks back in. Right-click anywhere →
+**Show hidden agents** brings them all back.
+
+### Stats screen
+
+**Stats** (top right, or press **S**) lists every session with where it runs, its state, model and
+effort, how full its context is, what it has cost and its subagents' states, plus your plan usage
+(5-hour and 7-day windows, when they reset). Click a row to open that session.
+
+![The stats screen: plan usage, totals, and one row per session](docs/stats.png)
+
+### Companion mod (optional): context, cost, plan usage
+
+The hook sees what a session does; only the session itself knows how full its context is, what it
+costs, your plan usage and each subagent's exact state. The optional companion
+[mod](https://code.claude.com/docs/en/plugins/mods/overview) in `mod/` reports those, and the office
+shows them: a **context gauge** under each desk, **status dots** on subagents (running, waiting,
+idle, failed), and the numbers on the stats screen. It also pins a one-line status under your
+prompt in every session, e.g. `office: 2 need you (Flaky test hunt, Infra cleanup) · 3 working`.
+
+```
+/plugin install agent-office --marketplace ArdaThePolat/agent-office
+```
+
+(or `claude plugin install agent-office --marketplace ArdaThePolat/agent-office` from a shell).
+Needs Claude Code 2.1.287 or later. It writes one small file per session under
+`~/.local/state/agent-office/live/`, records no prompts or tool calls, and everything else works
+without it.
 
 ## Settings
 
@@ -133,7 +173,9 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
 
 - **What is recorded:** states only. No prompt text, tool names or arguments are recorded. The first
   prompt is read only to match `sessionKinds`, and the transcript only for the latest model and
-  effort. Everything stays on your Mac, under `~/.local/state/agent-office/`.
+  effort. Where a session runs (the app, its terminal device) is recorded so a click can open it.
+  With the companion mod, each session's context use, cost, plan usage and subagent states too.
+  Everything stays on your Mac, under `~/.local/state/agent-office/`.
 - **CPU and memory:** the app runs at background priority and reads its state only while its window
   is visible. It redraws at most 6 times a second (none while hidden) and draws at most 30 sessions;
   walls, floors and furniture are painted once and cached. Measured on an M-series Mac with the
@@ -143,6 +185,7 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
 
 ```bash
 scripts/install-hook.sh --uninstall           # removes exactly the hook entries it added
+claude plugin uninstall agent-office          # the companion mod, if you installed it
 rm -rf ~/Applications/"Agent Office.app"
 rm -rf ~/.local/state/agent-office            # session files and the event log
 ```

@@ -26,7 +26,26 @@
   #menu button:hover { background: #3a302c; }
   #menu .head { color: var(--muted); padding: 3px 8px 5px; font-size: 11px; border-bottom: 1px solid #3a302c; margin-bottom: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-  #demo { position: fixed; top: 6px; right: 8px; color: var(--muted); font-size: 10px; }
+  #demo { position: fixed; bottom: calc(var(--log-h, 92px) + 4px); right: 8px; color: var(--muted); font-size: 10px; }
+  #statsBtn { position: fixed; top: 6px; right: 10px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
+    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  #statsBtn:hover { background: #3a302c; }
+  #stats { position: absolute; inset: 0 0 var(--log-h, 92px) 0; z-index: 3; display: none; overflow-y: auto;
+    background: #1b1820fa; padding: 34px 16px 16px; }
+  #stats h2 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 14px 0 6px; letter-spacing: .06em; }
+  #stats .cards { display: flex; gap: 10px; flex-wrap: wrap; }
+  #stats .card { background: #262028; border: 1px solid #3d332e; border-radius: 6px; padding: 8px 12px; min-width: 120px; }
+  #stats .card b { display: block; font-size: 18px; margin-top: 2px; }
+  #stats .card small { color: var(--muted); }
+  #stats table { border-collapse: collapse; width: 100%; }
+  #stats th { text-align: left; color: var(--muted); font-weight: normal; padding: 4px 8px; border-bottom: 1px solid #3d332e; white-space: nowrap; }
+  #stats td { padding: 5px 8px; border-bottom: 1px solid #2c2529; vertical-align: middle; white-space: nowrap; }
+  #stats tr.row:hover td { background: #2a2329; cursor: pointer; }
+  #stats .t { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .bar { display: inline-block; width: 70px; height: 7px; background: #3a3036; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+  #stats .note { color: var(--muted); margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -35,6 +54,8 @@
 <div id="tip"></div>
 <div id="menu"></div>
 <div id="demo"></div>
+<button id="statsBtn" title="Usage and session details (S)">Stats</button>
+<div id="stats"></div>
 <script>
 // Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
 // in a plain browser (no app bridge) it animates demo data. All art is drawn here, in code.
@@ -84,6 +105,22 @@ function modelName(m) {
   const p = String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, "").replace(/\[.*\]$/, "").split("-");
   if (!p[0]) return "";
   return p[0][0].toUpperCase() + p[0].slice(1) + (p.length > 1 ? " " + p.slice(1).join(".") : "");
+}
+const ORIGIN = { terminal: "Terminal", iterm: "iTerm", "vscode-terminal": "VS Code terminal", "vscode-panel": "VS Code panel",
+                 desktop: "Claude app", headless: "headless", other: "a terminal" };
+const AGENT_COLOR = { running: "#5fbf7f", waiting: "#ffb347", pending: "#8ea3ad", idle: "#9a94ad", failed: "#e06c6c" };
+function ctxColor(p) { return p >= 85 ? "#e06c6c" : p >= 60 ? "#f0a35e" : "#5fbf7f"; }
+// A session's subagents: the hook's list (it knows the moment one starts or stops), with each
+// one's exact status from the companion mod when it reports; agents only the mod knows are added.
+function agentsOf(s) {
+  const out = Object.entries(s.subagents || {}).map(([id, a]) => ({ id, type: a.type || "agent", status: null }));
+  const live = s.live && Array.isArray(s.live.agents) ? s.live.agents : null;
+  if (!live) return out;
+  const byId = new Map(live.map(a => [a.id, a]));
+  for (const a of out) if (byId.has(a.id)) { a.status = byId.get(a.id).status; a.description = byId.get(a.id).description; }
+  for (const a of live) if (!out.some(o => o.id === a.id) && ["running", "waiting", "pending"].includes(a.status))
+    out.push({ id: a.id, type: a.type || "agent", status: a.status, description: a.description });
+  return out.filter(a => a.status !== "completed" && a.status !== "killed");
 }
 function esc(s) { return String(s).replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "&amp;", '"': "&quot;" })[c]); }
 
@@ -437,7 +474,7 @@ function layout() {
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
-  const rowH = rowsOf.map(r => r.some(s => Object.keys(s.subagents || {}).length) ? 70 : 52);
+  const rowH = rowsOf.map(r => r.some(s => agentsOf(s).length) ? 70 : 52);
   const contentH = WALL + 6 + rowH.reduce((a, b) => a + b, 0) + (snap.overflow || snap.hiddenCount ? 9 : 0);
   const oy = reviewH + 3;
   const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1);
@@ -522,7 +559,7 @@ function draw() {
       px(x - 3, c.y + 1, L.teamW - 6, 1, col); px(x - 3, c.y + c.h - 4, L.teamW - 6, 1, col);
       px(x - 3, c.y + 1, 1, c.h - 4, col); px(x + L.teamW - 10, c.y + 1, 1, c.h - 4, col);
     }
-    const subs = Object.entries(s.subagents || {});
+    const subs = agentsOf(s);
     // head agent at the big desk
     chair(cx - 4, y + 7, 1);
     const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1);
@@ -530,12 +567,14 @@ function draw() {
     desk(cx - 9, y + 23, 18, st === "working" || st === "compacting" || st === "background" ? "on" : st === "waiting" ? "wait" : st === "crashed" ? "err" : "off", false, hash(s.id));
     if (!hp.walking && st !== "working") bubble(cx + 5, y + 1, st);
     // subagents: their own row of small desks under the head agent
-    subs.slice(0, 3).forEach(([aid], j) => {
-      const wx = x + j * 18, wy = y + 33;
+    subs.slice(0, 3).forEach((a, j) => {
+      const wx = x + j * 18, wy = y + 33, aid = a.id;
       chair(wx + 4, wy, 0.7);
       const wp = placed(aid, wx + 4, wy, cx, y + 20);
-      person(wp.x, wp.y, aid, tk, "working", true, wp.walking);
-      desk(wx + 1, wy + 9, 13, "on", true);
+      const ast = a.status === "waiting" ? "waiting" : a.status === "idle" ? "idle" : a.status === "failed" ? "crashed" : "working";
+      person(wp.x, wp.y, aid, tk, ast, true, wp.walking);
+      desk(wx + 1, wy + 9, 13, ast === "waiting" ? "wait" : ast === "crashed" ? "err" : ast === "idle" ? "off" : "on", true);
+      if (a.status && !wp.walking && (a.status !== "running" || frame % 2)) px(wx + 11, wy - 2, 2, 2, AGENT_COLOR[a.status] || "#8ea3ad");
     });
     if (subs.length > 3) label(`+${subs.length - 3}`, (x + 55) * P, (y + 37) * P, "#d9cfc3", 9);
     const ly = subs.length ? y + 50 : y + 32;
@@ -543,13 +582,26 @@ function draw() {
     label(clip((s.kind === "automation" ? "⚙ " : "") + (s.title || "untitled"), big), x * P, ly * P, NAME_COLOR[st] || "#f1ebe2", 12);
     const ago = st === "stalled" ? mins(snap.now - s.beat) : s.since ? mins(snap.now - s.since) : "";
     label(clip(`${base(s.cwd)} · ${STATE_WORD[st] || st}${ago ? " " + ago : ""}`, chars + 2), x * P, (ly + 5.4) * P, "#d9cfc3", 9);
-    const me = [modelName(s.model), s.effort].filter(Boolean).join(" · ");
-    if (me) label(clip(me, chars + 2), x * P, (ly + 9.6) * P, "#9fd3c0", 9);
+    const pct = s.live && s.live.context && s.live.context.percent;
+    const me = [modelName(s.model || (s.live && s.live.model)), s.effort].filter(Boolean).join(" · ");
+    const third = clip(me, pct != null ? chars - 9 : chars + 2);
+    g.font = "9px Menlo, monospace";
+    let gx = x * P;
+    if (third) { label(third, gx, (ly + 9.6) * P, "#9fd3c0", 9); gx += g.measureText(third).width + 9; }
+    if (pct != null) {             // the context gauge: how full this session's context is
+      const gy = (ly + 9.6) * P + 2, gw = 8 * P, t = Math.round(pct) + "%";
+      g.fillStyle = "#17131bcc"; g.fillRect(gx - 3, gy - 3.5, gw + g.measureText(t).width + 10, 12);
+      g.fillStyle = "#3a3036"; g.fillRect(gx, gy, gw, 5);
+      g.fillStyle = ctxColor(pct); g.fillRect(gx, gy, Math.max(1, Math.round(gw * Math.min(100, pct) / 100)), 5);
+      text(t, gx + gw + 4, gy - 2.5, ctxColor(pct), 9);
+    }
     hits.push({ x: (x - 3) * P, y: y * P, w: (L.teamW - 6) * P, h: (c.h - 3) * P, session: s,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}` +
         (s.model ? `\n${modelName(s.model)}${s.effort ? ", effort " + s.effort : ""}` : "") +
-        (subs.length ? `\nsubagents: ${subs.map(([, a]) => a.type || "agent").join(", ")}` : "") +
-        "\nclick: reveal the folder · right-click: hide", reveal: s.cwd });
+        (pct != null ? `\ncontext ${Math.round(pct)}%${s.live.costUsd != null ? " · $" + s.live.costUsd.toFixed(2) : ""}` : "") +
+        (subs.length ? `\nsubagents: ${subs.map(a => (a.type || "agent") + (a.status ? " (" + a.status + ")" : "")).join(", ")}` : "") +
+        `\n${s.origin && s.origin.app ? "runs in " + (ORIGIN[s.origin.app] || s.origin.app) + " · " : ""}click: open it · right-click: more`,
+      reveal: s.cwd });
   }
   const notes = [];
   if (snap.overflow) notes.push(`+ ${snap.overflow} more session(s) not drawn`);
@@ -580,6 +632,8 @@ function act(h) {
   const msg = h.url ? { open: h.url } : h.reveal ? { reveal: h.reveal } : null;
   if (msg && bridge) bridge.postMessage(msg); else if (h.url) window.open(h.url);
 }
+// click a session: bring it to the front where it runs (the app works out how)
+function openSession(s) { if (bridge) bridge.postMessage({ focus: s.id }); }
 cv.addEventListener("mousemove", ev => {
   if (menu.style.display === "block") return;
   const h = hitAt(ev);
@@ -589,7 +643,7 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (h) act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -599,8 +653,11 @@ document.addEventListener("contextmenu", ev => {
   let head = "";
   if (h && h.session) {
     head = h.session.title || "untitled";
-    items.push(["Hide from view", () => hideSession(h.session)]);
+    const where = h.session.origin && ORIGIN[h.session.origin.app];
+    items.push([where && where !== "headless" ? `Open in ${where}` : "Open the session", () => openSession(h.session)]);
     items.push(["Reveal folder", () => act(h)]);
+    items.push(["Copy session id", () => bridge ? bridge.postMessage({ copy: h.session.id }) : navigator.clipboard && navigator.clipboard.writeText(h.session.id)]);
+    items.push(["Hide from view", () => hideSession(h.session)]);
   } else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
   const hs = Object.values(hidden);
   if (hs.length) {
@@ -614,11 +671,68 @@ document.addEventListener("contextmenu", ev => {
   menu.style.top = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
 });
 document.addEventListener("mousedown", ev => { if (!menu.contains(ev.target)) closeMenu(); });
-document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeMenu(); });
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") { closeMenu(); if (statsOpen) toggleStats(false); }
+  if ((ev.key === "s" || ev.key === "S") && !ev.metaKey && !ev.ctrlKey) toggleStats();
+});
+
+// ---------- stats screen ----------
+const statsEl = document.getElementById("stats"), statsBtn = document.getElementById("statsBtn");
+let statsOpen = false;
+function toggleStats(on) {
+  statsOpen = on === undefined ? !statsOpen : on;
+  statsEl.style.display = statsOpen ? "block" : "none"; statsBtn.textContent = statsOpen ? "Office" : "Stats";
+  if (statsOpen) renderStats();
+}
+statsBtn.addEventListener("click", () => toggleStats());
+const LIMIT_NAME = { five_hour: "5-hour window", seven_day: "7-day window", spend_limit: "spend limit" };
+function untilText(iso) {
+  if (!iso) return ""; const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return "resets now";
+  return "resets in " + (s > 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : mins(s));
+}
+function bar(pct, color) { const p = Math.max(0, Math.min(100, pct || 0)); return `<span class="bar"><i style="width:${p}%;background:${color}"></i></span>`; }
+function renderStats() {
+  if (!statsOpen || !snap) return;
+  const all = snap.all.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  const lives = all.map(s => s.live).filter(Boolean);
+  // plan usage is the same for every session of the account: take the freshest report
+  const freshest = lives.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+  const limits = freshest ? freshest.rateLimits || [] : [];
+  const st = all.map(shown), count = k => st.filter(x => k.includes(x)).length;
+  const cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
+  const subsN = all.reduce((t, s) => t + agentsOf(s).length, 0);
+  let h = `<h2>PLAN USAGE</h2>`;
+  h += limits.length ? `<div class="cards">${limits.map(l => `<div class="card"><small>${esc(LIMIT_NAME[l.kind] || l.kind)}</small>
+      <b>${l.percentUsed}%</b>${bar(l.percentUsed, ctxColor(l.percentUsed))}<small>${esc(untilText(l.resetsAt))}</small></div>`).join("")}</div>`
+    : `<div class="note">No plan usage reported yet${lives.length ? "" : " — it comes from the companion mod (see README)"}.</div>`;
+  h += `<h2>RIGHT NOW</h2><div class="cards">
+    <div class="card"><small>sessions</small><b>${all.length}</b></div>
+    <div class="card"><small>need you</small><b style="color:${count(["waiting", "crashed"]) ? "#ffc370" : "inherit"}">${count(["waiting", "crashed"])}</b></div>
+    <div class="card"><small>working</small><b>${count(["working", "compacting", "background"])}</b></div>
+    <div class="card"><small>subagents</small><b>${subsN}</b></div>
+    <div class="card"><small>cost of these sessions</small><b>${lives.length ? "$" + cost.toFixed(2) : "–"}</b></div></div>`;
+  h += `<h2>SESSIONS</h2><table><tr><th>Session</th><th>Where</th><th>State</th><th>Model</th><th>Context</th><th>Cost</th><th>Subagents</th></tr>`;
+  for (const s of all) {
+    const x = shown(s), l = s.live, p = l && l.context && l.context.percent, ag = agentsOf(s);
+    h += `<tr class="row" data-id="${esc(s.id)}"><td class="t" title="${esc(s.cwd || "")}" style="color:${NAME_COLOR[x] || "inherit"}">${esc((s.kind === "automation" ? "⚙ " : "") + (s.title || "untitled"))}</td>
+      <td>${esc(s.origin ? ORIGIN[s.origin.app] || s.origin.app : "–")}</td>
+      <td>${esc(STATE_WORD[x] || x)}${hidden[s.id] ? " · hidden" : ""}</td>
+      <td>${esc([modelName(s.model || (l && l.model)), s.effort].filter(Boolean).join(" · ") || "–")}</td>
+      <td>${p != null ? bar(p, ctxColor(p)) + Math.round(p) + "%" : "–"}</td>
+      <td>${l && l.costUsd != null ? "$" + l.costUsd.toFixed(2) : "–"}</td>
+      <td>${ag.length ? ag.map(a => `<span class="dot" title="${esc((a.type || "agent") + (a.status ? ": " + a.status : ""))}" style="background:${AGENT_COLOR[a.status] || "#5fbf7f"}"></span>`).join("") + " " + ag.length : "–"}</td></tr>`;
+  }
+  h += `</table>`;
+  if (!lives.length) h += `<div class="note">Context, cost and plan usage come from the optional companion mod: <code>claude plugin install</code> it from <code>mod/</code> (see README).</div>`;
+  if (statsEl.dataset.html !== h) {
+    statsEl.innerHTML = h; statsEl.dataset.html = h;
+    statsEl.querySelectorAll("tr.row").forEach(r => r.onclick = () => { const s = snap.all.find(z => z.id === r.dataset.id); if (s) openSession(s); });
+  }
+}
 wrap.addEventListener("scroll", closeMenu);
 
 function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
-window.updateOffice = raw => { lastRaw = raw; const next = build(raw); track(next); snap = next; };
+window.updateOffice = raw => { lastRaw = raw; const next = build(raw); track(next); snap = next; renderStats(); };
 window.addEventListener("resize", () => snap && draw());
 // At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
 let lastDraw = 0;
@@ -659,7 +773,20 @@ if (!bridge) {
       const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
   }; };
-  updateOffice(demo()); setInterval(() => updateOffice(demo()), 2000);
+  const LIVE = {
+    s1: { ctx: 38, cost: 2.41, agents: { a1: "running", a2: "waiting" } }, s2: { ctx: 64, cost: 1.12 }, s3: { ctx: 22, cost: 0.31 },
+    s5: { ctx: 91, cost: 4.80 }, s6: { ctx: 12, cost: 0.05 }, s4: { ctx: 47, cost: 0.66 },
+    s7: { ctx: 71, cost: 6.20, agents: { b1: "running", b2: "running", b3: "idle", b4: "running" } } };
+  const ORIG = { s1: "iterm", s2: "vscode-panel", s3: "desktop", s5: "terminal", s6: "vscode-terminal", s4: "headless", s7: "desktop" };
+  const withLive = r => { r.sessions.forEach(s => {
+    s.origin = { app: ORIG[s.id] || "other" };
+    const l = LIVE[s.id]; if (!l) return;
+    s.live = { context: { percent: l.ctx }, costUsd: l.cost, updated: Date.now() / 1000,
+      rateLimits: [{ kind: "five_hour", percentUsed: 41, resetsAt: new Date(Date.now() + 2.3 * 3600e3).toISOString() },
+                   { kind: "seven_day", percentUsed: 28, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
+      agents: Object.entries(l.agents || {}).filter(([id]) => (s.subagents || {})[id]).map(([id, st]) => ({ id, type: "general-purpose", status: st })) };
+  }); return r; };
+  updateOffice(withLive(demo())); setInterval(() => updateOffice(withLive(demo())), 2000);
 }
 </script>
 </body>

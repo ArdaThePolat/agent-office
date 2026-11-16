@@ -6,7 +6,7 @@
 # PreCompact, Stop, StopFailure, SubagentStart, SubagentStop and SessionEnd (see README). It reads the hook's
 # JSON on stdin and keeps one file per session in $AGENT_OFFICE_STATE/sessions/<session-id>.json:
 #
-#   {id, pid, kind, title, cwd, model, effort, state, since, updated, subagents: {<agent-id>: {type, since}}}
+#   {id, pid, kind, title, cwd, model, effort, origin, state, since, updated, subagents: {<agent-id>: {type, since}}}
 #
 #   kind   session (a person's session) | review (a headless PR review: drawn in the review room)
 #          | automation (another headless job); both come from "sessionKinds" in the config file
@@ -15,6 +15,8 @@
 #          | background (its turn ended while subagents it started are still running)
 #          | compacting (summarising its context) | idle (started, nothing asked yet)
 #   pid    the Claude process the hook runs under; Agent Office drops a session whose pid is gone
+#   origin where the session runs, so a click can bring it to the front: {app, bundle, tty}
+#          app = terminal | iterm | vscode-terminal | vscode-panel | desktop | headless | other
 #
 # It also appends general events ("waiting for you", "subagent started") to $AGENT_OFFICE_STATE/events.log
 # as <epoch>\t<session-id>\t<text>. No tool names, arguments or prompt text are recorded: the
@@ -139,13 +141,35 @@ esac
 pid="$(printf '%s' "$cur" | "$JQ" -r '.pid // empty' 2>/dev/null)"
 [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null || pid="$(claude_pid)"
 
+# Where the session runs, worked out once per session from what it inherited: the app that
+# started it, and the terminal device a tab can be found by.
+origin=""
+if [[ "$event" == "SessionStart" || "$event" == "UserPromptSubmit" ]] \
+   && ! printf '%s' "$cur" | grep -q '"origin"'; then
+  tty=""; [[ -n "$pid" ]] && tty="$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')"
+  case "$tty" in ""|"??"|"?") tty="" ;; /dev/*) ;; *) tty="/dev/$tty" ;; esac
+  bundle="${__CFBundleIdentifier:-}"
+  case "${CLAUDE_CODE_ENTRYPOINT:-}:${TERM_PROGRAM:-}" in
+    claude-desktop:*)        app="desktop" ;;
+    *:vscode)                app="vscode-terminal" ;;
+    *:Apple_Terminal)        app="terminal" ;;
+    *:iTerm.app)             app="iterm" ;;
+    *vscode*:*)              app="vscode-panel" ;;
+    *)                       app="other"
+                             [[ -z "$tty" && "$bundle" == *[Vv][Ss][Cc]ode* ]] && app="vscode-panel" ;;
+  esac
+  [[ "$kind" != "session" ]] && app="headless"
+  origin="$("$JQ" -cn --arg app "$app" --arg bundle "$bundle" --arg tty "$tty" '{app: $app, bundle: $bundle, tty: $tty}')"
+fi
+
 printf '%s' "$cur" | "$JQ" \
   --arg id "$sid" --arg pid "${pid:-0}" --arg kind "$kind" --arg title "$title" --arg cwd "$cwd" \
-  --arg model "$model" --arg effort "$effort" \
+  --arg model "$model" --arg effort "$effort" --arg origin "$origin" \
   --arg state "$state" --argjson now "$now" --arg op "$sub_op" --arg aid "$agent_id" --arg atype "$agent_type" '
   .id = $id | .pid = ($pid | tonumber) | .kind = $kind | .title = $title
   | .cwd = (if $cwd != "" then $cwd else (.cwd // "") end)
   | (if $model != "" then .model = $model else . end)
+  | (if $origin != "" then .origin = ($origin | fromjson) else . end)
   | (if $effort != "" then .effort = $effort else . end)
   | .subagents = (.subagents // {})
   | (if $state != "" and $state != .state then .state = $state | .since = $now else . end)

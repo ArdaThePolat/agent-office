@@ -79,7 +79,21 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         // the file's mtime is the session's heartbeat (the hook touches it on every event)
         var s2 = s
         if let m = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date { s2["beat"] = m.timeIntervalSince1970 }
+        // what the optional companion mod reports from inside the session (context, cost, plan
+        // usage, exact subagent states); absent without the mod
+        let livePath = cfg.officeState + "/live/" + name
+        if let d = fm.contents(atPath: livePath), let live = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            s2["live"] = live
+        }
         sessions.append(s2)
+    }
+    // live files of sessions that are gone
+    let liveIds = Set(sessions.compactMap { ($0["id"] as? String).map { $0 + ".json" } })
+    for name in (try? fm.contentsOfDirectory(atPath: cfg.officeState + "/live")) ?? [] where !liveIds.contains(name) {
+        let p = cfg.officeState + "/live/" + name
+        if let m = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date, now - m.timeIntervalSince1970 > 120 {
+            try? fm.removeItem(atPath: p)
+        }
     }
     var reviews: [String] = [], queue: [String] = [], reviewLog: [String] = []
     if let rs = cfg.reviewState {
@@ -186,6 +200,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let u = body["open"], let url = URL(string: u), url.scheme == "https" { NSWorkspace.shared.open(url) }
         if let p = body["reveal"], FileManager.default.fileExists(atPath: p) {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        }
+        if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
+        if let t = body["copy"], t.count < 200 {
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
+        }
+    }
+
+    // ---- bringing a session to the front, where it runs ----
+    // The hook records where each session started (origin: app, bundle, tty). Terminal and iTerm
+    // tabs are found by their terminal device; a VS Code panel session by the extension's own
+    // link; a VS Code terminal and the Claude app can only be brought forward as a window.
+    func focusSession(_ id: String) {
+        let path = Config.load().officeState + "/sessions/" + id + ".json"
+        guard let d = FileManager.default.contents(atPath: path),
+              let s = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
+        let o = s["origin"] as? [String: Any] ?? [:]
+        let app = o["app"] as? String ?? "", bundle = o["bundle"] as? String ?? ""
+        let tty = o["tty"] as? String ?? "", cwd = s["cwd"] as? String ?? ""
+        let safeTTY = tty.range(of: "^/dev/ttys[0-9]+$", options: .regularExpression) != nil ? tty : ""
+        switch app {
+        case "terminal" where !safeTTY.isEmpty:
+            osascript("""
+            tell application "Terminal"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  if tty of t is "\(safeTTY)" then
+                    set selected tab of w to t
+                    set index of w to 1
+                    activate
+                    return
+                  end if
+                end repeat
+              end repeat
+              activate
+            end tell
+            """)
+        case "iterm" where !safeTTY.isEmpty:
+            osascript("""
+            tell application "iTerm2"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  repeat with s in sessions of t
+                    if tty of s is "\(safeTTY)" then
+                      select w
+                      tell t to select
+                      tell s to select
+                      activate
+                      return
+                    end if
+                  end repeat
+                end repeat
+              end repeat
+              activate
+            end tell
+            """)
+        case "vscode-panel":
+            raiseWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {
+                let scheme = bundle.lowercased().contains("todesktop") ? "cursor" : "vscode"
+                if let u = URL(string: "\(scheme)://anthropic.claude-code/open?session=\(id)") { NSWorkspace.shared.open(u) }
+            }
+        case "vscode-terminal":
+            raiseWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {}
+        default:
+            if !bundle.isEmpty, activate(bundle: bundle) { return }
+            if FileManager.default.fileExists(atPath: cwd) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)]) }
+        }
+    }
+
+    @discardableResult func activate(bundle: String) -> Bool {
+        guard let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { return false }
+        return a.activate()
+    }
+
+    // Raise the app's window whose title names one of the session folder's names (the folder,
+    // then its parents): VS Code titles end with the workspace name. Needs Accessibility for
+    // System Events; without it the app is just brought forward. `then` runs afterwards.
+    func raiseWindow(bundle: String, folder: String, then: @escaping () -> Void) {
+        activate(bundle: bundle)
+        let names = folder.split(separator: "/").suffix(4).reversed()
+            .map { String($0).replacingOccurrences(of: "\"", with: "") }
+            .filter { !$0.isEmpty }
+            .map { "\"\($0)\"" }.joined(separator: ", ")
+        let safeBundle = bundle.replacingOccurrences(of: "\"", with: "")
+        osascript("""
+        tell application "System Events"
+          set p to first process whose bundle identifier is "\(safeBundle)"
+          repeat with n in {\(names)}
+            repeat with w in windows of p
+              set t to name of w
+              if t ends with (" — " & n) or t is n or t contains (" — " & n & " ") then
+                perform action "AXRaise" of w
+                set frontmost of p to true
+                return
+              end if
+            end repeat
+          end repeat
+        end tell
+        """, then: then)
+    }
+
+    func osascript(_ source: String, then: (() -> Void)? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            p.arguments = ["-e", source]
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run(); p.waitUntilExit()
+            if let then { DispatchQueue.main.async(execute: then) }
         }
     }
 

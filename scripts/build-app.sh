@@ -36,6 +36,7 @@ cat > "$B/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window.</string>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$BUILD/Agent Office.app" >/dev/null

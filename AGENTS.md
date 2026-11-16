@@ -64,10 +64,24 @@ skip this step: the room just stays empty. If they do, write `~/.config/agent-of
 with their paths. That file belongs to the person and stays out of this repository; ask before
 creating or changing it, and never add their values to the repo.
 
+## 5. Optional: the companion mod (ASK FIRST)
+
+It adds context gauges, cost, plan usage and exact subagent states, and a one-line office status
+under the prompt. It is a Claude Code plugin, so installing it changes the person's Claude Code
+setup: ask first. Needs Claude Code 2.1.287+ (`claude --version`).
+
+```bash
+claude plugin install agent-office --marketplace ArdaThePolat/agent-office
+```
+
+Check: after the person's next turn in any session, `ls ~/.local/state/agent-office/live/` holds a
+file for it, and **Stats** in the app shows its context and cost.
+
 ## Uninstall
 
 ```bash
 scripts/install-hook.sh --uninstall           # removes exactly the entries it added
+claude plugin uninstall agent-office          # the companion mod, if installed
 rm -rf ~/Applications/"Agent Office.app"      # ask first
 rm -rf ~/.local/state/agent-office            # ask first: the session files and event log
 ```
