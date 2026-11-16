@@ -1,0 +1,4 @@
+{
+  "description": "Agent Office: live session facts for the office, and its status line",
+  "modules": ["./register.js"]
+}

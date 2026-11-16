@@ -26,7 +26,26 @@
   #menu button:hover { background: #3a302c; }
   #menu .head { color: var(--muted); padding: 3px 8px 5px; font-size: 11px; border-bottom: 1px solid #3a302c; margin-bottom: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-  #demo { position: fixed; top: 6px; right: 8px; color: var(--muted); font-size: 10px; }
+  #demo { position: fixed; bottom: calc(var(--log-h, 92px) + 4px); right: 8px; color: var(--muted); font-size: 10px; }
+  #statsBtn { position: fixed; top: 6px; right: 10px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
+    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+  #statsBtn:hover { background: #3a302c; }
+  #stats { position: absolute; inset: 0 0 var(--log-h, 92px) 0; z-index: 3; display: none; overflow-y: auto;
+    background: #1b1820fa; padding: 34px 16px 16px; }
+  #stats h2 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 14px 0 6px; letter-spacing: .06em; }
+  #stats .cards { display: flex; gap: 10px; flex-wrap: wrap; }
+  #stats .card { background: #262028; border: 1px solid #3d332e; border-radius: 6px; padding: 8px 12px; min-width: 120px; }
+  #stats .card b { display: block; font-size: 18px; margin-top: 2px; }
+  #stats .card small { color: var(--muted); }
+  #stats table { border-collapse: collapse; width: 100%; }
+  #stats th { text-align: left; color: var(--muted); font-weight: normal; padding: 4px 8px; border-bottom: 1px solid #3d332e; white-space: nowrap; }
+  #stats td { padding: 5px 8px; border-bottom: 1px solid #2c2529; vertical-align: middle; white-space: nowrap; }
+  #stats tr.row:hover td { background: #2a2329; cursor: pointer; }
+  #stats .t { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+  .bar { display: inline-block; width: 70px; height: 7px; background: #3a3036; border-radius: 4px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+  #stats .note { color: var(--muted); margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -35,6 +54,8 @@
 <div id="tip"></div>
 <div id="menu"></div>
 <div id="demo"></div>
+<button id="statsBtn" title="Usage and session details (S)">Stats</button>
+<div id="stats"></div>
 <script>
 // Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
 // in a plain browser (no app bridge) it animates demo data. All art is drawn here, in code.
@@ -85,6 +106,22 @@ function modelName(m) {
   if (!p[0]) return "";
   return p[0][0].toUpperCase() + p[0].slice(1) + (p.length > 1 ? " " + p.slice(1).join(".") : "");
 }
+const ORIGIN = { terminal: "Terminal", iterm: "iTerm", "vscode-terminal": "VS Code terminal", "vscode-panel": "VS Code panel",
+                 desktop: "Claude app", headless: "headless", other: "a terminal" };
+const AGENT_COLOR = { running: "#5fbf7f", waiting: "#ffb347", pending: "#8ea3ad", idle: "#9a94ad", failed: "#e06c6c" };
+function ctxColor(p) { return p >= 85 ? "#e06c6c" : p >= 60 ? "#f0a35e" : "#5fbf7f"; }
+// A session's subagents: the hook's list (it knows the moment one starts or stops), with each
+// one's exact status from the companion mod when it reports; agents only the mod knows are added.
+function agentsOf(s) {
+  const out = Object.entries(s.subagents || {}).map(([id, a]) => ({ id, type: a.type || "agent", status: null }));
+  const live = s.live && Array.isArray(s.live.agents) ? s.live.agents : null;
+  if (!live) return out;
+  const byId = new Map(live.map(a => [a.id, a]));
+  for (const a of out) if (byId.has(a.id)) { a.status = byId.get(a.id).status; a.description = byId.get(a.id).description; }
+  for (const a of live) if (!out.some(o => o.id === a.id) && ["running", "waiting", "pending"].includes(a.status))
+    out.push({ id: a.id, type: a.type || "agent", status: a.status, description: a.description });
+  return out.filter(a => a.status !== "completed" && a.status !== "killed");
+}
 function esc(s) { return String(s).replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "&amp;", '"': "&quot;" })[c]); }
 
 // What a session shows: its recorded state, with time taken into account.
@@ -108,8 +145,10 @@ function loadHidden(raw) {
   if (hiddenLoaded) return; hiddenLoaded = true;
   try { hidden = JSON.parse(bridge ? (raw.hidden || "{}") : (localStorage.getItem("agentOffice.hidden") || "{}")) || {}; } catch (e) { hidden = {}; }
 }
-function hideSession(s) { hidden[s.id] = { state: s.state || "", since: s.since || 0, title: s.title || "" }; saveHidden(); refresh(); }
-function unhideAll() { hidden = {}; saveHidden(); refresh(); }
+// release = the same, but the agent goes to the lounge and its desk is emptied
+function hideSession(s, release) { hidden[s.id] = { state: s.state || "", since: s.since || 0, title: s.title || "", release: !!release }; saveHidden(); refresh(); }
+function backToDesk(s) { delete hidden[s.id]; saveHidden(); refresh(); }
+function unhideAll() { for (const id of Object.keys(hidden)) if (!hidden[id].release) delete hidden[id]; saveHidden(); refresh(); }
 
 // pr-watch's log line → a general event, or null
 function reviewEvent(line) {
@@ -127,7 +166,7 @@ function reviewEvent(line) {
   return null;
 }
 
-let lastRaw = null;
+let lastRaw = null, layoutCache = null;
 function build(raw) {
   loadHidden(raw);
   const reviews = (raw.reviews || []).map(l => l.split("\t")).filter(f => f.length >= 8)
@@ -141,16 +180,25 @@ function build(raw) {
   let changed = false;
   const ids = new Set(sessions.map(s => s.id));
   for (const id of Object.keys(hidden)) if (!ids.has(id)) { delete hidden[id]; changed = true; }
-  const isHidden = s => {
-    const h = hidden[s.id]; if (!h) return false;
-    if (h.state === (s.state || "") && h.since === (s.since || 0)) return true;
-    delete hidden[s.id]; changed = true; return false;
+  // where each session is: hidden, in the lounge (released by you, or idle with nothing to do),
+  // or at its desk. A hidden or released session comes back the moment its state changes.
+  const now = raw.now || Date.now() / 1000;
+  const idle = s => !s.state || s.state === "idle" || (s.state === "done" && s.since && now - s.since > DONE_FRESH);
+  const where = s => {
+    const h = hidden[s.id];
+    if (h) {
+      if (h.state === (s.state || "") && h.since === (s.since || 0)) return h.release ? "lounge" : "hidden";
+      delete hidden[s.id]; changed = true;
+    }
+    return idle(s) ? "lounge" : "desk";
   };
   // people who need you first, then working, then the rest; only the first MAX_SESSIONS are drawn
   const rank = { waiting: 0, crashed: 1, done: 2, working: 3, compacting: 3, background: 3, idle: 4 };
   const all = sessions.filter(s => s.kind !== "review");
-  const visible = all.filter(s => !isHidden(s))
+  const at = new Map(all.map(s => [s.id, where(s)]));
+  const visible = all.filter(s => at.get(s.id) === "desk")
     .sort((a, b) => (rank[a.state] ?? 5) - (rank[b.state] ?? 5) || (b.updated || 0) - (a.updated || 0));
+  const lounge = all.filter(s => at.get(s.id) === "lounge").sort((a, b) => hash(a.id) - hash(b.id));
   if (changed) saveHidden();
   const events = [];
   for (const l of raw.officeEvents || []) { const f = l.split("\t"); if (f.length >= 3) events.push({ t: +f[0], text: f.slice(2).join(" ") }); }
@@ -158,8 +206,9 @@ function build(raw) {
   events.sort((a, b) => b.t - a.t);
   energy = !!(raw.settings && raw.settings.energySaver);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
-           overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.length - visible.length,
-           events, workspace: raw.workspace || "", slots: raw.slots || 5 };
+           overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
+           events, workspace: raw.workspace || "", slots: raw.slots || 5,
+           manager: raw.manager && (raw.manager.image || raw.manager.name) ? raw.manager : null };
 }
 
 // ---------- arrivals, departures, chimes ----------
@@ -171,6 +220,7 @@ function track(next) {
   next.reviews.forEach(r => add("r:" + r.slug + r.id));
   next.manualReviews.forEach(s => add("r:" + s.id));
   next.others.forEach(s => { add(s.id); Object.keys(s.subagents || {}).forEach(a => add(a, true)); });
+  next.lounge.forEach(s => add(s.id));
   for (const [id, a] of actors) if (!ids.has(id) && a.gone === null) a.gone = seenOnce && a.last && !energy ? t : t - WALK_MS;
   for (const [id, a] of actors) if (a.gone !== null && t - a.gone > WALK_MS) actors.delete(id);
   // chimes: a session that has just started waiting for you, or just finished its turn
@@ -181,13 +231,27 @@ function track(next) {
   lastState.clear(); next.all.forEach(s => lastState.set(s.id, s.state));
   seenOnce = true;
 }
-// where a character is drawn: walking from the room's door while arriving
-function placed(id, x, y, doorX, doorY) {
+// where a character is drawn: walking from the room's door while arriving, and from where it was
+// when it changes zone (its desk ↔ the lounge)
+const MOVE_MS = 2000;
+function placed(id, x, y, doorX, doorY, zone) {
   const a = actors.get(id), t = performance.now();
-  if (a) a.last = { x, y, doorX, doorY };
-  if (!a || t - a.born >= WALK_MS) return { x, y, walking: false };
-  const k = (t - a.born) / WALK_MS;
-  return { x: Math.round(doorX + (x - doorX) * k), y: Math.round(doorY + (y - doorY) * k), walking: true };
+  if (!a) return { x, y, walking: false };
+  if (zone) {
+    if (a.zone && a.zone !== zone && a.drawn && !energy) { a.from = a.drawn; a.moved = t; }
+    a.zone = zone;
+  }
+  a.last = { x, y, doorX, doorY };
+  let r = { x, y, walking: false };
+  if (a.from && t - a.moved < MOVE_MS) {
+    const k = (t - a.moved) / MOVE_MS;
+    r = { x: Math.round(a.from.x + (x - a.from.x) * k), y: Math.round(a.from.y + (y - a.from.y) * k), walking: true };
+  } else if (t - a.born < WALK_MS) {
+    const k = (t - a.born) / WALK_MS;
+    r = { x: Math.round(doorX + (x - doorX) * k), y: Math.round(doorY + (y - doorY) * k), walking: true };
+  }
+  a.drawn = { x: r.x, y: r.y };
+  return r;
 }
 
 // ---------- drawing primitives (art pixels) ----------
@@ -318,11 +382,13 @@ const layer = document.createElement("canvas"), lctx = layer.getContext("2d");
 let layerKey = "";
 function paintRooms(L) {
   const sky = skyFor(new Date().getHours()), cols = L.cols;
+  if (L.mw) paintManager(L, sky);
   // review room: blue-grey walls, carpet
-  wall(0, 0, cols, "#6f7f99", "#58667c");
-  carpet(0, WALL, cols, L.reviewH - WALL);
-  door(3, 0);
-  const winW = 16, from = 44, deskSpan = L.bx - 14 - from;
+  const rx = L.rx;
+  wall(rx, 0, cols - rx, "#6f7f99", "#58667c");
+  carpet(rx, WALL, cols - rx, L.reviewH - WALL);
+  door(rx + 3, 0);
+  const winW = 16, from = rx + 44, deskSpan = L.bx - 14 - from;
   for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
     windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
   clock(L.bx - 10, 4);
@@ -330,7 +396,7 @@ function paintRooms(L) {
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
-  sign("REVIEW ROOM", 13, 3);
+  sign("REVIEW ROOM", rx + 13, 3);
   // the others room: warm walls, wood floor
   const oy = L.oy;
   wall(0, oy, cols, "#b9a184", "#8e7458");
@@ -348,12 +414,16 @@ function paintRooms(L) {
   sign("OTHERS", 13, oy + 3);
   // team rugs
   for (const c of L.cells) rug(c.x - 3, c.y + 1, L.teamW - 6, c.h - 4, c.rug);
+  paintLounge(L, sky);
   // night: the whole office a little dimmer
-  if (sky.kind === "night") px(0, 0, cols, L.reviewH + L.othersH + 3, "rgba(12,12,40,0.16)");
+  if (sky.kind === "night") px(0, 0, cols, L.ly + L.loungeH, "rgba(12,12,40,0.16)");
   // room edges
   px(0, 0, 1, L.reviewH, "#2c221e"); px(cols - 1, 0, 1, L.reviewH, "#2c221e");
+  if (L.mw) px(L.mw, 0, 2, L.reviewH, "#2c221e");
   px(0, oy, 1, L.othersH, "#2c221e"); px(cols - 1, oy, 1, L.othersH, "#2c221e");
   px(0, L.reviewH, cols, 3, "#2c221e");
+  px(0, L.ly - 3, cols, 3, "#2c221e");
+  px(0, L.ly, 1, L.loungeH, "#2c221e"); px(cols - 1, L.ly, 1, L.loungeH, "#2c221e");
 }
 
 // ----- things drawn every frame -----
@@ -362,8 +432,8 @@ function chair(x, y, s) { // behind a seated person at (x, y)
   px(x - u(1), y + u(4), u(10), u(9), "#353a46"); px(x - u(1), y + u(4), u(10), 1, "#4a505f");
 }
 // A person seated (or walking); small = a subagent.
-function person(x, y, id, teamKey, state, small, walking) {
-  const L = look(id, teamKey), s = small ? 0.7 : 1, u = v => Math.max(1, Math.round(v * s));
+function person(x, y, id, teamKey, state, small, walking, scale) {
+  const L = look(id, teamKey), s = scale || (small ? 0.7 : 1), u = v => Math.max(1, Math.round(v * s));
   const bob = (state === "working" && frame % 2) || (walking && frame % 2) ? 1 : 0;
   const blink = !energy && ((performance.now() + (L.seed % 5000)) % (3600 + L.seed % 2400)) < 170;
   const closed = blink || state === "idle";
@@ -379,7 +449,7 @@ function person(x, y, id, teamKey, state, small, walking) {
   if (L.style === 3) { px(x + u(1), yb, u(6), u(2), shade(L.shirt, -0.3)); px(x + u(5), yb + u(1), u(3), 1, shade(L.shirt, -0.45)); }
   if (L.style === 4) px(x + u(1), yb + u(2), u(2), 1, L.hair);
   const eye = closed ? shade(L.skin, -0.2) : "#1b1820";
-  px(x + u(2), yb + u(3), 1, closed ? 0.34 : 1, eye); px(x + u(5), yb + u(3), 1, closed ? 0.34 : 1, eye);
+  px(x + u(2), yb + u(3), s > 1 ? u(1) : 1, closed ? 0.34 : (s > 1 ? u(1) : 1), eye); px(x + u(5), yb + u(3), s > 1 ? u(1) : 1, closed ? 0.34 : (s > 1 ? u(1) : 1), eye);
   if (!small && state !== "crashed" && state !== "waiting") px(x + u(3), yb + u(4) + 0.6, u(2), 0.4, shade(L.skin, -0.25));
   if (state === "waiting" && !small) px(x + u(3) + 0.3, yb + u(4), 1, 1, shade(L.skin, -0.35));    // "o"
   // body
@@ -433,19 +503,21 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = 82, teamW = 64;
+  const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
   const perRow = Math.max(1, Math.floor((cols - 8) / teamW));
   const rowsOf = [];
   snap.others.forEach((s, k) => { const r = Math.floor(k / perRow); rowsOf[r] = rowsOf[r] || []; rowsOf[r].push(s); });
-  const rowH = rowsOf.map(r => r.some(s => Object.keys(s.subagents || {}).length) ? 70 : 52);
+  const rowH = rowsOf.map(r => r.some(s => agentsOf(s).length) ? 70 : 52);
   const contentH = WALL + 6 + rowH.reduce((a, b) => a + b, 0) + (snap.overflow || snap.hiddenCount ? 9 : 0);
   const oy = reviewH + 3;
-  const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1);
-  const benchW = Math.min(52, Math.max(34, Math.floor(cols * 0.22))), bx = cols - benchW - 1;
+  const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1 - loungeH - 3), ly = oy + othersH + 3;
+  // the manager's room takes the top-left corner when one is configured and the window is wide enough
+  const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
+  const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
-  return { W, cols, H: (oy + othersH) * P, reviewH, oy, othersH, teamW, benchW, bx, cells, endY: ry };
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, cells, endY: ry };
 }
 
 function draw() {
@@ -453,11 +525,11 @@ function draw() {
   hits = [];
   if (!snap) { const W = Math.max(320, wrap.clientWidth); cv.width = W * dpr; cv.height = 60 * dpr; cv.style.width = W + "px"; cv.style.height = "60px";
     g = ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); text("waiting for data…", 12, 20, "#a79d93", 11); return; }
-  const L = layout(), W = L.W, H = L.H;
+  const L = layout(), W = L.W, H = L.H; layoutCache = L;
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, d.getHours(), d.getMinutes(), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -468,16 +540,17 @@ function draw() {
   ctx.drawImage(layer, 0, 0, W, H);
 
   // ----- review room -----
-  const cols = L.cols, n = snap.slots, deskArea = L.bx - 8, slotW = Math.floor(deskArea / n);
+  const cols = L.cols, n = snap.slots, deskArea = L.bx - 8 - L.rx, slotW = Math.floor(deskArea / n);
+  if (L.mw) drawManager(L);
   const active = snap.reviews.length + snap.manualReviews.length;
   label(`${active}/${n} desks · ${snap.queue.length} waiting`, (L.bx - 13) * P, (WALL + 2) * P, "#f1ebe2", 10, "right");
   const desks = snap.reviews.map(r => ({ id: "r:" + r.slug + r.id, top: `${r.name}#${r.id}`, sub: r.author, title: r.title, since: r.started,
       url: snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.slug}/pull-requests/${r.id}` : "" }))
     .concat(snap.manualReviews.map(s => ({ id: "r:" + s.id, top: s.title, sub: "by hand", title: s.title + "\n" + s.cwd, start: s.since })));
   for (let i = 0; i < n; i++) {
-    const x0 = 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
+    const x0 = L.rx + 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
     chair(x + 5, y - 16, 1);
-    if (dk) { const p = placed(dk.id, x + 5, y - 16, 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
+    if (dk) { const p = placed(dk.id, x + 5, y - 16, L.rx + 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
     desk(x, y, 18, dk ? "on" : "off", false, i);
     const cx = (x0 + slotW / 2) * P;
     if (dk) {
@@ -513,7 +586,7 @@ function draw() {
   const needs = cnt("waiting") + cnt("crashed");
   label(`${needs ? "⚠ " : ""}needs you ${needs} · working ${cnt("working") + cnt("compacting") + cnt("background")} · done ${cnt("done")}`,
     (cols - 3) * P, (oy + WALL + 2) * P, needs ? "#ffc370" : "#f1ebe2", 10, "right");
-  if (!snap.others.length) label(snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
+  if (!snap.others.length) label(snap.lounge.length ? "everyone is on a break" : snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
     24 * P, (oy + WALL + 8) * P, "#d9cfc3", 10);
   for (const c of L.cells) {
     const s = c.s, x = c.x, y = c.y, st = shown(s), tk = team(s.cwd), cx = x + 26;
@@ -522,20 +595,22 @@ function draw() {
       px(x - 3, c.y + 1, L.teamW - 6, 1, col); px(x - 3, c.y + c.h - 4, L.teamW - 6, 1, col);
       px(x - 3, c.y + 1, 1, c.h - 4, col); px(x + L.teamW - 10, c.y + 1, 1, c.h - 4, col);
     }
-    const subs = Object.entries(s.subagents || {});
+    const subs = agentsOf(s);
     // head agent at the big desk
     chair(cx - 4, y + 7, 1);
-    const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1);
+    const hp = placed(s.id, cx - 4, y + 7, 7, oy + WALL + 1, "desk");
     person(hp.x, hp.y, s.id, tk, st, false, hp.walking);
     desk(cx - 9, y + 23, 18, st === "working" || st === "compacting" || st === "background" ? "on" : st === "waiting" ? "wait" : st === "crashed" ? "err" : "off", false, hash(s.id));
     if (!hp.walking && st !== "working") bubble(cx + 5, y + 1, st);
     // subagents: their own row of small desks under the head agent
-    subs.slice(0, 3).forEach(([aid], j) => {
-      const wx = x + j * 18, wy = y + 33;
+    subs.slice(0, 3).forEach((a, j) => {
+      const wx = x + j * 18, wy = y + 33, aid = a.id;
       chair(wx + 4, wy, 0.7);
       const wp = placed(aid, wx + 4, wy, cx, y + 20);
-      person(wp.x, wp.y, aid, tk, "working", true, wp.walking);
-      desk(wx + 1, wy + 9, 13, "on", true);
+      const ast = a.status === "waiting" ? "waiting" : a.status === "idle" ? "idle" : a.status === "failed" ? "crashed" : "working";
+      person(wp.x, wp.y, aid, tk, ast, true, wp.walking);
+      desk(wx + 1, wy + 9, 13, ast === "waiting" ? "wait" : ast === "crashed" ? "err" : ast === "idle" ? "off" : "on", true);
+      if (a.status && !wp.walking && (a.status !== "running" || frame % 2)) px(wx + 11, wy - 2, 2, 2, AGENT_COLOR[a.status] || "#8ea3ad");
     });
     if (subs.length > 3) label(`+${subs.length - 3}`, (x + 55) * P, (y + 37) * P, "#d9cfc3", 9);
     const ly = subs.length ? y + 50 : y + 32;
@@ -543,18 +618,33 @@ function draw() {
     label(clip((s.kind === "automation" ? "⚙ " : "") + (s.title || "untitled"), big), x * P, ly * P, NAME_COLOR[st] || "#f1ebe2", 12);
     const ago = st === "stalled" ? mins(snap.now - s.beat) : s.since ? mins(snap.now - s.since) : "";
     label(clip(`${base(s.cwd)} · ${STATE_WORD[st] || st}${ago ? " " + ago : ""}`, chars + 2), x * P, (ly + 5.4) * P, "#d9cfc3", 9);
-    const me = [modelName(s.model), s.effort].filter(Boolean).join(" · ");
-    if (me) label(clip(me, chars + 2), x * P, (ly + 9.6) * P, "#9fd3c0", 9);
+    const pct = s.live && s.live.context && s.live.context.percent;
+    const me = [modelName(s.model || (s.live && s.live.model)), s.effort].filter(Boolean).join(" · ");
+    const third = clip(me, pct != null ? chars - 9 : chars + 2);
+    g.font = "9px Menlo, monospace";
+    let gx = x * P;
+    if (third) { label(third, gx, (ly + 9.6) * P, "#9fd3c0", 9); gx += g.measureText(third).width + 9; }
+    if (pct != null) {             // the context gauge: how full this session's context is
+      const gy = (ly + 9.6) * P + 2, gw = 8 * P, t = Math.round(pct) + "%";
+      g.fillStyle = "#17131bcc"; g.fillRect(gx - 3, gy - 3.5, gw + g.measureText(t).width + 10, 12);
+      g.fillStyle = "#3a3036"; g.fillRect(gx, gy, gw, 5);
+      g.fillStyle = ctxColor(pct); g.fillRect(gx, gy, Math.max(1, Math.round(gw * Math.min(100, pct) / 100)), 5);
+      text(t, gx + gw + 4, gy - 2.5, ctxColor(pct), 9);
+    }
     hits.push({ x: (x - 3) * P, y: y * P, w: (L.teamW - 6) * P, h: (c.h - 3) * P, session: s,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}` +
         (s.model ? `\n${modelName(s.model)}${s.effort ? ", effort " + s.effort : ""}` : "") +
-        (subs.length ? `\nsubagents: ${subs.map(([, a]) => a.type || "agent").join(", ")}` : "") +
-        "\nclick: reveal the folder · right-click: hide", reveal: s.cwd });
+        (pct != null ? `\ncontext ${Math.round(pct)}%${s.live.costUsd != null ? " · $" + s.live.costUsd.toFixed(2) : ""}` : "") +
+        (subs.length ? `\nsubagents: ${subs.map(a => (a.type || "agent") + (a.status ? " (" + a.status + ")" : "")).join(", ")}` : "") +
+        `\n${s.origin && s.origin.app ? "runs in " + (ORIGIN[s.origin.app] || s.origin.app) + " · " : ""}click: open it · right-click: more`,
+      reveal: s.cwd });
   }
   const notes = [];
   if (snap.overflow) notes.push(`+ ${snap.overflow} more session(s) not drawn`);
   if (snap.hiddenCount) notes.push(`${snap.hiddenCount} hidden · right-click to show`);
   if (notes.length) label(notes.join(" · "), 6 * P, (L.endY + 1) * P, "#d9cfc3", 9);
+
+  drawLounge(L);
 
   // ----- people walking out -----
   const t = performance.now();
@@ -571,6 +661,344 @@ function draw() {
   if (logEl.dataset.html !== html) { logEl.innerHTML = html; logEl.dataset.html = html; }
 }
 
+
+
+// ---------- the lounge ----------
+// Where agents with nothing to do go: sessions that are idle, and any you release (right-click →
+// Release). Each one follows its own routine (make a coffee, drink it at the table, play on the
+// console, chat), in its own order and at its own pace, and walks between the spots. They walk
+// back to a desk the moment they get work.
+const ROUTINE = [["make", 25], ["drink", 70], ["game", 110], ["chat", 60]];   // [activity, seconds]
+const ROUTINE_S = ROUTINE.reduce((t, r) => t + r[1], 0);
+function wants(s) {
+  const h = hash(s.id + "lounge"), rot = h % ROUTINE.length;
+  let t = (Date.now() / 1000 + h % ROUTINE_S) % ROUTINE_S;
+  for (let k = 0; k < ROUTINE.length; k++) { const r = ROUTINE[(k + rot) % ROUTINE.length]; if (t < r[1]) return r[0]; t -= r[1]; }
+  return "chat";
+}
+function loungeGeo(L) {
+  const y = L.ly, cols = L.cols;
+  const kw = Math.max(56, Math.floor(cols * 0.36)), gw = Math.max(52, Math.floor(cols * 0.3)), gx = cols - gw;
+  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(14 + (kw - 14) * 0.6);
+  const spots = [
+    { kind: "make", x: 17, y: y + 19 }, { kind: "make", x: 29, y: y + 19 },
+    { kind: "drink", x: tx - 15, y: y + 40 }, { kind: "drink", x: tx + 7, y: y + 40 },
+    { kind: "game", x: tvX - 14, y: y + 38 }, { kind: "game", x: tvX - 4, y: y + 38 }, { kind: "game", x: tvX + 6, y: y + 38 },
+    { kind: "chat", x: chatX - 15, y: y + 33 }, { kind: "chat", x: chatX + 7, y: y + 33 }, { kind: "chat", x: chatX - 4, y: y + 27 },
+  ];
+  if (gw >= 70) spots.push({ kind: "game", x: gx + 5, y: y + 47, bean: true });
+  return { y, kw, gx, gw, chatX, tvX, tx, spots };
+}
+function paintLounge(L, sky) {
+  const G = loungeGeo(L), y = G.y, cols = L.cols, H = L.loungeH, cw = G.kw - 20;
+  // walls: warm cream with a stripe; the games corner painted navy with an LED strip
+  wall(0, y, cols, "#e2d3b5", "#b09372");
+  for (let x = 3; x < cols; x += 6) px(x, y + 2, 1, 9, "rgba(150,120,80,0.10)");
+  px(G.gx, y + 2, G.gw, 9, "#2c3350"); px(G.gx, y + 11, G.gw, 4, "#232842"); px(G.gx, y + 11, G.gw, 1, "#3a4266");
+  for (let x = G.gx; x < cols; x++) px(x, y + 2, 1, 1, ["#b98be0", "#5b8def", "#4fc1c9", "#e06c6c"][Math.floor((x - G.gx) / 6) % 4]);
+  px(G.gx, y + 3, G.gw, 1, "rgba(185,139,224,0.25)");
+  // floors: terracotta and cream tiles in the kitchen, wood elsewhere
+  for (let j = y + WALL; j < y + H; j += 4) for (let i = 0; i < G.kw; i += 4) {
+    px(i, j, 4, 4, (i / 4 + (j - y - WALL) / 4) % 2 ? "#ebe1cd" : "#d39a7c"); px(i, j, 4, 1, "rgba(255,255,255,0.10)"); px(i, j + 3, 4, 1, "rgba(0,0,0,0.08)");
+  }
+  woodFloor(G.kw, y + WALL, cols - G.kw, H - WALL);
+  for (let k = 0; k < 3; k++) px(0, y + WALL + k, cols, 1, `rgba(0,0,0,${0.18 - k * 0.05})`);
+  // kitchen: fridge, sage cabinets, a white tile backsplash, wood worktop
+  px(2, y + 3, 10, 26, "#cfd6da"); px(2, y + 3, 10, 1, "#eef2f4"); px(2, y + 13, 10, 1, "#9aa5aa"); px(3, y + 4, 1, 24, "#e4e9eb");
+  px(10, y + 6, 1, 5, "#7d878c"); px(10, y + 16, 1, 7, "#7d878c"); px(5, y + 8, 3, 2, "#e3c74f"); px(4, y + 18, 2, 2, "#5b8def"); px(2, y + 29, 10, 1, "#00000040");
+  const uw = Math.min(cw, 48);
+  px(14, y + 2, uw, 5, "#7f9a7a"); px(14, y + 6, uw, 1, "#61795c"); for (let i = 14; i < 14 + uw; i += 8) { px(i, y + 2, 1, 5, "#61795c"); px(i + 6, y + 4, 1, 1, "#d9c27a"); }
+  px(14, y + 7, cw, 5, "#f2efe8"); for (let i = 14; i < 14 + cw; i += 3) px(i, y + 7 + (i % 2), 1, 4, "#dcd6ca"); px(14, y + 9, cw, 1, "#dcd6ca");
+  px(13, y + 12, cw + 2, 2, "#b98a5a"); px(13, y + 12, cw + 2, 1, "#d2a574");
+  px(14, y + 14, cw, 8, "#7f9a7a"); for (let i = 14; i < 14 + cw; i += 8) { px(i, y + 14, 1, 8, "#61795c"); px(i + 3, y + 16, 2, 1, "#d9c27a"); }
+  px(14, y + 22, cw, 1, "#3f4a3c"); px(14, y + 23, cw, 1, "#00000030");
+  // on the worktop: an espresso machine, a kettle, the sink, a fruit bowl, a plant
+  px(18, y + 6, 7, 6, "#2b2e35"); px(18, y + 5, 7, 1, "#9aa5aa"); px(19, y + 7, 5, 1, "#3d424c"); px(20, y + 9, 3, 1, "#c0c6ca"); px(23, y + 7, 1, 1, "#e06c6c");
+  px(29, y + 9, 4, 3, "#c9cfd2"); px(30, y + 8, 2, 1, "#c9cfd2"); px(33, y + 10, 1, 1, "#9aa5aa");
+  if (cw > 34) { px(37, y + 12, 9, 1, "#8a9499"); px(41, y + 9, 1, 3, "#b0b8bc"); px(41, y + 9, 3, 1, "#b0b8bc"); }
+  if (cw > 46) { px(50, y + 10, 6, 2, "#c49a6c"); px(51, y + 9, 2, 1, "#e06c6c"); px(53, y + 9, 2, 1, "#e3c74f"); px(52, y + 8, 1, 1, "#5fbf7f"); }
+  if (cw > 58) { px(14 + cw - 11, y + 6, 9, 6, "#3a3f4b"); px(14 + cw - 10, y + 7, 5, 4, "#1d2330"); px(14 + cw - 4, y + 8, 1, 2, "#8fd6b4"); }
+  // a round rug and a warm light pool under the kitchen table
+  px(G.tx - 18, y + 50, 36, 11, "#a85b48"); px(G.tx - 16, y + 49, 32, 13, "#a85b48"); px(G.tx - 15, y + 51, 30, 9, "#c27460");
+  px(G.tx - 12, y + 52, 24, 7, "rgba(255,226,160,0.12)");
+  // the middle: a window, framed art, a water cooler, a big rug, plants, a bookshelf
+  windowAt(G.chatX - 7, y + 4, 14, 7, sky, 17);
+  frameArt(G.chatX + 12, y + 4, 4); if (G.chatX - 22 > G.kw + 12) frameArt(G.chatX - 21, y + 4, 2);
+  px(G.kw + 4, y + 10, 6, 13, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 6, "#9fd0ea"); px(G.kw + 5, y + 4, 4, 1, "#c4e6f7"); px(G.kw + 6, y + 14, 2, 1, "#5b8def");
+  px(G.chatX - 22, y + 44, 44, 16, "#5b6e8f"); px(G.chatX - 20, y + 45, 40, 14, "#6d82a5");
+  for (let i = G.chatX - 18; i < G.chatX + 18; i += 6) px(i, y + 51, 3, 2, "#e3c74f");
+  plant(G.gx - 11, y + WALL + 8, true); plant(G.kw + 13, y + H - 3, false);
+  // games corner: a big TV, a cabinet with the console standing on it, game shelves, a rug
+  const tw = Math.min(32, G.gw - 16), tvl = G.tvX - Math.floor(tw / 2);
+  px(tvl - 1, y + 3, tw + 2, 13, "#0c0d10");
+  px(G.tvX - 13, y + WALL + 1, 26, 6, "#3b2c27"); px(G.tvX - 13, y + WALL + 1, 26, 1, "#5e4232"); px(G.tvX - 12, y + WALL + 3, 10, 3, "#2a1f1b");
+  px(G.tvX + 5, y + WALL - 8, 4, 10, "#f4f4f6"); px(G.tvX + 6, y + WALL - 8, 2, 10, "#1b1b22"); px(G.tvX + 4, y + WALL - 7, 1, 8, "#f4f4f6"); px(G.tvX + 9, y + WALL - 7, 1, 8, "#f4f4f6");
+  px(G.tvX + 6, y + WALL - 1, 2, 1, "#5b8def");
+  px(G.tvX - 10, y + WALL + 3, 3, 2, "#e9e9ee"); px(G.tvX - 6, y + WALL + 3, 3, 2, "#e9e9ee");   // two controllers charging
+  if (G.gw >= 60) {
+    const shx = cols - 12;
+    px(shx, y + 4, 9, 16, "#3b2c27"); for (let r = 0; r < 3; r++) { for (let i = 0; i < 7; i++) px(shx + 1 + i, y + 5 + r * 5, 1, 4, ["#5b8def", "#e06c6c", "#e3c74f", "#5fbf7f", "#b98be0"][(i + r) % 5]); px(shx, y + 9 + r * 5, 9, 1, "#5e4232"); }
+  }
+  px(G.gx + 3, y + WALL + 22, G.gw - 6, H - WALL - 25, "#283a5e"); px(G.gx + 5, y + WALL + 23, G.gw - 10, H - WALL - 27, "#334a75");
+  for (let i = G.gx + 8; i < cols - 8; i += 7) px(i, y + WALL + 30 + (i % 2) * 6, 2, 2, "#4fc1c9");
+  if (G.gw >= 70) { px(G.gx + 3, y + 54, 14, 8, "#e06c6c"); px(G.gx + 4, y + 53, 12, 1, "#f08a8a"); px(G.gx + 3, y + 61, 14, 1, "#00000040"); }   // bean bag
+  sign("LOUNGE", G.kw + 14, y + 3);
+}
+// a figure from behind (facing a counter or the TV)
+function backView(x, y, L2, legs) {
+  px(x + 1, y, 6, 6, L2.hair); px(x + 1, y + 5, 6, 1, shade(L2.hair, -0.25));
+  px(x, y + 6, 8, 6, L2.shirt); px(x, y + 6, 8, 1, shade(L2.shirt, 0.2)); px(x + 3, y + 6, 2, 1, shade(L2.shirt, -0.2));
+  if (legs) { px(x + 1, y + 12, 2, 3, L2.pants); px(x + 5, y + 12, 2, 3, L2.pants); px(x + 1, y + 15, 2, 1, "#2a2320"); px(x + 5, y + 15, 2, 1, "#2a2320"); }
+}
+function drawLounge(L) {
+  const G = loungeGeo(L), y = G.y, n = snap.lounge.length, at = assign(G);
+  const tw = Math.min(32, G.gw - 16), tvl = G.tvX - Math.floor(tw / 2);
+  const playing = at.some(a => a.spot.kind === "game"), brewing = at.some(a => a.spot.kind === "make" && a.spot.x < 20);
+  // the TV: a racing game while someone plays, a screensaver otherwise
+  if (playing) {
+    for (let j = 0; j < 11; j++) px(tvl, y + 4 + j, tw, 1, j < 5 ? "#3b6fc4" : j < 7 ? "#7fb0e8" : "#3f8f4f");
+    px(tvl, y + 11, tw, 3, "#55595f");
+    for (let i = 0; i < tw; i += 5) px(tvl + (i + frame * 2) % tw, y + 12, 2, 1, "#e9e3d6");
+    px(tvl + (frame * 3) % (tw - 5), y + 10, 5, 2, "#e06c6c"); px(tvl + (frame * 2 + 11) % (tw - 5), y + 12, 5, 2, "#e3c74f");
+    px(tvl + 2, y + 5, 4, 1, "#ffffff"); px(tvl + tw - 9, y + 5, 7, 1, "#ffffff");
+  } else {
+    px(tvl, y + 4, tw, 11, "#14182a");
+    px(tvl + (frame * 2) % (tw - 6), y + 6 + frame % 6, 6, 2, "#5b8def");
+  }
+  // the espresso machine, while someone makes a coffee
+  if (brewing && !energy) { px(21, y + 10, 1, 1 + frame % 2, "#6b4a32"); px(20 + frame % 2, y + 3 - frame % 3, 1, 2, "#ffffff70"); px(23, y + 7, 1, 1, "#5fbf7f"); }
+  label(n ? `${n} on a break` : "nobody on a break", (L.cols - 3) * P, (y + WALL + 2) * P, "#f1ebe2", 10, "right");
+  const sorted = at.slice().sort((a, b) => a.spot.y - b.spot.y);
+  for (const { s, spot } of sorted) {
+    const tk = team(s.cwd), p = placed(s.id, spot.x, spot.y, 7, y + WALL + 1, "lounge:" + spot.x + "," + spot.y);
+    const L2 = look(s.id, tk), wob = (frame + hash(s.id)) % 2;
+    if (p.walking) {
+      person(p.x, p.y, s.id, tk, "working", false, true);
+      if (spot.kind === "drink") px(p.x + 8, p.y + 8, 2, 2, "#f4efe4");             // carrying the coffee to the table
+    } else if (spot.kind === "make") {
+      backView(p.x, p.y, L2, true);
+      px(p.x - 1, p.y + 7 + wob, 2, 2, L2.skin); px(p.x + 7, p.y + 7, 2, 2, L2.skin);
+    } else if (spot.kind === "game" && spot.bean) {
+      person(p.x, p.y, s.id, tk, "lounge", false, false);
+      px(p.x + 2, p.y + 9, 4, 2, "#e9e9ee"); px(p.x + 1, p.y + 9 + wob, 1, 1, L2.skin); px(p.x + 6, p.y + 9 + (1 - wob), 1, 1, L2.skin);
+    } else if (spot.kind === "game") {
+      backView(p.x, p.y, L2, false);
+      px(p.x - 1, p.y + 8 + wob, 2, 2, L2.skin); px(p.x + 7, p.y + 8 + (1 - wob), 2, 2, L2.skin);
+    } else if (spot.kind === "drink") {
+      chair(p.x, p.y, 1); person(p.x, p.y, s.id, tk, "lounge", false, false);
+      const sip = !energy && (frame + hash(s.id)) % 9 < 2;
+      if (sip) { px(p.x + 5, p.y + 4, 2, 2, "#f4efe4"); px(p.x + 7, p.y + 4, 1, 1, "#f4efe4"); }
+      else { px(p.x + (spot.x < G.tx ? 8 : -2), p.y + 8, 2, 2, "#f4efe4"); if (frame % 3 === 0) px(p.x + (spot.x < G.tx ? 8 : -2), p.y + 6, 1, 1, "#ffffff80"); }
+    } else {                                    // chatting, standing
+      person(p.x, p.y, s.id, tk, "lounge", false, false);
+      px(p.x + 1, p.y + 12, 2, 3, L2.pants); px(p.x + 5, p.y + 12, 2, 3, L2.pants);
+      px(p.x + 1, p.y + 15, 2, 1, "#2a2320"); px(p.x + 5, p.y + 15, 2, 1, "#2a2320");
+    }
+    const doing = { make: "making a coffee", drink: "drinking a coffee", game: "playing on the console", chat: "chatting" }[spot.kind];
+    hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
+      tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${doing}\n` +
+        `comes back to a desk when it gets work\nclick: open it · right-click: more` });
+  }
+  // furniture in front of the people: the sofa, the kitchen table, the high table
+  const sx = G.tvX - 18;
+  px(sx, y + 46, 36, 7, "#6f5a8f"); px(sx, y + 46, 36, 1, "#8873a8"); px(sx - 2, y + 44, 3, 11, "#5e4b7c"); px(sx + 35, y + 44, 3, 11, "#5e4b7c");
+  px(sx, y + 53, 36, 2, "#5e4b7c"); px(sx, y + 55, 36, 1, "#00000035");
+  px(G.tx - 9, y + 51, 18, 2, "#a5794f"); px(G.tx - 9, y + 51, 18, 1, "#c49a6c"); px(G.tx - 1, y + 53, 2, 7, "#7a5a3c"); px(G.tx - 4, y + 60, 8, 1, "#5e4232");
+  px(G.tx - 2, y + 50, 4, 1, "#e3c74f");
+  px(G.chatX - 6, y + 41, 13, 2, "#3a3f4b"); px(G.chatX - 6, y + 41, 13, 1, "#565d6d"); px(G.chatX, y + 43, 1, 9, "#3a3f4b"); px(G.chatX - 3, y + 52, 7, 1, "#2c303a");
+  px(G.chatX - 3, y + 40, 2, 1, "#f4efe4"); px(G.chatX + 2, y + 40, 2, 1, "#f4efe4");
+  // whoever is chatting takes turns speaking
+  const talkers = sorted.filter(a => a.spot.kind === "chat");
+  if (talkers.length > 1 && !energy) {
+    const t = talkers[Math.floor(frame / 3) % talkers.length].spot;
+    px(t.x + 6, t.y - 6, 9, 5, "#f4efe4"); px(t.x + 7, t.y - 1, 2, 1, "#f4efe4");
+    for (let k = 0; k < 3; k++) if (frame % 3 >= k) px(t.x + 8 + k * 2, t.y - 4, 1, 1, "#1b1820");
+  }
+  if (n > G.spots.length) label(`+${n - G.spots.length} more`, (G.kw + 3) * P, (y + L.loungeH - 7) * P, "#d9cfc3", 9);
+}
+// lounge spots: each agent wants what its routine says now, and takes the first free spot of it
+let assignKey = "", assignVal = [];
+function assign(G) {
+  const want = snap.lounge.map(wants);
+  const key = snap.lounge.map((s, i) => s.id + want[i]).join(",") + "|" + G.y + "," + G.kw + "," + G.gx;
+  if (key === assignKey) return assignVal;
+  const free = G.spots.map(() => true), out = [], order = ["chat", "game", "drink", "make"];
+  snap.lounge.forEach((s, i) => {
+    let k = G.spots.findIndex((sp, j) => free[j] && sp.kind === want[i]);
+    for (const alt of order) if (k < 0) k = G.spots.findIndex((sp, j) => free[j] && sp.kind === alt);
+    if (k < 0) return;
+    free[k] = false; out.push({ s, spot: G.spots[k] });
+  });
+  assignKey = key; assignVal = out;
+  return out;
+}
+
+// ---------- the manager's room ----------
+// Optional: `manager.image` in the config is drawn as the manager. A plain or white background is
+// cut away (flood-filled from the picture's edges), the picture is cropped to what is left and
+// redrawn at the office's pixel size, so a photo or a large drawing both come out as pixel art.
+// Without an image, `manager.name` alone gets a drawn manager.
+let mgrSrc = null, mgrCut = null, mgrSprite = null, mgrSpriteH = 0;
+function loadManager(url) {
+  url = url || "";
+  if (url === mgrSrc) return;
+  mgrSrc = url; mgrCut = null; mgrSprite = null; layerKey = "";
+  if (!url) return;
+  const im = new Image();
+  im.onload = () => { if (mgrSrc !== url) return; mgrCut = cutout(im); mgrSprite = null; layerKey = ""; if (snap) draw(); };
+  im.src = url;
+}
+function cutout(im) {
+  const w = im.naturalWidth, h = im.naturalHeight;
+  if (!w || !h) return null;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const x = c.getContext("2d"); x.drawImage(im, 0, 0);
+  const d = x.getImageData(0, 0, w, h), a = d.data, bg = new Uint8Array(w * h), stack = [];
+  const isBg = i => a[i * 4 + 3] < 40 || (a[i * 4] > 230 && a[i * 4 + 1] > 230 && a[i * 4 + 2] > 230);
+  for (let i = 0; i < w; i++) stack.push(i, (h - 1) * w + i);
+  for (let j = 0; j < h; j++) stack.push(j * w, j * w + w - 1);
+  while (stack.length) {
+    const i = stack.pop(); if (bg[i] || !isBg(i)) continue;
+    bg[i] = 1; const ix = i % w, iy = (i / w) | 0;
+    if (ix > 0) stack.push(i - 1); if (ix < w - 1) stack.push(i + 1);
+    if (iy > 0) stack.push(i - w); if (iy < h - 1) stack.push(i + w);
+  }
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let i = 0; i < w * h; i++) {
+    if (bg[i]) { a[i * 4 + 3] = 0; continue; }
+    const ix = i % w, iy = (i / w) | 0;
+    if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+  }
+  if (x1 < 0) return null;
+  x.putImageData(d, 0, 0);
+  return { canvas: c, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+// the cut-out at `th` art pixels high: averaged colours, hard edges
+function managerSprite(th) {
+  if (!mgrCut) return null;
+  if (mgrSprite && mgrSpriteH === th) return mgrSprite;
+  const k = mgrCut, tw = Math.max(1, Math.round(k.w * th / k.h));
+  const c = document.createElement("canvas"); c.width = tw; c.height = th;
+  const x = c.getContext("2d"); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
+  x.drawImage(k.canvas, k.x, k.y, k.w, k.h, 0, 0, tw, th);
+  const d = x.getImageData(0, 0, tw, th);
+  for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] < 110 ? 0 : 255;
+  x.putImageData(d, 0, 0);
+  mgrSprite = c; mgrSpriteH = th;
+  return c;
+}
+// plan usage is the same for every session of the account: the freshest report wins
+function planLimits() {
+  const fresh = (snap ? snap.all : []).map(s => s.live).filter(Boolean).sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+  return fresh ? fresh.rateLimits || [] : [];
+}
+function managerCounts() {
+  const st = snap.all.map(shown), n = k => st.filter(x => k.includes(x)).length;
+  return { needs: n(["waiting", "crashed"]), working: n(["working", "compacting", "background"]), done: n(["done"]) };
+}
+// geometry shared by the room layer and the per-frame drawing
+function managerGeo(L) {
+  const cx = Math.floor(L.mw / 2), deskY = 54, dw = Math.min(L.mw - 14, 46);
+  return { cx, deskY, dw, dx: cx - Math.floor(dw / 2) };
+}
+function paintManager(L, sky) {
+  const mw = L.mw, H = L.reviewH, m = managerGeo(L);
+  // dark green panelled walls, a burgundy carpet with a gold border
+  wall(0, 0, mw, "#3e5b4d", "#2c4337");
+  for (let x = 5; x < mw - 2; x += 9) px(x, 3, 1, 8, "rgba(0,0,0,0.13)");
+  px(0, WALL, mw, H - WALL, "#4f2830");
+  px(3, WALL + 3, mw - 6, H - WALL - 6, "#b48a4a"); px(4, WALL + 4, mw - 8, H - WALL - 8, "#6a3540");
+  for (let j = WALL + 7; j < H - 6; j += 6) for (let i = 7 + ((j / 6) % 2) * 3; i < mw - 7; i += 6) {
+    px(i, j, 1, 1, "#83505a"); px(i - 1, j + 1, 3, 1, "#7a4650"); px(i, j + 2, 1, 1, "#83505a");
+  }
+  for (let k = 0; k < 3; k++) px(0, WALL + k, mw, 1, `rgba(0,0,0,${0.18 - k * 0.05})`);
+  // wall: a status screen on the left, a window on the right
+  windowAt(mw - 19, 3, 13, 7, sky, 29);
+  px(3, 2, Math.min(28, mw - 26), 11, "#1d2024"); px(4, 3, Math.min(28, mw - 26) - 2, 9, "#0e1a17");
+  // plants in the corners
+  plant(2, WALL + 14, true); plant(mw - 10, WALL + 14, true);
+  // a high-backed leather chair behind the desk
+  px(m.cx - 11, 21, 22, 1, "#3a2420"); px(m.cx - 12, 22, 24, 34, "#3a2420"); px(m.cx - 11, 23, 22, 32, "#5a3529");
+  px(m.cx - 10, 23, 20, 1, "#6e4434");
+  for (let k = 0; k < 3; k++) for (let j = 0; j < 3; j++) px(m.cx - 7 + k * 7, 27 + j * 7, 1, 1, "#7a4a38");
+  // the manager, drawn into the layer: it does not move
+  const sp = managerSprite(36);
+  if (sp) {
+    const top = m.deskY + 6 - 36, sx = m.cx - Math.floor(sp.width / 2);
+    g.drawImage(sp, sx * P, top * P, sp.width * P, sp.height * P);
+  }
+  // the desk: dark wood, a lamp, a monitor, a mug
+  const { dx, dw, deskY } = m;
+  px(dx - 1, deskY, dw + 2, 3, "#5a3a26"); px(dx - 1, deskY, dw + 2, 1, "#7a5236");
+  px(dx, deskY + 3, dw, 9, "#4a2f1f"); px(dx + 2, deskY + 5, dw - 4, 5, "#563827");
+  px(dx, deskY + 12, dw, 1, "#00000045");
+  px(dx + 3, deskY - 7, 1, 7, "#b48a4a"); px(dx + 1, deskY - 9, 6, 3, "#2f7a4f"); px(dx + 2, deskY - 9, 4, 1, "#4fa070"); px(dx + 2, deskY - 1, 4, 1, "#b48a4a");
+  px(dx + dw - 6, deskY - 2, 3, 2, "#f4efe4"); px(dx + dw - 3, deskY - 1, 1, 1, "#f4efe4");
+  px(dx + dw - 14, deskY - 1, 6, 1, "#e9e3d6"); px(dx + dw - 13, deskY - 2, 5, 1, "#d8d0c0");
+  // the name plate on the desk front
+  const name = (snap.manager.name || "MANAGER").toUpperCase();
+  g.font = "bold 9px Menlo, monospace";
+  const pw = Math.min(dw - 6, Math.ceil(g.measureText(name).width / P) + 5), plx = m.cx - Math.floor(pw / 2);
+  px(plx, deskY + 5, pw, 5, "#c9a45a"); px(plx, deskY + 5, pw, 1, "#e3c47a"); px(plx, deskY + 9, pw, 1, "#94753c");
+  text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
+}
+// a small battery for one plan window, centred on cx: the charge is what is left and shrinks
+// smoothly, a hair per percent; it turns orange under 40% and red, blinking, under 15%
+function battery(cx, y, name, used, h, short) {
+  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 22, x = cx - 10;
+  const c = left > 40 ? "#5fbf7f" : left > 15 ? "#f0a35e" : "#e06c6c";
+  g.fillStyle = "#17131bcc"; g.fillRect((x - 11) * P, (y - 1) * P, (w + (short ? 22 : 29)) * P, (h + 2) * P);
+  text(name, (x - 2) * P, (y + h / 2) * P - 5, "#d9cfc3", 10, "right");
+  px(x, y, w, h, "#d9cfc3"); px(x + 1, y + 1, w - 2, h - 2, "#2a2530"); px(x + w, y + 1, 1, h - 2, "#d9cfc3");
+  const inner = (w - 2) * P, fill = Math.round(inner * left / 100 * 2) / 2;
+  if (fill > 0 && !(left <= 15 && frame % 2 && !energy)) {
+    g.fillStyle = c; g.fillRect((x + 1) * P, (y + 1) * P, fill, (h - 2) * P);
+    g.fillStyle = shade(c, 0.25); g.fillRect((x + 1) * P, (y + 1) * P, fill, 1.5);
+  }
+  text(Math.round(left) + (short ? "%" : "% left"), (x + w + 3) * P, (y + h / 2) * P - 5, c, 10, "left");
+}
+function drawManager(L) {
+  const m = managerGeo(L), c = managerCounts(), lim = planLimits(), mw = L.mw;
+  // the wall screen: who needs you, then plan usage
+  const sw = Math.min(28, mw - 26), sx = 5 * P, rowH = 9.5;
+  let ry = 3.3 * P;
+  text(`!${c.needs} ▶${c.working} ✓${c.done}`, sx, ry, c.needs ? (frame % 2 ? "#ffb347" : "#ffc370") : "#8fd6b4", 9);
+  for (const l of lim.filter(l => l.kind === "seven_day")) {
+    ry += rowH;
+    const k = l.kind === "five_hour" ? "5h" : l.kind === "seven_day" ? "7d" : l.kind.slice(0, 2), bw = (sw - 14) * P;
+    text(k, sx, ry, "#9fd3c0", 9);
+    g.fillStyle = "#24302c"; g.fillRect(sx + 16, ry + 3, bw, 4);
+    g.fillStyle = ctxColor(l.percentUsed); g.fillRect(sx + 16, ry + 3, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
+    text(l.percentUsed + "%", sx + 19 + bw, ry, "#d9f2e8", 9);
+  }
+  // without a picture: a drawn manager, twice the size of everyone else
+  if (!mgrCut) {
+    const id = "manager:" + (snap.manager.name || "");
+    person(m.cx - 8, m.deskY - 25, id, id, c.working ? "working" : "idle", false, false, 2);
+  }
+  if (c.needs) bubble(m.cx + 9, 18, "waiting");
+  // the account at a glance: who needs you, plan usage, what the open sessions cost
+  const parts = [];
+  if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
+  if (c.working) parts.push(`${c.working} working`);
+  label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 12, "center");
+  const wk = lim.find(l => l.kind === "seven_day");
+  // plan usage as batteries: what is LEFT of each window, draining as you use it
+  let ly = m.deskY + 21;
+  const rows = [[wk, "week", 4]].filter(r => r[0]);
+  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 2; }
+  if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
+  if (wk && wk.resetsAt) { label("week " + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, "#bdb3a8", 10, "center"); ly += 6; }
+  const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
+  ly += 0.5;
+  if (lives.length) { label("$" + cost.toFixed(2) + " spent", m.cx * P, ly * P, "#e3c74f", 10, "center"); ly += 6; }
+  label([`${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
+    m.cx * P, ly * P, "#d9cfc3", 10, "center");
+  const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
+  hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
+    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
+}
+
 // ---------- interaction ----------
 function hitAt(ev) {
   const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
@@ -580,6 +1008,8 @@ function act(h) {
   const msg = h.url ? { open: h.url } : h.reveal ? { reveal: h.reveal } : null;
   if (msg && bridge) bridge.postMessage(msg); else if (h.url) window.open(h.url);
 }
+// click a session: bring it to the front where it runs (the app works out how)
+function openSession(s) { if (bridge) bridge.postMessage({ focus: s.id }); }
 cv.addEventListener("mousemove", ev => {
   if (menu.style.display === "block") return;
   const h = hitAt(ev);
@@ -589,7 +1019,7 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (h) act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -599,10 +1029,16 @@ document.addEventListener("contextmenu", ev => {
   let head = "";
   if (h && h.session) {
     head = h.session.title || "untitled";
-    items.push(["Hide from view", () => hideSession(h.session)]);
+    const where = h.session.origin && ORIGIN[h.session.origin.app];
+    items.push([where && where !== "headless" ? `Open in ${where}` : "Open the session", () => openSession(h.session)]);
     items.push(["Reveal folder", () => act(h)]);
+    items.push(["Copy session id", () => bridge ? bridge.postMessage({ copy: h.session.id }) : navigator.clipboard && navigator.clipboard.writeText(h.session.id)]);
+    const rel = hidden[h.session.id] && hidden[h.session.id].release;
+    if (rel) items.push(["Back to the desk", () => backToDesk(h.session)]);
+    else if (!h.lounge) items.push(["Release to the lounge", () => hideSession(h.session, true)]);
+    items.push(["Hide from view", () => hideSession(h.session)]);
   } else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
-  const hs = Object.values(hidden);
+  const hs = Object.values(hidden).filter(x => !x.release);
   if (hs.length) {
     items.push([`Show hidden agents (${hs.length})`, unhideAll]);
   }
@@ -614,11 +1050,67 @@ document.addEventListener("contextmenu", ev => {
   menu.style.top = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
 });
 document.addEventListener("mousedown", ev => { if (!menu.contains(ev.target)) closeMenu(); });
-document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeMenu(); });
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") { closeMenu(); if (statsOpen) toggleStats(false); }
+  if ((ev.key === "s" || ev.key === "S") && !ev.metaKey && !ev.ctrlKey) toggleStats();
+});
+
+// ---------- stats screen ----------
+const statsEl = document.getElementById("stats"), statsBtn = document.getElementById("statsBtn");
+let statsOpen = false;
+function toggleStats(on) {
+  statsOpen = on === undefined ? !statsOpen : on;
+  statsEl.style.display = statsOpen ? "block" : "none"; statsBtn.textContent = statsOpen ? "Office" : "Stats";
+  if (statsOpen) renderStats();
+}
+statsBtn.addEventListener("click", () => toggleStats());
+const LIMIT_NAME = { five_hour: "5-hour window", seven_day: "7-day window", spend_limit: "spend limit" };
+function untilText(iso) {
+  if (!iso) return ""; const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return "resets now";
+  return "resets in " + (s > 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : mins(s));
+}
+function bar(pct, color) { const p = Math.max(0, Math.min(100, pct || 0)); return `<span class="bar"><i style="width:${p}%;background:${color}"></i></span>`; }
+function renderStats() {
+  if (!statsOpen || !snap) return;
+  const all = snap.all.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  const lives = all.map(s => s.live).filter(Boolean);
+  // plan usage is the same for every session of the account: take the freshest report
+  const limits = planLimits();
+  const st = all.map(shown), count = k => st.filter(x => k.includes(x)).length;
+  const cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
+  const subsN = all.reduce((t, s) => t + agentsOf(s).length, 0);
+  let h = `<h2>PLAN USAGE</h2>`;
+  h += limits.length ? `<div class="cards">${limits.map(l => `<div class="card"><small>${esc(LIMIT_NAME[l.kind] || l.kind)}</small>
+      <b>${l.percentUsed}%</b>${bar(l.percentUsed, ctxColor(l.percentUsed))}<small>${esc(untilText(l.resetsAt))}</small></div>`).join("")}</div>`
+    : `<div class="note">No plan usage reported yet${lives.length ? "" : " — it comes from the companion mod (see README)"}.</div>`;
+  h += `<h2>RIGHT NOW</h2><div class="cards">
+    <div class="card"><small>sessions</small><b>${all.length}</b></div>
+    <div class="card"><small>need you</small><b style="color:${count(["waiting", "crashed"]) ? "#ffc370" : "inherit"}">${count(["waiting", "crashed"])}</b></div>
+    <div class="card"><small>working</small><b>${count(["working", "compacting", "background"])}</b></div>
+    <div class="card"><small>subagents</small><b>${subsN}</b></div>
+    <div class="card"><small>cost of these sessions</small><b>${lives.length ? "$" + cost.toFixed(2) : "–"}</b></div></div>`;
+  h += `<h2>SESSIONS</h2><table><tr><th>Session</th><th>Where</th><th>State</th><th>Model</th><th>Context</th><th>Cost</th><th>Subagents</th></tr>`;
+  for (const s of all) {
+    const x = shown(s), l = s.live, p = l && l.context && l.context.percent, ag = agentsOf(s);
+    h += `<tr class="row" data-id="${esc(s.id)}"><td class="t" title="${esc(s.cwd || "")}" style="color:${NAME_COLOR[x] || "inherit"}">${esc((s.kind === "automation" ? "⚙ " : "") + (s.title || "untitled"))}</td>
+      <td>${esc(s.origin ? ORIGIN[s.origin.app] || s.origin.app : "–")}</td>
+      <td>${esc(STATE_WORD[x] || x)}${hidden[s.id] ? " · hidden" : ""}</td>
+      <td>${esc([modelName(s.model || (l && l.model)), s.effort].filter(Boolean).join(" · ") || "–")}</td>
+      <td>${p != null ? bar(p, ctxColor(p)) + Math.round(p) + "%" : "–"}</td>
+      <td>${l && l.costUsd != null ? "$" + l.costUsd.toFixed(2) : "–"}</td>
+      <td>${ag.length ? ag.map(a => `<span class="dot" title="${esc((a.type || "agent") + (a.status ? ": " + a.status : ""))}" style="background:${AGENT_COLOR[a.status] || "#5fbf7f"}"></span>`).join("") + " " + ag.length : "–"}</td></tr>`;
+  }
+  h += `</table>`;
+  if (!lives.length) h += `<div class="note">Context, cost and plan usage come from the optional companion mod: <code>claude plugin install</code> it from <code>mod/</code> (see README).</div>`;
+  if (statsEl.dataset.html !== h) {
+    statsEl.innerHTML = h; statsEl.dataset.html = h;
+    statsEl.querySelectorAll("tr.row").forEach(r => r.onclick = () => { const s = snap.all.find(z => z.id === r.dataset.id); if (s) openSession(s); });
+  }
+}
 wrap.addEventListener("scroll", closeMenu);
 
 function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
-window.updateOffice = raw => { lastRaw = raw; const next = build(raw); track(next); snap = next; };
+window.updateOffice = raw => { lastRaw = raw; loadManager(raw.manager && raw.manager.image); const next = build(raw); track(next); snap = next; renderStats(); };
 window.addEventListener("resize", () => snap && draw());
 // At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
 let lastDraw = 0;
@@ -633,7 +1125,7 @@ if (!bridge) {
   const t0 = Date.now() / 1000, hm = m => { const d = new Date(Date.now() - m * 60000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   let tick = 0;
   const demo = () => { tick++; return {
-    now: Date.now() / 1000, workspace: "example", slots: 5,
+    now: Date.now() / 1000, workspace: "example", slots: 5, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
       ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],
@@ -650,6 +1142,11 @@ if (!bridge) {
       { id: "s3", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "TTS latency investigation", cwd: "/Users/me/code/web-app", state: "done", since: t0 - 200, beat: t0 - 200, subagents: {} },
       { id: "s5", kind: "session", model: "claude-opus-5-5", effort: "xhigh", title: "Infra cleanup", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 2000, beat: t0 - 1500, subagents: {} },
       { id: "s6", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Flaky test hunt", cwd: "/Users/me/code/web-app", state: "crashed", since: t0 - 90, beat: t0 - 90, subagents: {} },
+      { id: "s8", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "Release notes", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 3000, beat: t0 - 3000, subagents: {} },
+      { id: "s9", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Onboarding docs", cwd: "/Users/me/code/docs", state: "idle", since: t0 - 5000, beat: t0 - 5000, subagents: {} },
+      { id: "s10", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Log cleanup", cwd: "/Users/me/code/infra", state: "idle", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
+      { id: "s11", kind: "session", model: "claude-sonnet-5-5", effort: "high", title: "Cache warmup", cwd: "/Users/me/code/engine", state: "done", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
+      { id: "s12", kind: "session", model: "claude-opus-5-5", effort: "high", title: "API sketch", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 7000, beat: t0 - 7000, subagents: {} },
       { id: "s4", kind: "automation", model: "claude-sonnet-5-5", effort: "high", title: "clean-reports: infra", cwd: "/Users/me/code/infra", state: "compacting", since: t0 - 120, beat: Date.now() / 1000, subagents: {} },
     ],
     officeEvents: [`${Math.floor(t0 - 20)}\ts2\twaiting for you · Agent Office app`, `${Math.floor(t0 - 90)}\ts6\tstopped with an error · Flaky test hunt`,
@@ -659,7 +1156,19 @@ if (!bridge) {
       const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
   }; };
-  updateOffice(demo()); setInterval(() => updateOffice(demo()), 2000);
+  const LIVE = {
+    s1: { ctx: 38, cost: 2.41, agents: { a1: "running", a2: "waiting" } }, s2: { ctx: 64, cost: 1.12 }, s3: { ctx: 22, cost: 0.31 },
+    s5: { ctx: 91, cost: 4.80 }, s6: { ctx: 12, cost: 0.05 }, s4: { ctx: 47, cost: 0.66 },
+    s7: { ctx: 71, cost: 6.20, agents: { b1: "running", b2: "running", b3: "idle", b4: "running" } } };
+  const ORIG = { s1: "iterm", s2: "vscode-panel", s3: "desktop", s5: "terminal", s6: "vscode-terminal", s4: "headless", s7: "desktop" };
+  const withLive = r => { r.sessions.forEach(s => {
+    s.origin = { app: ORIG[s.id] || "other" };
+    const l = LIVE[s.id]; if (!l) return;
+    s.live = { context: { percent: l.ctx }, costUsd: l.cost, updated: Date.now() / 1000,
+      rateLimits: [{ kind: "seven_day", percentUsed: 28, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
+      agents: Object.entries(l.agents || {}).filter(([id]) => (s.subagents || {})[id]).map(([id, st]) => ({ id, type: "general-purpose", status: st })) };
+  }); return r; };
+  updateOffice(withLive(demo())); setInterval(() => updateOffice(withLive(demo())), 2000);
 }
 </script>
 </body>

@@ -29,10 +29,17 @@ struct Config {
     var reviewLog: String? = nil
     var slots = 5
     var workspace = ""
+    var managerName = ""
+    var managerImage = ""
 
     static func load() -> Config {
         var c = Config()
         let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
+        let env = ProcessInfo.processInfo.environment
+        defer {
+            if let s = env["AGENT_OFFICE_MANAGER_NAME"], !s.isEmpty { c.managerName = s }
+            if let s = env["AGENT_OFFICE_MANAGER_IMAGE"], !s.isEmpty { c.managerImage = expand(s) }
+        }
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
         if let s = j["officeState"] as? String { c.officeState = expand(s) }
@@ -41,6 +48,10 @@ struct Config {
             if let s = r["log"] as? String { c.reviewLog = expand(s) }
             if let n = r["slots"] as? Int { c.slots = n }
             if let w = r["bitbucketWorkspace"] as? String { c.workspace = w }
+        }
+        if let m = j["manager"] as? [String: Any] {
+            if let s = m["name"] as? String { c.managerName = s }
+            if let s = m["image"] as? String { c.managerImage = expand(s) }
         }
         return c
     }
@@ -61,6 +72,32 @@ func lines(_ path: String, tailBytes: Int = 0) -> [String] {
     return out
 }
 
+/// The manager's picture as a small PNG data URL: scaled to at most 160 px high, so it costs
+/// a few KB per snapshot however large the file is. Cached by path and modification time.
+var managerCache: (key: String, url: String) = ("", "")
+func managerImageURL(_ path: String) -> String {
+    guard !path.isEmpty, let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let m = attrs[.modificationDate] as? Date else { return "" }
+    let key = path + "@" + String(m.timeIntervalSince1970)
+    if managerCache.key == key { return managerCache.url }
+    var url = ""
+    if let img = NSImage(contentsOfFile: path),
+       let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.height > 0 {
+        let h = min(160, cg.height), w = max(1, cg.width * h / cg.height)
+        if let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            ctx.interpolationQuality = .high
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            if let small = ctx.makeImage(),
+               let png = NSBitmapImageRep(cgImage: small).representation(using: .png, properties: [:]) {
+                url = "data:image/png;base64," + png.base64EncodedString()
+            }
+        }
+    }
+    managerCache = (key, url)
+    return url
+}
+
 func snapshot(_ cfg: Config) -> [String: Any] {
     let fm = FileManager.default
     var sessions: [[String: Any]] = []
@@ -79,7 +116,21 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         // the file's mtime is the session's heartbeat (the hook touches it on every event)
         var s2 = s
         if let m = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date { s2["beat"] = m.timeIntervalSince1970 }
+        // what the optional companion mod reports from inside the session (context, cost, plan
+        // usage, exact subagent states); absent without the mod
+        let livePath = cfg.officeState + "/live/" + name
+        if let d = fm.contents(atPath: livePath), let live = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            s2["live"] = live
+        }
         sessions.append(s2)
+    }
+    // live files of sessions that are gone
+    let liveIds = Set(sessions.compactMap { ($0["id"] as? String).map { $0 + ".json" } })
+    for name in (try? fm.contentsOfDirectory(atPath: cfg.officeState + "/live")) ?? [] where !liveIds.contains(name) {
+        let p = cfg.officeState + "/live/" + name
+        if let m = (try? fm.attributesOfItem(atPath: p))?[.modificationDate] as? Date, now - m.timeIntervalSince1970 > 120 {
+            try? fm.removeItem(atPath: p)
+        }
     }
     var reviews: [String] = [], queue: [String] = [], reviewLog: [String] = []
     if let rs = cfg.reviewState {
@@ -96,6 +147,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         "sessions": sessions, "reviews": reviews, "queue": queue,
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "reviewLog": Array(reviewLog.suffix(120)),
+        "manager": ["name": cfg.managerName, "image": managerImageURL(cfg.managerImage)],
     ]
 }
 
@@ -186,6 +238,170 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let u = body["open"], let url = URL(string: u), url.scheme == "https" { NSWorkspace.shared.open(url) }
         if let p = body["reveal"], FileManager.default.fileExists(atPath: p) {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        }
+        if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
+        if let t = body["copy"], t.count < 200 {
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
+        }
+    }
+
+    // ---- bringing a session to the front, where it runs ----
+    // The hook records where each session started (origin: app, bundle, tty). Terminal and iTerm
+    // tabs are found by their terminal device; a VS Code panel session by the extension's own
+    // link; a VS Code terminal and the Claude app can only be brought forward as a window.
+    func focusSession(_ id: String) {
+        let path = Config.load().officeState + "/sessions/" + id + ".json"
+        guard let d = FileManager.default.contents(atPath: path),
+              let s = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return }
+        let o = s["origin"] as? [String: Any] ?? [:]
+        let app = o["app"] as? String ?? "", bundle = o["bundle"] as? String ?? ""
+        let tty = o["tty"] as? String ?? "", cwd = s["cwd"] as? String ?? ""
+        let safeTTY = tty.range(of: "^/dev/ttys[0-9]+$", options: .regularExpression) != nil ? tty : ""
+        switch app {
+        case "terminal" where !safeTTY.isEmpty:
+            osascript("""
+            tell application "Terminal"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  if tty of t is "\(safeTTY)" then
+                    set selected tab of w to t
+                    set index of w to 1
+                    activate
+                    return
+                  end if
+                end repeat
+              end repeat
+              activate
+            end tell
+            """)
+        case "iterm" where !safeTTY.isEmpty:
+            osascript("""
+            tell application "iTerm2"
+              repeat with w in windows
+                repeat with t in tabs of w
+                  repeat with s in sessions of t
+                    if tty of s is "\(safeTTY)" then
+                      select w
+                      tell t to select
+                      tell s to select
+                      activate
+                      return
+                    end if
+                  end repeat
+                end repeat
+              end repeat
+              activate
+            end tell
+            """)
+        case "vscode-panel":
+            focusEditorWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {
+                let scheme = bundle.lowercased().contains("todesktop") ? "cursor" : "vscode"
+                if let u = URL(string: "\(scheme)://anthropic.claude-code/open?session=\(id)") { NSWorkspace.shared.open(u) }
+            }
+        case "vscode-terminal":
+            focusEditorWindow(bundle: bundle.isEmpty ? "com.microsoft.VSCode" : bundle, folder: cwd) {}
+        case "desktop":
+            // The Claude app opens one of its sessions by the id it gave it (`local_…`), which the
+            // hook records from CLAUDE_CODE_HOST_SESSION_ID.
+            let host = o["host"] as? String ?? ""
+            if host.range(of: "^local_[A-Za-z0-9-]{1,64}$", options: .regularExpression) != nil,
+               let u = URL(string: "claude://code/continue?session=\(host)") {
+                NSWorkspace.shared.open(u); return
+            }
+            if !bundle.isEmpty, activate(bundle: bundle) { return }
+        default:
+            if !bundle.isEmpty, activate(bundle: bundle) { return }
+            if FileManager.default.fileExists(atPath: cwd) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: cwd)]) }
+        }
+    }
+
+    @discardableResult func activate(bundle: String) -> Bool {
+        guard let a = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first else { return false }
+        return a.activate()
+    }
+
+    // Bring forward the editor window whose workspace folder holds `folder`. VS Code and its
+    // forks list their open windows' folders in User/globalStorage/storage.json; opening the
+    // deepest folder that contains the session's directory focuses that window instead of
+    // starting a new one, and needs no permission. A folder no open window holds is never opened
+    // (that would create a window): the title match below is the fallback. `then` runs once the
+    // window is in front.
+    func focusEditorWindow(bundle: String, folder: String, then: @escaping () -> Void) {
+        if let root = editorWindowFolder(bundle: bundle, containing: folder) {
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                p.arguments = ["-b", bundle, root]
+                p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+                try? p.run(); p.waitUntilExit()
+                // the window has to be the last active one before a vscode:// link is opened,
+                // because the editor hands such a link to its last active window
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: then)
+            }
+            return
+        }
+        raiseWindow(bundle: bundle, folder: folder, then: then)
+    }
+
+    func editorWindowFolder(bundle: String, containing folder: String) -> String? {
+        let b = bundle.lowercased()
+        let dir = b.contains("todesktop") ? "Cursor"
+            : b.contains("insiders") ? "Code - Insiders"
+            : b.contains("vscodium") ? "VSCodium"
+            : b.contains("windsurf") ? "Windsurf"
+            : "Code"
+        let path = NSHomeDirectory() + "/Library/Application Support/\(dir)/User/globalStorage/storage.json"
+        guard !folder.isEmpty, let d = FileManager.default.contents(atPath: path),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let ws = j["windowsState"] as? [String: Any] else { return nil }
+        var wins = ws["openedWindows"] as? [[String: Any]] ?? []
+        if let last = ws["lastActiveWindow"] as? [String: Any] { wins.append(last) }
+        let target = URL(fileURLWithPath: folder).standardizedFileURL.path
+        var best: String?
+        for w in wins {
+            guard let f = w["folder"] as? String, let u = URL(string: f), u.isFileURL else { continue }
+            let root = u.standardizedFileURL.path
+            guard target == root || target.hasPrefix(root.hasSuffix("/") ? root : root + "/") else { continue }
+            if root.count > (best?.count ?? -1) { best = root }
+        }
+        return best
+    }
+
+    // Raise the app's window whose title names one of the session folder's names (the folder,
+    // then its parents): VS Code titles end with the workspace name. Needs Accessibility for
+    // System Events; without it the app is just brought forward. `then` runs afterwards.
+    func raiseWindow(bundle: String, folder: String, then: @escaping () -> Void) {
+        activate(bundle: bundle)
+        let names = folder.split(separator: "/").suffix(4).reversed()
+            .map { String($0).replacingOccurrences(of: "\"", with: "") }
+            .filter { !$0.isEmpty }
+            .map { "\"\($0)\"" }.joined(separator: ", ")
+        let safeBundle = bundle.replacingOccurrences(of: "\"", with: "")
+        osascript("""
+        tell application "System Events"
+          set p to first process whose bundle identifier is "\(safeBundle)"
+          repeat with n in {\(names)}
+            repeat with w in windows of p
+              set t to name of w
+              if t ends with (" — " & n) or t is n or t contains (" — " & n & " ") then
+                perform action "AXRaise" of w
+                set frontmost of p to true
+                return
+              end if
+            end repeat
+          end repeat
+        end tell
+        """, then: then)
+    }
+
+    func osascript(_ source: String, then: (() -> Void)? = nil) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            p.arguments = ["-e", source]
+            p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+            try? p.run(); p.waitUntilExit()
+            if let then { DispatchQueue.main.async(execute: then) }
         }
     }
 

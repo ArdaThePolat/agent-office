@@ -1,0 +1,14 @@
+{
+  "name": "agent-office",
+  "owner": {
+    "name": "Arda Polat"
+  },
+  "description": "Agent Office: a pixel-art macOS office for your Claude Code sessions, and its optional companion mod.",
+  "plugins": [
+    {
+      "name": "agent-office",
+      "source": "./mod",
+      "description": "Optional companion for the Agent Office app: each session's context use, cost, plan usage and exact subagent states, plus a one-line office status under the prompt."
+    }
+  ]
+}
