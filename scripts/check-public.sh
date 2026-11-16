@@ -62,5 +62,11 @@ while IFS= read -r f; do
   done
 done <<<"$files"
 
+# the next commit's author address is published with it
+if [[ "${1:-}" == "--staged" ]]; then
+  email="$(git config user.email)"
+  [[ "$email" == *users.noreply.github.com ]] || report "git config user.email" "\"$email\" would be published; use your GitHub noreply address (git config user.email <id>+<user>@users.noreply.github.com)"
+fi
+
 if [[ $fail -eq 0 ]]; then echo "check-public: clean"; else echo "check-public: fix the lines above (or move the value to config.json)"; fi
 exit $fail
