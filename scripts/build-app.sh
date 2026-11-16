@@ -12,7 +12,9 @@ BUILD="$(mktemp -d)"; trap 'rm -rf "$BUILD"' EXIT
 B="$BUILD/Agent Office.app/Contents"
 mkdir -p "$B/MacOS" "$B/Resources"
 
-swiftc -O -o "$B/MacOS/AgentOffice" "$ROOT/app/AgentOffice.swift" -framework Cocoa -framework WebKit
+# the file with the top-level startup code has to be called main.swift when there are several
+cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
+swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" -framework Cocoa -framework WebKit -framework Network
 cp "$ROOT/web/office.html" "$B/Resources/"
 
 swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
@@ -36,6 +38,8 @@ cat > "$B/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>The shared room: Agent Office finds your team's room on the local network and joins it, so your lounges are one. Only names, pictures and chat are shared.</string>
+  <key>NSBonjourServices</key><array><string>_agent-office._tcp</string></array>
   <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window.</string>
 </dict></plist>
 PLIST
