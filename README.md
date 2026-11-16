@@ -2,7 +2,7 @@
 
 A small macOS window that shows your Claude Code agents at work, as a pixel-art office.
 
-![Agent Office: three PR reviews at their desks and three in the queue on the sofa; below, Claude Code sessions with their subagents, each with its state, model and effort](docs/screenshot.png)
+![Agent Office: the manager at a desk in the corner office, two PR reviews at their desks and three in the queue on the sofa; below, Claude Code sessions with their subagents, each with its state, model and effort](docs/screenshot.png)
 
 *Demo data. Open `web/office.html` in a browser to see it live.*
 
@@ -57,6 +57,10 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   | **?** | quiet: working, but silent for over 10 minutes |
   | **z** | idle |
 
+- **Manager's room** (optional, top left): you, at your desk. A screen on the wall counts the
+  sessions that need you, are working or are done, with your plan usage (5-hour and 7-day) when
+  the companion mod reports it; an orange **!** over your head when someone needs you. Click it
+  for the stats screen. Set it up with `manager` under *Configuration*.
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
   been running, and a sofa for the queue. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
@@ -128,6 +132,7 @@ file, not in the repository. Every key is optional.
 
 ```json
 { "officeState": "~/.local/state/agent-office",
+  "manager": { "name": "Alex", "image": "~/agent-office/local/manager.png" },
   "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
                "slots": 5, "bitbucketWorkspace": "<workspace>" },
   "sessionKinds": [
@@ -137,6 +142,11 @@ file, not in the repository. Every key is optional.
       "repoAfter": "for the repo '", "title": "clean-reports: {repo}" } ] }
 ```
 
+- **`manager`** adds the manager's room. `image` is any picture of you (PNG, JPEG, WebP…). A plain
+  white or transparent background is cut away and the rest redrawn as pixel art, so a pixel-art
+  avatar looks best. `name` goes on the desk's name plate. With a name and no image, a drawn
+  manager sits there. `local/` in the repository is ignored by git: a good place to keep the
+  picture. `AGENT_OFFICE_MANAGER_IMAGE` and `AGENT_OFFICE_MANAGER_NAME` override both keys.
 - **`reviews`** feeds the review room from a PR reviewer that keeps:
   - `<state>/running/<repo>-<pr>`: one tab-separated line per review in progress (repo name, repo
     slug, PR number, commit, author, start time `HH:MM`, pid, title);

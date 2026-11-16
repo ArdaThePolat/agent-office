@@ -1,2 +1,5 @@
 .DS_Store
 *.app/
+
+# your own files (a manager picture, …): referenced from ~/.config/agent-office/config.json
+local/

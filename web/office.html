@@ -196,7 +196,8 @@ function build(raw) {
   energy = !!(raw.settings && raw.settings.energySaver);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.length - visible.length,
-           events, workspace: raw.workspace || "", slots: raw.slots || 5 };
+           events, workspace: raw.workspace || "", slots: raw.slots || 5,
+           manager: raw.manager && (raw.manager.image || raw.manager.name) ? raw.manager : null };
 }
 
 // ---------- arrivals, departures, chimes ----------
@@ -355,11 +356,13 @@ const layer = document.createElement("canvas"), lctx = layer.getContext("2d");
 let layerKey = "";
 function paintRooms(L) {
   const sky = skyFor(new Date().getHours()), cols = L.cols;
+  if (L.mw) paintManager(L, sky);
   // review room: blue-grey walls, carpet
-  wall(0, 0, cols, "#6f7f99", "#58667c");
-  carpet(0, WALL, cols, L.reviewH - WALL);
-  door(3, 0);
-  const winW = 16, from = 44, deskSpan = L.bx - 14 - from;
+  const rx = L.rx;
+  wall(rx, 0, cols - rx, "#6f7f99", "#58667c");
+  carpet(rx, WALL, cols - rx, L.reviewH - WALL);
+  door(rx + 3, 0);
+  const winW = 16, from = rx + 44, deskSpan = L.bx - 14 - from;
   for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
     windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
   clock(L.bx - 10, 4);
@@ -367,7 +370,7 @@ function paintRooms(L) {
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
-  sign("REVIEW ROOM", 13, 3);
+  sign("REVIEW ROOM", rx + 13, 3);
   // the others room: warm walls, wood floor
   const oy = L.oy;
   wall(0, oy, cols, "#b9a184", "#8e7458");
@@ -389,6 +392,7 @@ function paintRooms(L) {
   if (sky.kind === "night") px(0, 0, cols, L.reviewH + L.othersH + 3, "rgba(12,12,40,0.16)");
   // room edges
   px(0, 0, 1, L.reviewH, "#2c221e"); px(cols - 1, 0, 1, L.reviewH, "#2c221e");
+  if (L.mw) px(L.mw, 0, 2, L.reviewH, "#2c221e");
   px(0, oy, 1, L.othersH, "#2c221e"); px(cols - 1, oy, 1, L.othersH, "#2c221e");
   px(0, L.reviewH, cols, 3, "#2c221e");
 }
@@ -399,8 +403,8 @@ function chair(x, y, s) { // behind a seated person at (x, y)
   px(x - u(1), y + u(4), u(10), u(9), "#353a46"); px(x - u(1), y + u(4), u(10), 1, "#4a505f");
 }
 // A person seated (or walking); small = a subagent.
-function person(x, y, id, teamKey, state, small, walking) {
-  const L = look(id, teamKey), s = small ? 0.7 : 1, u = v => Math.max(1, Math.round(v * s));
+function person(x, y, id, teamKey, state, small, walking, scale) {
+  const L = look(id, teamKey), s = scale || (small ? 0.7 : 1), u = v => Math.max(1, Math.round(v * s));
   const bob = (state === "working" && frame % 2) || (walking && frame % 2) ? 1 : 0;
   const blink = !energy && ((performance.now() + (L.seed % 5000)) % (3600 + L.seed % 2400)) < 170;
   const closed = blink || state === "idle";
@@ -416,7 +420,7 @@ function person(x, y, id, teamKey, state, small, walking) {
   if (L.style === 3) { px(x + u(1), yb, u(6), u(2), shade(L.shirt, -0.3)); px(x + u(5), yb + u(1), u(3), 1, shade(L.shirt, -0.45)); }
   if (L.style === 4) px(x + u(1), yb + u(2), u(2), 1, L.hair);
   const eye = closed ? shade(L.skin, -0.2) : "#1b1820";
-  px(x + u(2), yb + u(3), 1, closed ? 0.34 : 1, eye); px(x + u(5), yb + u(3), 1, closed ? 0.34 : 1, eye);
+  px(x + u(2), yb + u(3), s > 1 ? u(1) : 1, closed ? 0.34 : (s > 1 ? u(1) : 1), eye); px(x + u(5), yb + u(3), s > 1 ? u(1) : 1, closed ? 0.34 : (s > 1 ? u(1) : 1), eye);
   if (!small && state !== "crashed" && state !== "waiting") px(x + u(3), yb + u(4) + 0.6, u(2), 0.4, shade(L.skin, -0.25));
   if (state === "waiting" && !small) px(x + u(3) + 0.3, yb + u(4), 1, 1, shade(L.skin, -0.35));    // "o"
   // body
@@ -478,11 +482,13 @@ function layout() {
   const contentH = WALL + 6 + rowH.reduce((a, b) => a + b, 0) + (snap.overflow || snap.hiddenCount ? 9 : 0);
   const oy = reviewH + 3;
   const othersH = Math.max(contentH, Math.floor(wrap.clientHeight / P) - oy - 1);
-  const benchW = Math.min(52, Math.max(34, Math.floor(cols * 0.22))), bx = cols - benchW - 1;
+  // the manager's room takes the top-left corner when one is configured and the window is wide enough
+  const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
+  const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
-  return { W, cols, H: (oy + othersH) * P, reviewH, oy, othersH, teamW, benchW, bx, cells, endY: ry };
+  return { W, cols, H: (oy + othersH) * P, reviewH, oy, othersH, teamW, benchW, bx, mw, rx, cells, endY: ry };
 }
 
 function draw() {
@@ -494,7 +500,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, d.getHours(), d.getMinutes(), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -505,16 +511,17 @@ function draw() {
   ctx.drawImage(layer, 0, 0, W, H);
 
   // ----- review room -----
-  const cols = L.cols, n = snap.slots, deskArea = L.bx - 8, slotW = Math.floor(deskArea / n);
+  const cols = L.cols, n = snap.slots, deskArea = L.bx - 8 - L.rx, slotW = Math.floor(deskArea / n);
+  if (L.mw) drawManager(L);
   const active = snap.reviews.length + snap.manualReviews.length;
   label(`${active}/${n} desks · ${snap.queue.length} waiting`, (L.bx - 13) * P, (WALL + 2) * P, "#f1ebe2", 10, "right");
   const desks = snap.reviews.map(r => ({ id: "r:" + r.slug + r.id, top: `${r.name}#${r.id}`, sub: r.author, title: r.title, since: r.started,
       url: snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.slug}/pull-requests/${r.id}` : "" }))
     .concat(snap.manualReviews.map(s => ({ id: "r:" + s.id, top: s.title, sub: "by hand", title: s.title + "\n" + s.cwd, start: s.since })));
   for (let i = 0; i < n; i++) {
-    const x0 = 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
+    const x0 = L.rx + 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
     chair(x + 5, y - 16, 1);
-    if (dk) { const p = placed(dk.id, x + 5, y - 16, 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
+    if (dk) { const p = placed(dk.id, x + 5, y - 16, L.rx + 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
     desk(x, y, 18, dk ? "on" : "off", false, i);
     const cx = (x0 + slotW / 2) * P;
     if (dk) {
@@ -623,6 +630,143 @@ function draw() {
   if (logEl.dataset.html !== html) { logEl.innerHTML = html; logEl.dataset.html = html; }
 }
 
+
+// ---------- the manager's room ----------
+// Optional: `manager.image` in the config is drawn as the manager. A plain or white background is
+// cut away (flood-filled from the picture's edges), the picture is cropped to what is left and
+// redrawn at the office's pixel size, so a photo or a large drawing both come out as pixel art.
+// Without an image, `manager.name` alone gets a drawn manager.
+let mgrSrc = null, mgrCut = null, mgrSprite = null, mgrSpriteH = 0;
+function loadManager(url) {
+  url = url || "";
+  if (url === mgrSrc) return;
+  mgrSrc = url; mgrCut = null; mgrSprite = null; layerKey = "";
+  if (!url) return;
+  const im = new Image();
+  im.onload = () => { if (mgrSrc !== url) return; mgrCut = cutout(im); mgrSprite = null; layerKey = ""; if (snap) draw(); };
+  im.src = url;
+}
+function cutout(im) {
+  const w = im.naturalWidth, h = im.naturalHeight;
+  if (!w || !h) return null;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const x = c.getContext("2d"); x.drawImage(im, 0, 0);
+  const d = x.getImageData(0, 0, w, h), a = d.data, bg = new Uint8Array(w * h), stack = [];
+  const isBg = i => a[i * 4 + 3] < 40 || (a[i * 4] > 230 && a[i * 4 + 1] > 230 && a[i * 4 + 2] > 230);
+  for (let i = 0; i < w; i++) stack.push(i, (h - 1) * w + i);
+  for (let j = 0; j < h; j++) stack.push(j * w, j * w + w - 1);
+  while (stack.length) {
+    const i = stack.pop(); if (bg[i] || !isBg(i)) continue;
+    bg[i] = 1; const ix = i % w, iy = (i / w) | 0;
+    if (ix > 0) stack.push(i - 1); if (ix < w - 1) stack.push(i + 1);
+    if (iy > 0) stack.push(i - w); if (iy < h - 1) stack.push(i + w);
+  }
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let i = 0; i < w * h; i++) {
+    if (bg[i]) { a[i * 4 + 3] = 0; continue; }
+    const ix = i % w, iy = (i / w) | 0;
+    if (ix < x0) x0 = ix; if (ix > x1) x1 = ix; if (iy < y0) y0 = iy; if (iy > y1) y1 = iy;
+  }
+  if (x1 < 0) return null;
+  x.putImageData(d, 0, 0);
+  return { canvas: c, x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+// the cut-out at `th` art pixels high: averaged colours, hard edges
+function managerSprite(th) {
+  if (!mgrCut) return null;
+  if (mgrSprite && mgrSpriteH === th) return mgrSprite;
+  const k = mgrCut, tw = Math.max(1, Math.round(k.w * th / k.h));
+  const c = document.createElement("canvas"); c.width = tw; c.height = th;
+  const x = c.getContext("2d"); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high";
+  x.drawImage(k.canvas, k.x, k.y, k.w, k.h, 0, 0, tw, th);
+  const d = x.getImageData(0, 0, tw, th);
+  for (let i = 3; i < d.data.length; i += 4) d.data[i] = d.data[i] < 110 ? 0 : 255;
+  x.putImageData(d, 0, 0);
+  mgrSprite = c; mgrSpriteH = th;
+  return c;
+}
+// plan usage is the same for every session of the account: the freshest report wins
+function planLimits() {
+  const fresh = (snap ? snap.all : []).map(s => s.live).filter(Boolean).sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
+  return fresh ? fresh.rateLimits || [] : [];
+}
+function managerCounts() {
+  const st = snap.all.map(shown), n = k => st.filter(x => k.includes(x)).length;
+  return { needs: n(["waiting", "crashed"]), working: n(["working", "compacting", "background"]), done: n(["done"]) };
+}
+// geometry shared by the room layer and the per-frame drawing
+function managerGeo(L) {
+  const cx = Math.floor(L.mw / 2), deskY = 54, dw = Math.min(L.mw - 14, 46);
+  return { cx, deskY, dw, dx: cx - Math.floor(dw / 2) };
+}
+function paintManager(L, sky) {
+  const mw = L.mw, H = L.reviewH, m = managerGeo(L);
+  // dark green panelled walls, a burgundy carpet with a gold border
+  wall(0, 0, mw, "#3e5b4d", "#2c4337");
+  for (let x = 5; x < mw - 2; x += 9) px(x, 3, 1, 8, "rgba(0,0,0,0.13)");
+  px(0, WALL, mw, H - WALL, "#4f2830");
+  px(3, WALL + 3, mw - 6, H - WALL - 6, "#b48a4a"); px(4, WALL + 4, mw - 8, H - WALL - 8, "#6a3540");
+  for (let j = WALL + 7; j < H - 6; j += 6) for (let i = 7 + ((j / 6) % 2) * 3; i < mw - 7; i += 6) {
+    px(i, j, 1, 1, "#83505a"); px(i - 1, j + 1, 3, 1, "#7a4650"); px(i, j + 2, 1, 1, "#83505a");
+  }
+  for (let k = 0; k < 3; k++) px(0, WALL + k, mw, 1, `rgba(0,0,0,${0.18 - k * 0.05})`);
+  // wall: a status screen on the left, a window on the right
+  windowAt(mw - 19, 3, 13, 7, sky, 29);
+  px(3, 2, Math.min(28, mw - 26), 11, "#1d2024"); px(4, 3, Math.min(28, mw - 26) - 2, 9, "#0e1a17");
+  // plants in the corners
+  plant(5, H - 5, true); plant(mw - 13, H - 5, true);
+  // a high-backed leather chair behind the desk
+  px(m.cx - 11, 21, 22, 1, "#3a2420"); px(m.cx - 12, 22, 24, 34, "#3a2420"); px(m.cx - 11, 23, 22, 32, "#5a3529");
+  px(m.cx - 10, 23, 20, 1, "#6e4434");
+  for (let k = 0; k < 3; k++) for (let j = 0; j < 3; j++) px(m.cx - 7 + k * 7, 27 + j * 7, 1, 1, "#7a4a38");
+  // the manager, drawn into the layer: it does not move
+  const sp = managerSprite(36);
+  if (sp) {
+    const top = m.deskY + 6 - 36, sx = m.cx - Math.floor(sp.width / 2);
+    g.drawImage(sp, sx * P, top * P, sp.width * P, sp.height * P);
+  }
+  // the desk: dark wood, a lamp, a monitor, a mug
+  const { dx, dw, deskY } = m;
+  px(dx - 1, deskY, dw + 2, 3, "#5a3a26"); px(dx - 1, deskY, dw + 2, 1, "#7a5236");
+  px(dx, deskY + 3, dw, 9, "#4a2f1f"); px(dx + 2, deskY + 5, dw - 4, 5, "#563827");
+  px(dx, deskY + 12, dw, 1, "#00000045");
+  px(dx + 3, deskY - 7, 1, 7, "#b48a4a"); px(dx + 1, deskY - 9, 6, 3, "#2f7a4f"); px(dx + 2, deskY - 9, 4, 1, "#4fa070"); px(dx + 2, deskY - 1, 4, 1, "#b48a4a");
+  px(dx + dw - 6, deskY - 2, 3, 2, "#f4efe4"); px(dx + dw - 3, deskY - 1, 1, 1, "#f4efe4");
+  px(dx + dw - 14, deskY - 1, 6, 1, "#e9e3d6"); px(dx + dw - 13, deskY - 2, 5, 1, "#d8d0c0");
+  // the name plate on the desk front
+  const name = (snap.manager.name || "MANAGER").toUpperCase();
+  g.font = "bold 9px Menlo, monospace";
+  const pw = Math.min(dw - 6, Math.ceil(g.measureText(name).width / P) + 5), plx = m.cx - Math.floor(pw / 2);
+  px(plx, deskY + 5, pw, 5, "#c9a45a"); px(plx, deskY + 5, pw, 1, "#e3c47a"); px(plx, deskY + 9, pw, 1, "#94753c");
+  text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
+}
+function drawManager(L) {
+  const m = managerGeo(L), c = managerCounts(), lim = planLimits(), mw = L.mw;
+  // the wall screen: who needs you, then plan usage
+  const sw = Math.min(28, mw - 26), sx = 5 * P, rowH = 9.5;
+  let ry = 3.3 * P;
+  text(`!${c.needs} ▶${c.working} ✓${c.done}`, sx, ry, c.needs ? (frame % 2 ? "#ffb347" : "#ffc370") : "#8fd6b4", 8);
+  for (const l of lim.filter(l => l.kind !== "spend_limit").slice(0, 2)) {
+    ry += rowH;
+    const k = l.kind === "five_hour" ? "5h" : l.kind === "seven_day" ? "7d" : l.kind.slice(0, 2), bw = (sw - 14) * P;
+    text(k, sx, ry, "#9fd3c0", 8);
+    g.fillStyle = "#24302c"; g.fillRect(sx + 14, ry + 2, bw, 4);
+    g.fillStyle = ctxColor(l.percentUsed); g.fillRect(sx + 14, ry + 2, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
+    text(l.percentUsed + "%", sx + 17 + bw, ry, "#d9f2e8", 8);
+  }
+  // without a picture: a drawn manager, twice the size of everyone else
+  if (!mgrCut) {
+    const id = "manager:" + (snap.manager.name || "");
+    person(m.cx - 8, m.deskY - 25, id, id, c.working ? "working" : "idle", false, false, 2);
+  }
+  if (c.needs) bubble(m.cx + 9, 18, "waiting");
+  label(c.needs ? `${c.needs} need${c.needs === 1 ? "s" : ""} you` : c.working ? `${c.working} working` : "all quiet",
+    m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#d9cfc3", 10, "center");
+  const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
+  hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
+    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done` + (tipLim ? `\n${tipLim}` : "") + `\nclick: stats`});
+}
+
 // ---------- interaction ----------
 function hitAt(ev) {
   const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
@@ -643,7 +787,7 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -696,8 +840,7 @@ function renderStats() {
   const all = snap.all.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0));
   const lives = all.map(s => s.live).filter(Boolean);
   // plan usage is the same for every session of the account: take the freshest report
-  const freshest = lives.slice().sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
-  const limits = freshest ? freshest.rateLimits || [] : [];
+  const limits = planLimits();
   const st = all.map(shown), count = k => st.filter(x => k.includes(x)).length;
   const cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
   const subsN = all.reduce((t, s) => t + agentsOf(s).length, 0);
@@ -732,7 +875,7 @@ function renderStats() {
 wrap.addEventListener("scroll", closeMenu);
 
 function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
-window.updateOffice = raw => { lastRaw = raw; const next = build(raw); track(next); snap = next; renderStats(); };
+window.updateOffice = raw => { lastRaw = raw; loadManager(raw.manager && raw.manager.image); const next = build(raw); track(next); snap = next; renderStats(); };
 window.addEventListener("resize", () => snap && draw());
 // At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
 let lastDraw = 0;
@@ -747,7 +890,7 @@ if (!bridge) {
   const t0 = Date.now() / 1000, hm = m => { const d = new Date(Date.now() - m * 60000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   let tick = 0;
   const demo = () => { tick++; return {
-    now: Date.now() / 1000, workspace: "example", slots: 5,
+    now: Date.now() / 1000, workspace: "example", slots: 5, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
       ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],

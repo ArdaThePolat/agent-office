@@ -29,10 +29,17 @@ struct Config {
     var reviewLog: String? = nil
     var slots = 5
     var workspace = ""
+    var managerName = ""
+    var managerImage = ""
 
     static func load() -> Config {
         var c = Config()
         let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
+        let env = ProcessInfo.processInfo.environment
+        defer {
+            if let s = env["AGENT_OFFICE_MANAGER_NAME"], !s.isEmpty { c.managerName = s }
+            if let s = env["AGENT_OFFICE_MANAGER_IMAGE"], !s.isEmpty { c.managerImage = expand(s) }
+        }
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
         if let s = j["officeState"] as? String { c.officeState = expand(s) }
@@ -41,6 +48,10 @@ struct Config {
             if let s = r["log"] as? String { c.reviewLog = expand(s) }
             if let n = r["slots"] as? Int { c.slots = n }
             if let w = r["bitbucketWorkspace"] as? String { c.workspace = w }
+        }
+        if let m = j["manager"] as? [String: Any] {
+            if let s = m["name"] as? String { c.managerName = s }
+            if let s = m["image"] as? String { c.managerImage = expand(s) }
         }
         return c
     }
@@ -59,6 +70,32 @@ func lines(_ path: String, tailBytes: Int = 0) -> [String] {
     var out = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
     if tailBytes > 0, !out.isEmpty { out.removeFirst() }   // the first line may be cut in half
     return out
+}
+
+/// The manager's picture as a small PNG data URL: scaled to at most 160 px high, so it costs
+/// a few KB per snapshot however large the file is. Cached by path and modification time.
+var managerCache: (key: String, url: String) = ("", "")
+func managerImageURL(_ path: String) -> String {
+    guard !path.isEmpty, let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let m = attrs[.modificationDate] as? Date else { return "" }
+    let key = path + "@" + String(m.timeIntervalSince1970)
+    if managerCache.key == key { return managerCache.url }
+    var url = ""
+    if let img = NSImage(contentsOfFile: path),
+       let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil), cg.height > 0 {
+        let h = min(160, cg.height), w = max(1, cg.width * h / cg.height)
+        if let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            ctx.interpolationQuality = .high
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            if let small = ctx.makeImage(),
+               let png = NSBitmapImageRep(cgImage: small).representation(using: .png, properties: [:]) {
+                url = "data:image/png;base64," + png.base64EncodedString()
+            }
+        }
+    }
+    managerCache = (key, url)
+    return url
 }
 
 func snapshot(_ cfg: Config) -> [String: Any] {
@@ -110,6 +147,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         "sessions": sessions, "reviews": reviews, "queue": queue,
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "reviewLog": Array(reviewLog.suffix(120)),
+        "manager": ["name": cfg.managerName, "image": managerImageURL(cfg.managerImage)],
     ]
 }
 
