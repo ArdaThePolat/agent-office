@@ -32,6 +32,17 @@
   #statsBtn:hover, #chatBtn:hover { background: #3a302c; }
   #chatBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
+  #music img { width: 20px; height: 20px; border-radius: 2px; flex: none; transform-origin: top left; transition: transform .15s; }
+  #music img:hover { transform: scale(8); box-shadow: 0 2px 8px #000a; position: relative; z-index: 5; }
+  @media (prefers-reduced-motion: reduce) { #music img { transition: none; } }
+  #music .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #music .t b { font-weight: normal; color: #8fd6b4; }
+  #music .t span { color: var(--muted); }
+  #music button { font: 12px Menlo, monospace; color: var(--text); background: none; border: 1px solid transparent;
+    border-radius: 3px; padding: 0 4px; cursor: pointer; line-height: 18px; }
+  #music button:hover { border-color: #5a4a3e; }
+  #music button:focus-visible { outline: 1px solid #8fd6b4; }
+  #music.paused .t b { color: var(--muted); }
   #chatBtn.unread { border-color: #ffb347; color: #ffc370; }
   #updBtn { position: fixed; top: 6px; z-index: 4; font: 11px Menlo, monospace; color: #10241a; background: #8fd6b4;
     border: 1px solid #5fbf7f; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
@@ -115,6 +126,7 @@
 <div id="demo"></div>
 <button id="statsBtn" title="Usage and session details (S)">Stats</button>
 <button id="chatBtn" title="The shared room's chat (C)">Chat</button>
+<div id="music" role="group" aria-label="Spotify"><img id="musicArt" alt="" hidden><span class="t" id="musicT"></span><button data-m="prev" title="Previous track" aria-label="Previous track">⏮</button><button data-m="toggle" id="musicPlay" title="Play / pause" aria-label="Play or pause">⏯</button><button data-m="next" title="Next track" aria-label="Next track">⏭</button></div>
 <button id="updBtn"></button>
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
@@ -1622,6 +1634,31 @@ if (!bridge) {
                { id: "me", from: "Alex", text: "yes, mine's 3rd in line", at: t1 - 240 },
                { id: "rm", from: "Riley", text: "coffee while we wait ☕", at: t1 - 60 }] });
 }
+
+// ---------- Spotify: what is playing, previous / play-pause / next ----------
+// The app sends {state, track?, artist?, art?}; state "off" hides the bar (Spotify closed, or the
+// setting off), "noaccess" says how to allow it. The cover loads only from Spotify's image host.
+const musicEl = document.getElementById("music"), musicT = document.getElementById("musicT"), musicArt = document.getElementById("musicArt");
+window.updateMusic = m => {
+  const st = m && m.state;
+  if (!st || st === "off") { musicEl.style.display = "none"; return; }
+  musicEl.style.display = "flex";
+  musicEl.classList.toggle("paused", st !== "playing");
+  musicT.textContent = "";
+  const art = m.art && m.art.startsWith("https://i.scdn.co/image/") ? m.art : "";
+  if (art) { if (musicArt.src !== art) musicArt.src = art; musicArt.alt = "Cover of " + (m.track || "the track"); }
+  musicArt.hidden = !art;
+  if (st === "noaccess") { musicT.textContent = "♪ allow Spotify: System Settings → Privacy → Automation"; return; }
+  if (!m.track) { musicT.textContent = "♪ Spotify " + st; return; }
+  const b = document.createElement("b"), a = document.createElement("span");
+  b.textContent = "♪ " + m.track; a.textContent = m.artist ? " · " + m.artist : "";
+  musicT.append(b, a);
+  musicEl.title = (st === "playing" ? "" : "paused · ") + m.track + (m.artist ? " — " + m.artist : "");
+};
+musicEl.addEventListener("click", ev => {
+  const btn = ev.target.closest("button[data-m]");
+  if (btn && bridge) bridge.postMessage({ music: btn.dataset.m });
+});
 </script>
 </body>
 </html>

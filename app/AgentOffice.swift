@@ -217,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         get { defaults.bool(forKey: "energySaver") }        // false until turned on in Settings
         set { defaults.set(newValue, forKey: "energySaver"); push() }
     }
+    var showMusic: Bool {
+        get { defaults.bool(forKey: "showMusic") }          // false until turned on in Settings
+        set { defaults.set(newValue, forKey: "showMusic"); pushMusic(force: true) }
+    }
     // One exit watcher per session process: the window updates the moment a session's process
     // ends, instead of at the next poll.
     var exitWatch: [Int: DispatchSourceProcess] = [:]
@@ -270,7 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         importEnvOnce()                                      // before the first look at the room (RoomSetup.swift)
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push(); self?.pushMusic() }
         syncRoom()
         updater.onChange = { [weak self] in self?.pushUpdate() }
         // once a day, when turned on: at launch if the last look is a day old, then hourly re-checks of that
@@ -398,6 +402,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
+        if let m = body["music"], showMusic { SpotifyBridge.shared.control(m) { [weak self] in self?.pushMusic(force: true) } }
         if let sp = body["spot"] { roomClient?.setSpot(sp) }
         if let a = body["act"] {                                  // "kind|member id"
             let parts = a.split(separator: "|", maxSplits: 1).map(String.init)
@@ -406,7 +411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if body["update"] == "go" { updater.update() }
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {
-            if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
+            if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate(); pushMusic(force: true) }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
             // the page's buttons; the dialogs run after this message returns
             if r == "create" { DispatchQueue.main.async { self.createRoom() } }
@@ -617,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 592),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 664),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -670,8 +675,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             impL.frame = NSRect(x: 20, y: 516, width: 200, height: 20)
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
-            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let mus = NSButton(checkboxWithTitle: "Show what Spotify is playing", target: self, action: #selector(toggleMusic(_:)))
+            mus.state = showMusic ? .on : .off
+            mus.frame = NSRect(x: 20, y: 626, width: 350, height: 22)
+            let hint8 = NSTextField(wrappingLabelWithString: "Off by default. A bar at the top with the track, its cover and previous / play-pause / next. macOS asks once to let Agent Office control Spotify.")
+            hint8.frame = NSRect(x: 38, y: 580, width: 320, height: 44)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [mus, hint8, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
@@ -689,6 +699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
     @objc func toggleRoom(_ sender: NSButton) { roomSharing = sender.state == .on }
     @objc func toggleUpdates(_ sender: NSButton) { checkUpdates = sender.state == .on }
+    @objc func toggleMusic(_ sender: NSButton) { showMusic = sender.state == .on }
     // Open at login: registers this app as a login item with macOS. When macOS wants the person
     // to approve it first, it opens Login Items in System Settings.
     @objc func toggleLogin(_ sender: NSButton) {

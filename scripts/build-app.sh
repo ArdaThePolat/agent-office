@@ -19,7 +19,7 @@ mkdir -p "$B/MacOS" "$B/Resources"
 
 # the file with the top-level startup code has to be called main.swift when there are several
 cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
-swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" "$ROOT/app/Profile.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
+swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" "$ROOT/app/Profile.swift" "$ROOT/app/Spotify.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
 cp "$ROOT/web/office.html" "$B/Resources/"
 
 swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
@@ -47,7 +47,7 @@ cat > "$B/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>The shared room: Agent Office finds your team's room on the local network and joins it, so your lounges are one. Only names, pictures and chat are shared.</string>
   <key>NSBonjourServices</key><array><string>_agent-office._tcp</string></array>
-  <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window.</string>
+  <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window. With the music bar on, it asks Spotify what is playing and skips tracks.</string>
 </dict></plist>
 PLIST
 codesign --force --deep --sign - "$BUILD/Agent Office.app" >/dev/null

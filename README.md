@@ -291,6 +291,11 @@ The rest are off by default:
 - **Keep on top**: float the window above other apps and across Spaces.
 - **Play a sound**: "Glass" when an agent waits for your permission, "Pop" when one finishes.
 - **Energy saver**: 2 redraws a second instead of 6, no walking or blinking.
+- **Show what Spotify is playing**: a bar at the top of the office with the track, the artist and
+  the album cover (hover it to enlarge), and previous / play-pause / next buttons. It asks the
+  Spotify app with AppleScript, only while Spotify is open, and never starts it. macOS asks once to
+  let Agent Office control Spotify; if you refuse, the bar says where to allow it (System Settings
+  → Privacy & Security → Automation).
 
 The window remembers its size and position. **Check Setup…** in the same menu says whether the
 hook is registered for every event and when a session last reported.
@@ -386,6 +391,10 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
   With the companion mod, each session's context use, cost, plan usage and subagent states too.
   Everything stays on your Mac, under `~/.local/state/agent-office/`. The one exception is the
   optional shared room, which sends your name, picture and chat messages to the room.
+- **Spotify (off by default):** with the music bar on, the app reads the current track, artist and
+  cover address from the Spotify app on your Mac and shows them only in your own office; nothing
+  about it goes to the shared room. The cover image is loaded from Spotify's image host
+  (`i.scdn.co`), the only address the bar accepts.
 - **CPU and memory:** the app runs at background priority and reads its state only while its window
   is visible. It redraws at most 6 times a second (none while hidden) and draws at most 30 sessions;
   walls, floors and furniture are painted once and cached. Measured on an M-series Mac with the
