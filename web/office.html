@@ -995,10 +995,18 @@ function managerSprite(th) {
   mgrSprite = c; mgrSpriteH = th;
   return c;
 }
-// plan usage is the same for every session of the account: the freshest report wins
+// Plan usage is one number for the whole account, but each session reports the value from its own
+// last API reply, and an idle session keeps re-reporting an old one. So the most recently written
+// report is not the newest number: taking it makes the gauge jump back and forth. Usage only rises
+// inside a window, so per kind the latest window wins, and inside it the highest percentage.
 function planLimits() {
-  const fresh = (snap ? snap.all : []).map(s => s.live).filter(Boolean).sort((a, b) => (b.updated || 0) - (a.updated || 0))[0];
-  return fresh ? fresh.rateLimits || [] : [];
+  const best = new Map();
+  for (const s of snap ? snap.all : []) for (const l of (s.live && s.live.rateLimits) || []) {
+    const hr = x => Math.round((Date.parse(x) || 0) / 3600e3);     // to the hour: one window may be reported with jitter
+    const b = best.get(l.kind), t = hr(l.resetsAt), bt = b ? hr(b.resetsAt) : -1;
+    if (!b || t > bt || (t === bt && (l.percentUsed || 0) > (b.percentUsed || 0))) best.set(l.kind, l);
+  }
+  return [...best.values()];
 }
 function managerCounts() {
   const st = snap.all.map(shown), n = k => st.filter(x => k.includes(x)).length;
@@ -1085,6 +1093,11 @@ function drawManager(L) {
     person(m.cx - 8, m.deskY - 25, id, id, c.working ? "working" : "idle", false, false, 2);
   }
   if (c.needs) bubble(m.cx + 9, 18, "waiting");
+  // a small button under the window: your name and picture
+  { const bx = (mw - 20) * P, by = 11.5 * P, bw = 15 * P, bh = 4 * P;
+    g.fillStyle = "#1b1820cc"; g.fillRect(bx, by, bw, bh); g.fillStyle = "#8fd6b4"; g.fillRect(bx, by + bh - 1, bw, 1);
+    text("✎ edit", bx + bw / 2, by + 0.5, "#d9f2e8", 9, "center");
+    hits.push({ x: bx, y: by, w: bw, h: bh, profile: true, tip: "Your name and picture\nclick: change them" }); }
   // the account at a glance: who needs you, plan usage, what the open sessions cost
   const parts = [];
   if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
@@ -1446,10 +1459,10 @@ cv.addEventListener("mousemove", ev => {
   if (!h) { tip.style.display = "none"; cv.style.cursor = "default"; return; }
   tip.textContent = h.tip; tip.style.display = "block";
   tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 330) + "px"; tip.style.top = (ev.clientY + 12) + "px";
-  cv.style.cursor = h.url || h.reveal || h.goto || h.session || h.chat || h.stats || (h.self && mySpot) ? "pointer" : "default";
+  cv.style.cursor = h.url || h.reveal || h.goto || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
