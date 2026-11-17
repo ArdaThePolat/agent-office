@@ -14,7 +14,7 @@ extension AppDelegate {
         let a = NSAlert()
         a.messageText = "Your name and picture"
         a.informativeText = "You, at the manager's desk, and your character in a shared room."
-        let w: CGFloat = 300
+        let w: CGFloat = 240                              // the width of the alert's text column
         let name = NSTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24))
         name.placeholderString = "Your name"; name.stringValue = cfg.managerName
         let preview = NSImageView(frame: NSRect(x: 0, y: 0, width: 72, height: 96))
@@ -36,14 +36,16 @@ extension AppDelegate {
             picked = u.path; preview.image = im; showPath()
         }
         let remove = ActionButton(title: "Remove Picture") { picked = ""; preview.image = nil; showPath() }
-        let buttons = NSStackView(views: [choose, remove]); buttons.spacing = 6
-        let side = NSStackView(views: [buttons, pathLbl]); side.orientation = .vertical; side.alignment = .leading
-        let pic = NSStackView(views: [preview, side]); pic.alignment = .centerY; pic.spacing = 10
-        preview.widthAnchor.constraint(equalToConstant: 72).isActive = true
-        preview.heightAnchor.constraint(equalToConstant: 96).isActive = true
-        let stack = NSStackView(views: [name, pic]); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
-        stack.frame = NSRect(x: 0, y: 0, width: w, height: 136)
-        a.accessoryView = stack
+        // fixed frames, sized to the alert's own column: a stack view's fitting size runs past it
+        // and NSAlert does not widen itself, so buttons get cut off at the right edge
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: w, height: 132))
+        name.frame = NSRect(x: 0, y: 108, width: w, height: 24)
+        preview.frame = NSRect(x: 0, y: 0, width: 72, height: 96)
+        choose.frame = NSRect(x: 82, y: 64, width: w - 82, height: 28)
+        remove.frame = NSRect(x: 82, y: 32, width: w - 82, height: 28)
+        pathLbl.frame = NSRect(x: 85, y: 6, width: w - 85, height: 16)
+        for v in [name, preview, choose, remove, pathLbl] { box.addSubview(v) }
+        a.accessoryView = box
         a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel")
         a.window.initialFirstResponder = name
         NSApp.activate(ignoringOtherApps: true)
