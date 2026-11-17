@@ -51,7 +51,7 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   |---|---|
   | **!** orange, blinking | waiting for your permission |
   | **✓** | done, your turn (for 30 minutes after its turn ends) |
-  | **×** | stopped with an error |
+  | **×** | its turn ended on an API error, often a network drop (for 30 minutes, then idle; send it a message to carry on) |
   | **hourglass** | its turn is over but subagents it started in the background are still running |
   | **…** | compacting its context |
   | **?** | quiet: working, but silent for over 10 minutes |
@@ -142,8 +142,18 @@ office and in everyone else's; click it again, or click your character, and it g
 own routine.
 
 Click a teammate for a menu: **Hug**, **Kiss**, **High five**, **Pillow fight**, **Bring a coffee**,
-**Wave**, or **Chat**. Your character walks over and the two of you do it, in every lounge in the
+**Wave**, **Poke**, or **Chat**. Your character walks over and the two of you do it, in every lounge in the
 room, and the log says so ("Alex hugged Jordan"). The lounge counts everyone in it, you included.
+
+On the lounge's right side, a panel lists everyone in the room, you first. Click a name for the
+same menu, or **👉 Poke** next to it: the person you poke gets a notification on their Mac and
+their Agent Office window gives a little shake (with the window minimised, its Dock icon
+bounces). You can poke the same person once every 20 seconds, and a person sees at most one poke
+notification from the same teammate in 20 seconds. macOS asks once whether Agent Office may show
+notifications. A teammate on an older version than this one does not get pokes. Without a room,
+the panel has **Create a room** and **Join a room** buttons; **⋯** next to the room's name joins
+another room, creates one, or leaves this one. The same three are in the **Room** menu. (In a
+narrow window the panel is left out: use the Room menu.)
 
 Only the people are shared. Your agents stay yours: your desks, your review room, your manager's
 room, and your agents on a break in the lounge are drawn from your own sessions and are never
@@ -151,6 +161,11 @@ sent anywhere, so each person sees their own agents next to the shared teammates
 yourself in the manager's chair.
 
 #### Create a room (one person, the host)
+
+The quick way: **Create a room** in the lounge's panel (or Room → Create a Room…). Type a name and
+a password of at least 8 characters, then pass both to your team over a private channel. The app
+writes them to the `room` block of `~/.config/agent-office/config.json` (readable only by you) and
+opens the room. Steps 4 and 6 below still apply. By hand:
 
 1. Pick who hosts: a Mac that is on the office network and usually has Agent Office open. The
    room exists only while that app is open.
@@ -171,6 +186,9 @@ yourself in the manager's chair.
    room, and your team's password keeps working.
 
 #### Join a room (everyone else)
+
+The quick way: **Join a room** in the lounge's panel (or Room → Join a Room…), then type the
+room's name and password; the host's address is optional (see below). By hand:
 
 1. Install or update Agent Office (`git pull`, then `scripts/build-app.sh`).
 2. Set your character: `manager.name` and `manager.image` in `~/.config/agent-office/config.json`
@@ -246,6 +264,15 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ## Settings
 
 Agent Office → Settings… (⌘,):
+- **Saved room** and **Delete Saved Room…**: a room you create or join is saved in
+  `~/.config/agent-office/config.json` and joined (or hosted) again at every launch, until you
+  join or create another one, or delete it here. Room → Leave the Room only pauses it and keeps
+  the name and password; Delete removes both.
+- **Import from env file…**: for a setup made with `~/.config/agent-office/env`. It moves the
+  `AGENT_OFFICE_ROOM_…` and `AGENT_OFFICE_MANAGER_…` lines into `config.json` (it lists them first,
+  the password only as its length) and takes them out of the env file, keeping a copy in
+  `env.bak`. The env file wins over `config.json`, so until you import, the Room menu and Delete
+  Saved Room cannot change a room the env file sets (the app says so when you try).
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac

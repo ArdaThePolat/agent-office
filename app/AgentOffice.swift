@@ -229,6 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var roomRunning = RoomConfig()
     var roomMembersSent = -1
     var managerImageSent: String?
+    var lastPoke: [String: Date] = [:]                   // who poked you last, and when (RoomSetup.swift)
+    var shaking = false
+    var settingsRoomLabel: NSTextField?
     // ---- updates ----
     let updater = Updater()
     var updateTimer: Timer?
@@ -316,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 return (cfg.managerName.isEmpty ? "Teammate" : cfg.managerName, managerImageURL(cfg.managerImage, maxH: 96))
             }
             c.onChange = { [weak self] in self?.pushRoom() }
+            c.onPoked = { [weak self] name in self?.poked(by: name) }
             // the host's own member waits a moment for its listener to be advertised
             DispatchQueue.main.asyncAfter(deadline: .now() + (want.host ? 1.5 : 0)) { c.start() }
             roomClient = c
@@ -324,7 +328,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     /// The room's state to the page; the members' pictures only when the member list changed.
     func pushRoom() {
-        var o: [String: Any] = ["status": "off"]
+        // off: say whether a room is set up at all, so the page offers Create / Join or only Join
+        let r = Config.load().room
+        var o: [String: Any] = ["status": "off", "name": r.enabled ? r.name : "", "sharing": roomSharing]
         if let c = roomClient {
             let fresh = c.membersVersion != roomMembersSent
             o = c.json(withMembers: fresh)
@@ -400,6 +406,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
+            // the page's buttons; the dialogs run after this message returns
+            if r == "create" { DispatchQueue.main.async { self.createRoom() } }
+            if r == "setup" { DispatchQueue.main.async { self.joinRoom() } }
+            if r == "leave" { DispatchQueue.main.async { self.leaveRoom() } }
+            if r == "share" { roomSharing = true }
         }
         if let t = body["copy"], t.count < 200 {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
@@ -585,6 +596,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(withTitle: "Hide Agent Office", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit Agent Office", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = app
+        let roomItem = NSMenuItem(); main.addItem(roomItem)
+        let rm = NSMenu(title: "Room")
+        rm.addItem(withTitle: "Create a Room…", action: #selector(createRoom), keyEquivalent: "")
+        rm.addItem(withTitle: "Join a Room…", action: #selector(joinRoom), keyEquivalent: "")
+        rm.addItem(.separator())
+        rm.addItem(withTitle: "Leave the Room", action: #selector(leaveRoom), keyEquivalent: "")
+        roomItem.submenu = rm
         let winItem = NSMenuItem(); main.addItem(winItem)
         let win = NSMenu(title: "Window")
         win.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
@@ -596,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 456),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 556),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -630,15 +648,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             upd.frame = NSRect(x: 20, y: 414, width: 350, height: 22)
             let hint6 = NSTextField(wrappingLabelWithString: "Off by default. Asks GitHub for the latest release; a newer one shows an Update button that rebuilds the app from it and reopens it.")
             hint6.frame = NSRect(x: 38, y: 368, width: 320, height: 44)
-            for h in [hint, hint2, hint3, hint4, hint5, hint6] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let roomLbl = NSTextField(labelWithString: "")
+            roomLbl.frame = NSRect(x: 20, y: 482, width: 200, height: 20)
+            roomLbl.lineBreakMode = .byTruncatingTail
+            settingsRoomLabel = roomLbl
+            let del = NSButton(title: "Delete Saved Room…", target: self, action: #selector(deleteSavedRoom))
+            del.bezelStyle = .rounded
+            del.frame = NSRect(x: 220, y: 476, width: 145, height: 30)
+            let imp = NSButton(title: "Import from env file…", target: self, action: #selector(importFromEnv))
+            imp.bezelStyle = .rounded
+            imp.frame = NSRect(x: 220, y: 510, width: 145, height: 30)
+            let impL = NSTextField(labelWithString: "Set up with the env file?")
+            impL.frame = NSRect(x: 20, y: 516, width: 200, height: 20)
+            let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
+            hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
+        refreshSettingsRoom()
         settings?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func refreshSettingsRoom() {
+        let r = Config.load().room
+        settingsRoomLabel?.stringValue = r.name.isEmpty ? "Saved room: none" : "Saved room: \(r.name)\(r.host ? " (you host)" : "")"
+    }
     @objc func toggleTop(_ sender: NSButton) { keepOnTop = sender.state == .on }
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
