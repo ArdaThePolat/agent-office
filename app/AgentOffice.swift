@@ -234,6 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var settingsRoomLabel: NSTextField?
     // ---- updates ----
     let updater = Updater()
+    let jukebox = Jukebox()                              // the lounge's Spotify jukebox (Jukebox.swift)
     var updateTimer: Timer?
     var manualCheck = false
     var checkUpdates: Bool {
@@ -273,6 +274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
         syncRoom()
         updater.onChange = { [weak self] in self?.pushUpdate() }
+        jukebox.onChange = { [weak self] in self?.push() }
         // once a day, when turned on: at launch if the last look is a day old, then hourly re-checks of that
         let daily = { [weak self] in
             guard let self, self.checkUpdates else { return }
@@ -291,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         guard window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) else { return }
         var snap = snapshot(Config.load())
         snap["settings"] = ["energySaver": energySaver]
+        snap["jukebox"] = jukebox.snapshot
         snap["hidden"] = defaults.string(forKey: "hidden") ?? "{}"
         // the manager's picture only when it changed: it is most of a snapshot otherwise
         if var m = snap["manager"] as? [String: Any], let img = m["image"] as? String {
@@ -404,6 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
         if body["update"] == "go" { updater.update() }
+        if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
