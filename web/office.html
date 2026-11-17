@@ -608,7 +608,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.installed ? "juke" : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -762,7 +762,8 @@ function wants(s) {
 function loungeGeo(L) {
   const y = L.ly, cols = L.lw;
   const kw = Math.max(56, Math.floor(cols * 0.36)), gw = Math.max(52, Math.floor(cols * 0.3)), gx = cols - gw;
-  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.max(Math.floor(14 + (kw - 14) * 0.6), kw - 17);   // the kitchen table, as far right as its rug fits
+  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), juke = !!(snap.jukebox && snap.jukebox.installed),
+    tx = juke ? Math.max(Math.floor(14 + (kw - 14) * 0.6), kw - 17) : Math.floor(14 + (kw - 14) * 0.6);   // with a jukebox, the table moves right as far as its rug fits
   const spots = [
     { kind: "make", x: 17, y: y + 19 }, { kind: "make", x: 29, y: y + 19 },
     { kind: "drink", x: tx - 15, y: y + 40 }, { kind: "drink", x: tx + 7, y: y + 40 },
@@ -770,8 +771,9 @@ function loungeGeo(L) {
     { kind: "chat", x: chatX - 15, y: y + 33 }, { kind: "chat", x: chatX + 7, y: y + 33 }, { kind: "chat", x: chatX - 4, y: y + 27 },
   ];
   if (gw >= 70) spots.push({ kind: "game", x: gx + 5, y: y + 47, bean: true });
-  // the jukebox stands in the kitchen's front-left corner, a speaker on each side (x 1 to 25)
-  return { y, cols, kw, gx, gw, chatX, tvX, tx, spots, jx: 6 };
+  // the jukebox stands in the kitchen's front-left corner, a speaker on each side (x 1 to 25);
+  // only when Spotify is installed
+  return { y, cols, kw, gx, gw, chatX, tvX, tx, spots, jx: juke ? 6 : -1 };
 }
 function paintLounge(L, sky) {
   const G = loungeGeo(L), y = G.y, cols = G.cols, H = L.loungeH, cw = G.kw - 20;
@@ -810,7 +812,7 @@ function paintLounge(L, sky) {
   windowAt(G.chatX - 7, y + 4, 14, 7, sky, 17);
   frameArt(G.chatX + 12, y + 4, 4); if (G.chatX - 22 > G.kw + 12) frameArt(G.chatX - 21, y + 4, 2);
   px(G.kw + 4, y + 10, 6, 13, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 6, "#9fd0ea"); px(G.kw + 5, y + 4, 4, 1, "#c4e6f7"); px(G.kw + 6, y + 14, 2, 1, "#5b8def");
-  jukeboxBody(G);
+  if (G.jx >= 0) jukeboxBody(G);
   px(G.chatX - 22, y + 44, 44, 16, "#5b6e8f"); px(G.chatX - 20, y + 45, 40, 14, "#6d82a5");
   for (let i = G.chatX - 18; i < G.chatX + 18; i += 6) px(i, y + 51, 3, 2, "#e3c74f");
   plant(G.gx - 11, y + WALL + 8, true); plant(G.kw + 13, y + H - 3, false);
@@ -873,6 +875,7 @@ const JUKE_ICONS = {
 };
 function drawJukebox(G) {
   const x = G.jx, t = jukeTop(G), j = snap.jukebox || { running: false };
+  if (x < 0) return;
   const on = !!j.running, playing = on && j.state === "playing", song = on && j.track, live = playing && !energy;
   const now = performance.now() / 1000;
   // bubble tubes down both sides of the cover
@@ -915,10 +918,11 @@ function drawJukebox(G) {
   px(x + 7 + (jukeLights ? 1 : -1), t - 4, 1, 3, "#c0c6ca"); px(x + 6 + (jukeLights ? 2 : -2), t - 5, 2, 2, jukeLights ? "#e06c6c" : "#8a7f74");
   hits.push({ x: (x + 3) * P, y: (t - 6) * P, w: 9 * P, h: 7 * P, lights: true,
     tip: `💡 party lights: ${jukeLights ? "on" : "off"}\nclick: ${jukeLights ? "turn them off" : "turn them on"}` });
-  const tip = !on ? "Jukebox\nSpotify is not open: open it, then play from here"
+  const tip = (!on ? "Jukebox\nSpotify is not open: open it, then play from here"
     : !j.state ? "Jukebox · Spotify\nthe song shows at the next change, or press a button"
     : j.state === "stopped" || !song ? "Jukebox · Spotify\nnothing playing"
-    : `Jukebox · Spotify\n${playing ? "▶ playing" : "❚❚ paused"}\n${j.track}\n${j.artist || ""}${j.album ? " · " + j.album : ""}`;
+    : `Jukebox · Spotify\n${playing ? "▶ playing" : "❚❚ paused"}\n${j.track}\n${j.artist || ""}${j.album ? " · " + j.album : ""}`
+    ) + (on && j.denied ? "\n⚠ the buttons need your OK: allow Agent Office to control Spotify in\nSystem Settings → Privacy & Security → Automation" : "");
   JUKE_BUTTONS.forEach(([act, what], k) => {
     const bx = x + 1 + k * 4.5, by = t + 19;
     px(bx, by, 4, 3, on ? "#e9e3d6" : "#8a7f74"); px(bx, by + 3, 4, 0.34, on ? "#b8ad9e" : "#6f665d");
@@ -931,7 +935,7 @@ function drawJukebox(G) {
 // the party lights: soft coloured pools drifting over the lounge and the glints of a mirror ball,
 // on top of everyone; gentle, and still while the energy saver is on
 function drawPartyLights(L) {
-  if (!jukeLights) return;
+  if (!jukeLights || !(snap.jukebox && snap.jukebox.installed)) return;
   const y = L.ly + 2, h = L.loungeH - 2, w = L.lw, now = energy ? 0 : performance.now() / 1000;
   g.fillStyle = "rgba(20,10,40,0.22)"; g.fillRect(0, y * P, w * P, h * P);
   g.save(); g.beginPath(); g.rect(0, y * P, w * P, h * P); g.clip();
@@ -1700,7 +1704,7 @@ if (!bridge) {
   let tick = 0;
   const demo = () => { tick++; return {
     now: Date.now() / 1000, workspace: "example", slots: 5,
-    jukebox: { running: true, state: tick % 10 < 7 ? "playing" : "paused", track: "Neon Afternoon", artist: "The Pixel Band", album: "Lounge Tapes", art: demoCover() }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
+    jukebox: { installed: true, running: true, state: tick % 10 < 7 ? "playing" : "paused", track: "Neon Afternoon", artist: "The Pixel Band", album: "Lounge Tapes", art: demoCover() }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
       ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],

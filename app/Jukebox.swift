@@ -7,10 +7,12 @@ import Cocoa
 // nothing is polled. The buttons use Apple Events, and only while Spotify is already running: the
 // jukebox never starts it. The first button press makes macOS ask once whether Agent Office may
 // control Spotify; after that the jukebox also reads the current song at launch, instead of
-// waiting for the next change.
+// waiting for the next change. A "no" there (Automation error -1743) is shown in the jukebox's
+// tooltip with where to change it, since macOS does not ask again.
+// It is drawn only when Spotify is installed.
 // The cover comes from Spotify's public oEmbed endpoint for the song's id, shrunk here to a
-// COVER × COVER picture that the page draws as pixel art. What you listen to stays on this Mac:
-// it is not sent to the room.
+// COVER × COVER picture that the page draws as pixel art: Spotify's own site is asked for the
+// cover of the song you play. Nothing about it is sent to the room.
 final class Jukebox {
     static let bundle = "com.spotify.client"
     static let actions = ["previous": "previous track", "playpause": "playpause", "next": "next track"]
@@ -18,20 +20,25 @@ final class Jukebox {
     var onChange: (() -> Void)?
     private var info: [String: String] = [:]                 // state, track, artist, album, id
     private var artId = "", art = ""                         // the song the cover belongs to, a data: URL
+    private var denied = false                               // macOS said no to controlling Spotify
+    private(set) var installed = false                       // looked up at launch and when an app starts or quits
     private let defaults = UserDefaults.standard
 
     var running: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: Jukebox.bundle).isEmpty }
 
-    /// For the page: {running, state, track, artist, album, art}; state is "" until Spotify says.
+    /// For the page: {installed, running, denied, state, track, artist, album, art}; state is ""
+    /// until Spotify says.
     var snapshot: [String: Any] {
-        guard running else { return ["running": false] }
-        var s: [String: Any] = ["running": true, "state": info["state"] ?? ""]
+        guard installed else { return ["installed": false, "running": false] }
+        guard running else { return ["installed": true, "running": false, "denied": denied] }
+        var s: [String: Any] = ["installed": true, "running": true, "denied": denied, "state": info["state"] ?? ""]
         for k in ["track", "artist", "album"] { s[k] = info[k] ?? "" }
         s["art"] = !art.isEmpty && artId == info["id"] ? art : ""
         return s
     }
 
     init() {
+        lookUp()
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.spotify.client.PlaybackStateChanged"), object: nil, queue: .main) { [weak self] n in
             self?.apply(n.userInfo)
@@ -40,11 +47,25 @@ final class Jukebox {
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] n in
                 guard (n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == Jukebox.bundle else { return }
-                self?.info = [:]; self?.onChange?()
+                guard let self else { return }
+                self.info = [:]; self.lookUp(); self.onChange?()
+                // started again and allowed before: fill the jukebox without waiting for a change
+                if name == NSWorkspace.didLaunchApplicationNotification, self.defaults.bool(forKey: "jukeboxUsed") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.refresh() }
+                }
             }
         }
         // Allowed before: read the song now. Not yet: no permission prompt until a button is pressed.
         if defaults.bool(forKey: "jukeboxUsed") { DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.refresh() } }
+    }
+
+    private func lookUp() { installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Jukebox.bundle) != nil }
+
+    /// After an Apple Event: remember whether macOS refused it (Automation, error -1743).
+    private func note(_ error: String?) {
+        let was = denied
+        if let error { if error.contains("-1743") { denied = true } } else { denied = false }
+        if denied != was { onChange?() }
     }
 
     private func apply(_ u: [AnyHashable: Any]?) {
@@ -69,7 +90,8 @@ final class Jukebox {
         if application id "\(Jukebox.bundle)" is running then
           tell application id "\(Jukebox.bundle)" to \(verb)
         end if
-        """) { [weak self] _ in
+        """) { [weak self] _, error in
+            self?.note(error)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { self?.refresh() }
         }
     }
@@ -86,8 +108,10 @@ final class Jukebox {
             return s & linefeed & (name of t) & linefeed & (artist of t) & linefeed & (album of t) & linefeed & (id of t)
           end tell
         end if
-        """) { [weak self] out in
-            guard let self, let out, !out.isEmpty else { return }
+        """) { [weak self] out, error in
+            guard let self else { return }
+            self.note(error)
+            guard let out, !out.isEmpty else { return }
             let f = out.components(separatedBy: "\n")
             self.info = ["state": f[0]]
             if f.count >= 5 { self.info["track"] = f[1]; self.info["artist"] = f[2]; self.info["album"] = f[3]; self.info["id"] = f[4] }
@@ -135,20 +159,22 @@ final class Jukebox {
         return rep.representation(using: .png, properties: [:])
     }
 
-    /// osascript off the main thread; its trimmed output (nil on failure) back on the main thread.
-    private static func run(_ source: String, then: @escaping (String?) -> Void) {
+    /// osascript off the main thread; back on the main thread, its trimmed output (nil on failure)
+    /// and its error message (nil on success).
+    private static func run(_ source: String, then: @escaping (String?, String?) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
-            let p = Process(), out = Pipe()
+            let p = Process(), out = Pipe(), err = Pipe()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", source]
-            p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            var text: String?
+            p.standardOutput = out; p.standardError = err
+            var text: String?, error: String? = "could not run osascript"
             if (try? p.run()) != nil {
-                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let data = out.fileHandleForReading.readDataToEndOfFile(), edata = err.fileHandleForReading.readDataToEndOfFile()
                 p.waitUntilExit()
-                if p.terminationStatus == 0 { text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                if p.terminationStatus == 0 { text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines); error = nil }
+                else { error = String(data: edata, encoding: .utf8) ?? "osascript failed" }
             }
-            DispatchQueue.main.async { then(text) }
+            DispatchQueue.main.async { then(text, error) }
         }
     }
 }

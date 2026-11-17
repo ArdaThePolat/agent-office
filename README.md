@@ -80,6 +80,15 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   its own order, walking between spots. It walks back to a desk the moment it gets work. **Right-click → Release to the lounge** sends
   one there yourself and empties its desk; it comes back on its own when you send it a message,
   or with **Back to the desk**.
+- **Jukebox** (only when Spotify is installed): in the kitchen's corner, between two speakers. It
+  shows what Spotify is playing on this Mac: the album cover as pixel art and the song and artist
+  scrolling on its display (hover it for the album too). Its three buttons skip back, play/pause
+  and skip ahead. The first press makes macOS ask once whether Agent Office may control Spotify;
+  if you said no, the jukebox's tooltip says where to change it (System Settings → Privacy &
+  Security → Automation). It never starts Spotify, and nothing about what you play goes to the
+  shared room. The lever on top switches soft party lights on over the lounge (drifting colours
+  and mirror-ball glints; they hold still with Energy saver on). The lever is remembered on this
+  Mac.
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
   been running, and a sofa for the queue. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
@@ -414,8 +423,11 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
   prompt is read only to match `sessionKinds`, and the transcript only for the latest model and
   effort. Where a session runs (the app, its terminal device) is recorded so a click can open it.
   With the companion mod, each session's context use, cost, plan usage and subagent states too.
-  Everything stays on your Mac, under `~/.local/state/agent-office/`. The one exception is the
-  optional shared room, which sends your name, picture and chat messages to the room.
+  Everything stays on your Mac, under `~/.local/state/agent-office/`. There are two exceptions. The
+  optional shared room sends your name, picture and chat messages to the room. The jukebox (when
+  Spotify is installed) asks Spotify's public oEmbed endpoint (`open.spotify.com/oembed`) for each
+  new song's cover, by its track id; Spotify already knows what you play, and nothing about it is
+  sent anywhere else.
 - **CPU and memory:** the app runs at background priority and reads its state only while its window
   is visible. It redraws at most 6 times a second (none while hidden) and draws at most 30 sessions;
   walls, floors and furniture are painted once and cached. Measured on an M-series Mac with the
