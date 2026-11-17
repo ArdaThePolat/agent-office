@@ -614,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 520),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 556),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -655,10 +655,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let del = NSButton(title: "Delete Saved Room…", target: self, action: #selector(deleteSavedRoom))
             del.bezelStyle = .rounded
             del.frame = NSRect(x: 220, y: 476, width: 145, height: 30)
+            let imp = NSButton(title: "Import from env file…", target: self, action: #selector(importFromEnv))
+            imp.bezelStyle = .rounded
+            imp.frame = NSRect(x: 220, y: 510, width: 145, height: 30)
+            let impL = NSTextField(labelWithString: "Set up with the env file?")
+            impL.frame = NSRect(x: 20, y: 516, width: 200, height: 20)
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
             for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            for v in [impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
