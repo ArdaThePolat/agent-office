@@ -77,6 +77,15 @@ claude plugin install agent-office --marketplace ArdaThePolat/agent-office
 Check: after the person's next turn in any session, `ls ~/.local/state/agent-office/live/` holds a
 file for it, and **Stats** in the app shows its context and cost.
 
+## 6. Tell the person what they set up in the app
+
+Do not write their name, picture or a room into the config for them. Tell them:
+- **✎ edit** in the manager's room (or Agent Office → Your Name and Picture…) sets their name and
+  picture.
+- **Create a room** / **Join a room** in the lounge's right-hand panel (or the **Room** menu)
+  shares the lounge and a chat with teammates on their network; the host gives out the name and
+  password, never you.
+
 ## Uninstall
 
 ```bash

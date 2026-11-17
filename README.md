@@ -2,7 +2,7 @@
 
 A small macOS window that shows your Claude Code agents at work, as a pixel-art office.
 
-![Agent Office: the manager in the corner office, the lounge at the bottom, two PR reviews at their desks and three in the queue on the sofa; below, Claude Code sessions with their subagents, each with its state, model and effort](docs/screenshot.png)
+![Agent Office: the manager in the corner office with its edit button, three PR reviews at their desks and three in the queue on the sofa; Claude Code sessions with their subagents, each with its state, model and effort, beside the shared room's chat; the lounge at the bottom with teammates on a break and the list of people in the room, each with a Poke button](docs/screenshot.png)
 
 *Demo data. Open `web/office.html` in a browser to see it live.*
 
@@ -24,6 +24,12 @@ open ~/Applications/"Agent Office.app"
 
 Sessions report from their next turn on; start a new Claude Code session (or send a message in an
 open one) and it walks into the office.
+
+Then make it yours, all from the app:
+- **✎ edit** in the manager's room (or Agent Office → Your Name and Picture…): your name and
+  picture, the manager at the desk and your character in a shared room.
+- **Create a room** or **Join a room** in the lounge's right-hand panel (or the **Room** menu):
+  share the lounge and a chat with teammates on your network.
 
 ### Or let your agent set it up
 
@@ -166,10 +172,21 @@ yourself in the manager's chair.
 
 #### Create a room (one person, the host)
 
-The quick way: **Create a room** in the lounge's panel (or Room → Create a Room…). Type a name and
-a password of at least 8 characters, then pass both to your team over a private channel. The app
-writes them to the `room` block of `~/.config/agent-office/config.json` (readable only by you) and
-opens the room. Steps 4 and 6 below still apply. By hand:
+1. Pick who hosts: a Mac on the office network that usually has Agent Office open. The room
+   exists only while that app is open.
+2. Set your name and picture with **✎ edit**: that is your character in the room.
+3. Click **Create a room** in the lounge's panel (or Room → Create a Room…), type a name and a
+   password of at least 8 characters, and click **Create**. The app saves them in
+   `~/.config/agent-office/config.json` (readable only by you) and opens the room.
+4. macOS asks whether Agent Office may accept incoming connections and find devices on the local
+   network: allow both. The panel lists you, and says *you host it*.
+5. Send the name and password to your team over a private channel.
+6. Tick Settings → **Open at login**, so the room comes back by itself after you restart your Mac.
+
+The room stays saved: every launch hosts it again, with the same password, until you create or
+join another one or use Settings → **Delete Saved Room…**. Room → **Leave the Room** only pauses it.
+
+<details><summary>By hand, without the app's dialog</summary>
 
 1. Pick who hosts: a Mac that is on the office network and usually has Agent Office open. The
    room exists only while that app is open.
@@ -189,35 +206,48 @@ opens the room. Steps 4 and 6 below still apply. By hand:
    The room's name and password stay in your config: closing and reopening the app hosts the same
    room, and your team's password keeps working.
 
+</details>
+
 #### Join a room (everyone else)
 
-The quick way: **Join a room** in the lounge's panel (or Room → Join a Room…), then type the
-room's name and password; the host's address is optional (see below). By hand:
+1. Install Agent Office, or update it (Agent Office → **Check for Updates…** → **Update Now**).
+2. Set your name and picture with **✎ edit** (or Agent Office → Your Name and Picture…).
+3. Click **Join a room** in the lounge's panel (or Room → Join a Room…), type the room's name and
+   password, and click **Join**. Leave the host address empty unless the room is not found by
+   name (see below).
+4. Allow Agent Office to find devices on the local network. Within a few seconds the host and
+   everyone else walk into your lounge, and the panel lists them, each with a **👉 Poke** button.
+
+Joined once, the room is saved and rejoined at every launch. Set up earlier with the env file?
+The first launch of v0.5.1 or later moves those lines into `config.json` by itself, once; after
+that the dialogs and Settings change them.
+
+<details><summary>By hand, without the app's dialog</summary>
 
 1. Install or update Agent Office (`git pull`, then `scripts/build-app.sh`).
 2. Set your character: `manager.name` and `manager.image` in `~/.config/agent-office/config.json`
    (see *Configuration*).
-3. Add the room's name and password to `~/.config/agent-office/env`:
+3. Add the room to the same file, without `host` (`team-lounge` is the room's name):
 
    ```bash
-   printf 'AGENT_OFFICE_ROOM_NAME=team-lounge\nAGENT_OFFICE_ROOM_PASSWORD=<the password>\n' >> ~/.config/agent-office/env
+   cd ~/.config/agent-office && jq --arg p '<the password>' '.room = {name: "team-lounge", password: $p}' config.json > config.json.new && mv config.json.new config.json
    ```
 
-   (or a `room` block with `name` and `password` in `config.json`, without `host`).
-4. Restart Agent Office and allow it to find devices on the local network. Within a few seconds
-   the host and everyone else in the room walk into your lounge; **Chat** shows who is there.
-5. Not in the office, or the host's app closed? Your office is simply local, and it looks for the
-   room again every 15 minutes (or click **Try now** in the chat panel).
+   (The `AGENT_OFFICE_ROOM_NAME` / `AGENT_OFFICE_ROOM_PASSWORD` lines in
+   `~/.config/agent-office/env` still work, and win over `config.json`.)
+4. Restart Agent Office and allow it to find devices on the local network.
+
+</details>
+
+Not in the office, or the host's app closed? Your office is simply local, and it looks for the
+room again every 15 minutes (or click **Try now** in the panel).
 
 **The chat says "the room is not on this network"?** Some networks hide devices from each other's
 discovery (company Wi-Fi often does, and so does a VPN exit node, such as Tailscale's: turn on
 **Allow Local Network Access** in its Exit Node menu, or turn the exit node off). Join by address
 instead: the host's IP address (on the host: `ipconfig getifaddr en0`) or its `.local` name, in
-the same env file:
-
-```bash
-printf 'AGENT_OFFICE_ROOM_ADDRESS=10.20.30.40\n' >> ~/.config/agent-office/env
-```
+the Join dialog's **Host address** field (by hand: `"address"` in the `room` block, or
+`AGENT_OFFICE_ROOM_ADDRESS` in the env file).
 
 The app still looks for the room by name first and tries the address after 3 seconds. The host
 listens on port 48731 (`"port"` in the host's room block changes it; then add `:<port>` to the
@@ -334,7 +364,7 @@ file, not in the repository. Every key is optional.
 ```
 
 - **`room`** shares your lounge with your team: see *Shared room* above.
-- **`manager`** adds the manager's room. `image` is any picture of you (PNG, JPEG, WebP…). A plain
+- **`manager`** adds the manager's room; **✎ edit** writes it for you. `image` is any picture of you (PNG, JPEG, WebP…). A plain
   white or transparent background is cut away and the rest redrawn as pixel art, so a pixel-art
   avatar looks best. `name` goes on the desk's name plate. With a name and no image, a drawn
   manager sits there. `local/` in the repository is ignored by git: a good place to keep the
