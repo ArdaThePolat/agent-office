@@ -269,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        importEnvOnce()                                      // before the first look at the room (RoomSetup.swift)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
         syncRoom()
         updater.onChange = { [weak self] in self?.pushUpdate() }

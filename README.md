@@ -276,8 +276,11 @@ Agent Office → Settings… (⌘,):
 - **Import from env file…**: for a setup made with `~/.config/agent-office/env`. It moves the
   `AGENT_OFFICE_ROOM_…` and `AGENT_OFFICE_MANAGER_…` lines into `config.json` (it lists them first,
   the password only as its length) and takes them out of the env file, keeping a copy in
-  `env.bak`. The env file wins over `config.json`, so until you import, the Room menu and Delete
-  Saved Room cannot change a room the env file sets (the app says so when you try).
+  `env.bak`. The first launch of a version with this does it by itself, once, without asking:
+  after that your own edits stand and the env file is not read for an import again. The button
+  is for env lines you add later. The env file wins over `config.json`, so until those lines are
+  imported, the Room menu and Delete Saved Room cannot change a room they set (the app says so
+  when you try).
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
