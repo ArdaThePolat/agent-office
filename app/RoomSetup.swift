@@ -39,7 +39,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         a.informativeText = create
             ? "Your Mac hosts the room while Agent Office is open. Teammates on the same network join it with its name and password."
             : "Ask the person who hosts the room for its name and password."
-        let w: CGFloat = 300
+        let w: CGFloat = 240                              // the width of the alert's text column
         func field(_ placeholder: String, _ value: String, secure: Bool = false) -> NSTextField {
             let f = secure ? NSSecureTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24)) : NSTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24))
             f.placeholderString = placeholder; f.stringValue = value
@@ -52,11 +52,19 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         let pass = field(create ? "at least 8 characters" : "", create ? "" : cur.password, secure: true)
         let addr = field("optional, e.g. their-mac.local", cur.host ? "" : cur.address)
         var rows: [NSView] = [caption("Room name"), name, caption("Password"), pass]
-        if !create { rows += [caption("Host address (only when the room is not found by name)"), addr] }
-        let stack = NSStackView(views: rows)
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 4
-        stack.frame = NSRect(x: 0, y: 0, width: w, height: CGFloat(rows.count) * 26)
-        a.accessoryView = stack
+        if !create { rows += [caption("Host address, if not found by name"), addr] }
+        // fixed frames, top to bottom, inside the alert's column: a stack view's fitting size runs
+        // past it, and NSAlert does not widen itself
+        let h = rows.reduce(CGFloat(0)) { $0 + ($1 is NSSecureTextField || ($1 as? NSTextField)?.isEditable == true ? 28 : 18) }
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        var y = h
+        for r in rows {
+            let field = r is NSSecureTextField || (r as? NSTextField)?.isEditable == true
+            y -= field ? 28 : 18
+            r.frame = NSRect(x: field ? 0 : 1, y: y + (field ? 4 : 0), width: w, height: field ? 24 : 16)
+            box.addSubview(r)
+        }
+        a.accessoryView = box
         a.addButton(withTitle: create ? "Create" : "Join"); a.addButton(withTitle: "Cancel")
         a.window.initialFirstResponder = name.stringValue.isEmpty ? name : pass
         NSApp.activate(ignoringOtherApps: true)
