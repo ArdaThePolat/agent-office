@@ -70,6 +70,25 @@
   #say input:focus { border-color: #8fd6b4; }
   #say button { font: 12px Menlo, monospace; color: #1b1820; background: #8fd6b4; border: 0; border-radius: 5px; padding: 0 12px; cursor: pointer; }
   #say button:disabled, #say input:disabled { opacity: .45; cursor: default; }
+  #people { position: absolute; z-index: 2; display: none; flex-direction: column; overflow: hidden;
+    background: #241e27f2; border: 2px solid #5e4232; border-radius: 6px; box-shadow: 0 2px 0 #00000055; }
+  #people .ph { padding: 6px 8px 5px; border-bottom: 1px solid #3a302c; display: flex; align-items: center; gap: 6px; }
+  #people .ph b { color: #ffe7a8; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #people .ph button { font: 11px Menlo, monospace; color: var(--text); background: #2c252b; border: 1px solid #4a3d36;
+    border-radius: 4px; padding: 0 6px; cursor: pointer; line-height: 16px; }
+  #people .sub { color: var(--muted); font-size: 10px; padding: 3px 8px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #people .list { flex: 1; overflow-y: auto; padding: 4px 4px 6px; }
+  #people .p { display: flex; align-items: center; gap: 5px; padding: 3px 4px; border-radius: 4px; }
+  #people .p:hover { background: #3a302c; }
+  #people .p .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  #people .p.me .nm { color: #9fe8b6; cursor: default; }
+  #people .p .poke { font: 11px Menlo, monospace; color: #1b1820; background: #ffc370; border: 0; border-radius: 4px;
+    padding: 1px 6px; cursor: pointer; }
+  #people .p .poke:disabled { background: #4a3d36; color: var(--muted); cursor: default; }
+  #people .empty { color: var(--muted); font-size: 11px; padding: 6px 6px; line-height: 1.4; }
+  #people .acts { display: flex; flex-direction: column; gap: 5px; padding: 8px 8px; }
+  #people .acts button { font: 12px Menlo, monospace; color: #1b1820; background: #8fd6b4; border: 0; border-radius: 5px; padding: 5px 8px; cursor: pointer; }
+  #people .acts button.alt { background: #2c252b; color: var(--text); border: 1px solid #4a3d36; }
   #stats { position: absolute; inset: 0 0 var(--log-h, 92px) 0; z-index: 3; display: none; overflow-y: auto;
     background: #1b1820fa; padding: 34px 16px 16px; }
   #stats h2 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 14px 0 6px; letter-spacing: .06em; }
@@ -101,6 +120,7 @@
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
   <div id="msgs"></div>
   <form id="say"><input id="sayIn" maxlength="500" placeholder="Message the room…" autocomplete="off"><button>Send</button></form></div>
+<div id="people"></div>
 <div id="stats"></div>
 <script>
 // Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
@@ -119,6 +139,8 @@ const FPS = 6, ENERGY_FPS = 2;        // redraws per second (pixel art needs no 
 const MAX_SESSIONS = 30;              // drawn in the others room; the rest are counted
 const WALK_MS = 1400;                 // walking in or out of the door
 const DONE_FRESH = 30 * 60;           // "done, your turn" for this long, then plain idle
+const CRASH_FRESH = 30 * 60;          // "stopped with an error" for this long, then plain idle: an error the
+                                      // network caused (a Wi-Fi switch, a VPN) is not worth a "needs you" for hours
 const STALL_AFTER = 10 * 60;          // working with no heartbeat this long reads as stalled
 const WALL = 16;                      // height of a room's back wall, in art pixels
 let snap = null, hits = [], frame = 0, energy = false;
@@ -174,6 +196,7 @@ function esc(s) { return String(s).replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "
 function shown(s) {
   if (s.state === "working" && s.beat && snap.now - s.beat > STALL_AFTER) return "stalled";
   if (s.state === "done" && s.since && snap.now - s.since > DONE_FRESH) return "idle";
+  if (s.state === "crashed" && s.since && snap.now - s.since > CRASH_FRESH) return "idle";
   return s.state || "idle";
 }
 
@@ -229,7 +252,8 @@ function build(raw) {
   // where each session is: hidden, in the lounge (released by you, or idle with nothing to do),
   // or at its desk. A hidden or released session comes back the moment its state changes.
   const now = raw.now || Date.now() / 1000;
-  const idle = s => !s.state || s.state === "idle" || (s.state === "done" && s.since && now - s.since > DONE_FRESH);
+  const idle = s => !s.state || s.state === "idle" || (s.state === "done" && s.since && now - s.since > DONE_FRESH)
+    || (s.state === "crashed" && s.since && now - s.since > CRASH_FRESH);
   const where = s => {
     const h = hidden[s.id];
     if (h) {
@@ -568,7 +592,10 @@ function layout() {
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, chatW, chatWide, cells, endY: ry };
+  // the people in the shared room (or Create / Join when there is none) on the lounge's right side
+  const peopleW = cols >= 240 ? Math.min(84, Math.max(66, Math.floor(cols * 0.2))) : 0;
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, chatW, chatWide, cells, endY: ry,
+           peopleW, lw: cols - peopleW };
 }
 
 function draw() {
@@ -580,7 +607,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -638,6 +665,7 @@ function draw() {
   label(`${needs ? "⚠ " : ""}needs you ${needs} · working ${cnt("working") + cnt("compacting") + cnt("background")} · done ${cnt("done")}`,
     (cols - L.chatW - 3) * P, (oy + WALL + 2) * P, needs ? "#ffc370" : "#f1ebe2", 10, "right");
   dockChat(L);
+  dockPeople(L);
   if (!snap.others.length) label(snap.lounge.length ? "everyone is on a break" : snap.hiddenCount ? "everyone is hidden — right-click to show them" : "no Claude sessions running",
     24 * P, (oy + WALL + 8) * P, "#d9cfc3", 10);
   for (const c of L.cells) {
@@ -685,6 +713,7 @@ function draw() {
     }
     hits.push({ x: (x - 3) * P, y: y * P, w: (L.teamW - 6) * P, h: (c.h - 3) * P, session: s,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}` +
+        (st === "crashed" ? `\nits turn ended on an API error at ${hhmm(s.since)} (a network drop does this);\nsend it a message to carry on. Clears by itself after ${CRASH_FRESH / 60} min.` : "") +
         (s.model ? `\n${modelName(s.model)}${s.effort ? ", effort " + s.effort : ""}` : "") +
         (pct != null ? `\ncontext ${Math.round(pct)}%${s.live.costUsd != null ? " · $" + s.live.costUsd.toFixed(2) : ""}` : "") +
         (subs.length ? `\nsubagents: ${subs.map(a => (a.type || "agent") + (a.status ? " (" + a.status + ")" : "")).join(", ")}` : "") +
@@ -730,7 +759,7 @@ function wants(s) {
   return "chat";
 }
 function loungeGeo(L) {
-  const y = L.ly, cols = L.cols;
+  const y = L.ly, cols = L.lw;
   const kw = Math.max(56, Math.floor(cols * 0.36)), gw = Math.max(52, Math.floor(cols * 0.3)), gx = cols - gw;
   const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(14 + (kw - 14) * 0.6);
   const spots = [
@@ -740,10 +769,11 @@ function loungeGeo(L) {
     { kind: "chat", x: chatX - 15, y: y + 33 }, { kind: "chat", x: chatX + 7, y: y + 33 }, { kind: "chat", x: chatX - 4, y: y + 27 },
   ];
   if (gw >= 70) spots.push({ kind: "game", x: gx + 5, y: y + 47, bean: true });
-  return { y, kw, gx, gw, chatX, tvX, tx, spots };
+  return { y, cols, kw, gx, gw, chatX, tvX, tx, spots };
 }
 function paintLounge(L, sky) {
-  const G = loungeGeo(L), y = G.y, cols = L.cols, H = L.loungeH, cw = G.kw - 20;
+  const G = loungeGeo(L), y = G.y, cols = G.cols, H = L.loungeH, cw = G.kw - 20;
+  if (L.peopleW) { px(cols, y, L.cols - cols, H, "#1b1820"); }
   // walls: warm cream with a stripe; the games corner painted navy with an LED strip
   wall(0, y, cols, "#e2d3b5", "#b09372");
   for (let x = 3; x < cols; x += 6) px(x, y + 2, 1, 9, "rgba(150,120,80,0.10)");
@@ -821,14 +851,14 @@ function drawLounge(L) {
   // the espresso machine, while someone makes a coffee
   if (brewing && !energy) { px(21, y + 10, 1, 1 + frame % 2, "#6b4a32"); px(20 + frame % 2, y + 3 - frame % 3, 1, 2, "#ffffff70"); px(23, y + 7, 1, 1, "#5fbf7f"); }
   label([mates ? `${mates + 1} people here` : "", n ? `${n} on a break` : mates ? "" : "nobody on a break"].filter(Boolean).join(" · "),
-    (L.cols - 3) * P, (y + WALL + 2) * P, mates ? "#ffe7a8" : "#f1ebe2", 10, "right");
+    (G.cols - 3) * P, (y + WALL + 2) * P, mates ? "#ffe7a8" : "#f1ebe2", 10, "right");
   const sorted = at.slice().sort((a, b) => a.spot.y - b.spot.y);
   // someone doing something to someone walks over and stands next to them
   const tNow = performance.now(), acting = new Map(), drawnAt = new Map();
   actsOn = actsOn.filter(a => tNow - a.start < ACT_MS);
   for (const a of actsOn) {
     const to = at.find(x => x.s.id === entryOf(a.to));
-    if (to) acting.set(entryOf(a.from), { kind: "chat", x: to.spot.x + (to.spot.x + 20 < L.cols ? 9 : -9), y: Math.max(y + WALL + 4, to.spot.y - 2), act: true });
+    if (to) acting.set(entryOf(a.from), { kind: "chat", x: to.spot.x + (to.spot.x + 20 < G.cols ? 9 : -9), y: Math.max(y + WALL + 4, to.spot.y - 2), act: true });
   }
   for (const entry of sorted) {
     const s = entry.s, spot = acting.get(s.id) || entry.spot;
@@ -861,6 +891,7 @@ function drawLounge(L) {
     const doing = { make: "making a coffee", drink: "drinking a coffee", game: "playing on the console", chat: "chatting" }[spot.kind];
     hits.push({ x: (p.x - 2) * P, y: (p.y - 1) * P, w: 12 * P, h: 18 * P, session: s, lounge: true, reveal: s.cwd,
       tip: `${s.title || "untitled"}\n${s.cwd}\n${hidden[s.id] && hidden[s.id].release ? "released by you" : "nothing to do"} · ${doing}\n` +
+        (s.state === "crashed" ? `its last turn ended on an error at ${hhmm(s.since)}\n` : "") +
         `comes back to a desk when it gets work\nclick: open it · right-click: more` });
   }
   for (const a of actsOn) {                 // the hug, the kiss, the pillow fight…
@@ -1256,6 +1287,70 @@ sayForm.addEventListener("submit", ev => {
 });
 if (bridge) bridge.postMessage({ room: "ready" });
 
+// ---------- the people panel ----------
+// On the lounge's right side: everyone in the shared room, you first. Click a name for the same
+// menu as clicking their character (hug, high five…); Poke sends them a notification and shakes
+// their window. With no room: Create and Join buttons. Rebuilt only when what it shows changes.
+const peopleEl = document.getElementById("people"); wrap.appendChild(peopleEl);
+const POKE_WAIT = 20;                       // seconds before you can poke the same person again
+const pokedAt = new Map();                  // member id → when you poked them (seconds)
+let peopleKey = "";
+function dockPeople(L) {
+  if (!L.peopleW) { peopleEl.style.display = "none"; return; }
+  Object.assign(peopleEl.style, { display: "flex", left: (L.lw * P + 2) + "px", top: ((L.ly + 2) * P) + "px",
+    width: ((L.cols - L.lw - 1) * P - 4) + "px", height: ((L.loungeH - 3) * P) + "px" });
+  const now = Date.now() / 1000, mates = roomMates();
+  const waits = mates.map(m => Math.max(0, Math.ceil(POKE_WAIT - (now - (pokedAt.get(m.id) || 0)))));
+  const me = (snap.manager && snap.manager.name) || "You";
+  const key = [room.status, room.name, room.detail, room.sharing, room.host, me, mates.map((m, i) => m.id + m.name + (waits[i] > 0)).join(",")].join("|");
+  if (key === peopleKey) return;
+  peopleKey = key;
+  let html;
+  if (room.status === "off" && room.name && room.sharing === false) {
+    html = `<div class="ph"><b>${esc(room.name)}</b></div><div class="empty">Room sharing is turned off in Settings.</div>
+      <div class="acts"><button data-r="share">Turn it on</button><button class="alt" data-r="setup">Join another room</button></div>`;
+  } else if (room.status === "off") {
+    html = `<div class="ph"><b>Shared room</b></div><div class="empty">Share this lounge with teammates on your network: names, pictures and chat, nothing about your sessions.</div>
+      <div class="acts"><button data-r="create">Create a room</button><button class="alt" data-r="setup">Join a room</button></div>`;
+  } else {
+    const sub = room.status === "joined" ? `${mates.length + 1} ${mates.length ? "people" : "person"} here${room.host ? " · you host it" : ""}`
+      : room.status === "looking" ? "looking for the room…" : (room.detail || "not joined");
+    const rows = [`<div class="p me"><span class="dot" style="background:#9fe8b6"></span><span class="nm">${esc(me)} (you)</span></div>`]
+      .concat(mates.map((m, i) => `<div class="p" data-m="${esc(m.id)}"><span class="dot" style="background:${SHIRTS[hash(m.id) % SHIRTS.length]}"></span>` +
+        `<span class="nm" title="Hug, high five, wave…">${esc(m.name)}</span>` +
+        `<button class="poke" data-poke="${esc(m.id)}" ${waits[i] ? "disabled" : ""} title="${waits[i] ? "You just poked them" : "A notification on their Mac, and their window shakes"}">👉 Poke</button></div>`));
+    html = `<div class="ph"><b>${esc(room.name || "Room")}</b><button data-more="1" title="Room options">⋯</button></div><div class="sub">${esc(sub)}</div>` +
+      `<div class="list">${room.status === "joined" ? rows.join("") + (mates.length ? "" : `<div class="empty">Nobody else yet.</div>`)
+        : `<div class="empty">${esc(room.detail || "")}</div>`}</div>` +
+      (room.status === "local" ? `<div class="acts"><button class="alt" data-r="join">Try now</button></div>` : "");
+  }
+  peopleEl.innerHTML = html;
+}
+function poke(id) {
+  pokedAt.set(id, Date.now() / 1000); peopleKey = "";
+  const m = roomMates().find(x => x.id === id);
+  if (bridge) bridge.postMessage({ act: "poke|" + id });
+  else if (m) { const a = { from: room.you, to: id, kind: "poke", fromName: "You", toName: m.name, at: Date.now() / 1000 }; startAct(a); roomEvents.push({ t: a.at, text: actText(a) }); }
+  setTimeout(() => { peopleKey = ""; }, POKE_WAIT * 1000 + 50);
+}
+peopleEl.addEventListener("click", ev => {
+  const b = ev.target.closest("button, .nm");
+  if (!b) return;
+  if (b.dataset.poke) return poke(b.dataset.poke);
+  if (b.dataset.r) { if (bridge) bridge.postMessage({ room: b.dataset.r }); return; }
+  if (b.dataset.more) {
+    const items = [["Join another room…", "setup"], ["Create a room…", "create"], ["Leave the room", "leave"]];
+    menu.innerHTML = `<div class="head">${esc(room.name || "Room")}</div>` + items.map((it, i) => `<button data-i="${i}">${esc(it[0])}</button>`).join("");
+    menu.querySelectorAll("button").forEach(x => x.onclick = () => { closeMenu(); if (bridge) bridge.postMessage({ room: items[+x.dataset.i][1] }); });
+    menu.style.display = "block";
+    menu.style.left = Math.min(ev.clientX, window.innerWidth - menu.offsetWidth - 4) + "px";
+    menu.style.top = Math.min(ev.clientY, window.innerHeight - menu.offsetHeight - 4) + "px";
+    return;
+  }
+  const row = b.closest(".p[data-m]");
+  if (row) { const m = roomMates().find(x => x.id === row.dataset.m); if (m) mateMenu(ev, m); }
+});
+
 
 // ---------- updates ----------
 // The app checks GitHub once a day when that is turned on in Settings; a newer release shows this
@@ -1286,7 +1381,7 @@ updBtn.addEventListener("click", () => { if (upd.status !== "updating" && bridge
 const ACT_MS = 6500;                      // walking over, then the act itself
 const ACTS = [["hug", "🤗 Hug", "hugged"], ["kiss", "😘 Kiss", "kissed"], ["highfive", "✋ High five", "high-fived"],
               ["fight", "🥊 Pillow fight", "started a pillow fight with"], ["coffee", "☕ Bring a coffee", "brought a coffee to"],
-              ["wave", "👋 Wave", "waved at"]];
+              ["wave", "👋 Wave", "waved at"], ["poke", "👉 Poke", "poked"]];
 let actsOn = [], lastActSeq = 0;
 function entryOf(memberId) { return memberId === room.you || memberId === "self" ? "self" : "m:" + memberId; }
 function startAct(a) { actsOn = actsOn.filter(x => x.from !== a.from).concat([Object.assign({}, a, { start: performance.now() })]); }
@@ -1297,6 +1392,7 @@ function actText(a) {
 }
 function mateMenu(ev, m) {
   const items = ACTS.map(([kind, label]) => [label, () => {
+    if (kind === "poke") return poke(m.id);
     if (bridge) bridge.postMessage({ act: kind + "|" + m.id });
     else { const a = { from: room.you, to: m.id, kind, fromName: "You", toName: m.name, at: Date.now() / 1000 }; startAct(a); roomEvents.push({ t: a.at, text: actText(a) }); }
   }]).concat([["💬 Chat", () => toggleChat(true)]]);
@@ -1325,6 +1421,9 @@ function drawAct(kind, f, t) {
   } else if (kind === "coffee") {
     px(t.x + (f.x < t.x ? -2 : 8), t.y + 8, 2, 2, "#f4efe4"); if (k % 3 === 0) px(t.x + (f.x < t.x ? -2 : 8), t.y + 6, 1, 1, "#ffffff90");
     text("☕", mx * P, (top - 9) * P, "#fff", 12, "center");
+  } else if (kind === "poke") {
+    text("👉", (t.x + (f.x < t.x ? -3 : 11)) * P + (k % 2 ? 3 : 0), (t.y + 4) * P, "#fff", 13, "center");
+    text("poke!", (t.x + 4) * P, (t.y - 9 - k % 2) * P, "#ffc370", 10, "center", "bold");
   } else if (kind === "wave") {
     text("👋", (f.x + 4) * P + (k % 2 ? 2 : -2), (f.y - 10) * P, "#fff", 13, "center");
   }

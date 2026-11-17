@@ -229,6 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var roomRunning = RoomConfig()
     var roomMembersSent = -1
     var managerImageSent: String?
+    var lastPoke: [String: Date] = [:]                   // who poked you last, and when (RoomSetup.swift)
+    var shaking = false
     // ---- updates ----
     let updater = Updater()
     var updateTimer: Timer?
@@ -316,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 return (cfg.managerName.isEmpty ? "Teammate" : cfg.managerName, managerImageURL(cfg.managerImage, maxH: 96))
             }
             c.onChange = { [weak self] in self?.pushRoom() }
+            c.onPoked = { [weak self] name in self?.poked(by: name) }
             // the host's own member waits a moment for its listener to be advertised
             DispatchQueue.main.asyncAfter(deadline: .now() + (want.host ? 1.5 : 0)) { c.start() }
             roomClient = c
@@ -324,7 +327,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     /// The room's state to the page; the members' pictures only when the member list changed.
     func pushRoom() {
-        var o: [String: Any] = ["status": "off"]
+        // off: say whether a room is set up at all, so the page offers Create / Join or only Join
+        let r = Config.load().room
+        var o: [String: Any] = ["status": "off", "name": r.enabled ? r.name : "", "sharing": roomSharing]
         if let c = roomClient {
             let fresh = c.membersVersion != roomMembersSent
             o = c.json(withMembers: fresh)
@@ -400,6 +405,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
+            // the page's buttons; the dialogs run after this message returns
+            if r == "create" { DispatchQueue.main.async { self.createRoom() } }
+            if r == "setup" { DispatchQueue.main.async { self.joinRoom() } }
+            if r == "leave" { DispatchQueue.main.async { self.leaveRoom() } }
+            if r == "share" { roomSharing = true }
         }
         if let t = body["copy"], t.count < 200 {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(t, forType: .string)
@@ -585,6 +595,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(withTitle: "Hide Agent Office", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit Agent Office", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = app
+        let roomItem = NSMenuItem(); main.addItem(roomItem)
+        let rm = NSMenu(title: "Room")
+        rm.addItem(withTitle: "Create a Room…", action: #selector(createRoom), keyEquivalent: "")
+        rm.addItem(withTitle: "Join a Room…", action: #selector(joinRoom), keyEquivalent: "")
+        rm.addItem(.separator())
+        rm.addItem(withTitle: "Leave the Room", action: #selector(leaveRoom), keyEquivalent: "")
+        roomItem.submenu = rm
         let winItem = NSMenuItem(); main.addItem(winItem)
         let win = NSMenu(title: "Window")
         win.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

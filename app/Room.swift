@@ -30,7 +30,8 @@ let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
 let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
-let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave"]   // what one member can do to another
+// what one member can do to another; a poke also reaches the poked person's Mac as a notification
+let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave", "poke"]
 
 struct RoomConfig: Equatable {
     var name = ""
@@ -233,6 +234,7 @@ final class RoomClient {
         q.async { self.spot = ROOM_SPOTS.contains(s) ? s : ""; self.sendProfile() }
     }
     var onChange: (() -> Void)?                          // called on the main queue
+    var onPoked: ((_ fromName: String) -> Void)?         // someone poked you; called on the main queue
 
     // read on the main queue only
     private(set) var status = "looking"                   // looking | joined | local
@@ -268,7 +270,7 @@ final class RoomClient {
     }
     var discover = true                                   // look for the room by name (off: by address only)
     private var stopped = false
-    func stop() { stopped = true; retry?.invalidate(); onChange = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
+    func stop() { stopped = true; retry?.invalidate(); onChange = nil; onPoked = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
 
     /// Look for the room on the network and join it; if it is not there within 8 seconds, stay local.
     func join() {
@@ -379,7 +381,8 @@ final class RoomClient {
                 let fn = cleanName(m["fromName"] as? String ?? ""), tn = cleanName(m["toName"] as? String ?? "")
                 let at = m["at"] as? Double ?? Date().timeIntervalSince1970
                 set { $0.actSeq += 1; $0.acts.append(Act(seq: $0.actSeq, from: from, to: to, kind: kind, fromName: fn, toName: tn, at: at))
-                      if $0.acts.count > 10 { $0.acts.removeFirst() } }
+                      if $0.acts.count > 10 { $0.acts.removeFirst() }
+                      if kind == "poke", to == $0.you, from != $0.you { $0.onPoked?(fn.isEmpty ? "Someone" : fn) } }
             }
         case "msg":
             if let id = m["id"] as? String, let from = m["from"] as? String, let text = m["text"] as? String {
