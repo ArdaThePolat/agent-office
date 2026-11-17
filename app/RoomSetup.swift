@@ -2,8 +2,10 @@
 //
 // Create and Join ask for the room's name and password in a native dialog and write them to the
 // "room" block of ~/.config/agent-office/config.json (the file is kept readable only by you); the
-// app picks the change up on its next tick, like an edit made by hand. Leave sets "enabled": false
-// and keeps the name and password, so Join can fill them in again.
+// app picks the change up at once, like an edit made by hand. A saved room stays until it is
+// changed or deleted: every launch joins (or hosts) it again. Leave sets "enabled": false and
+// keeps the name and password, so Join can fill them in again; Settings → Delete Saved Room
+// removes the whole block.
 //
 // A poke arrives as a notification and a short shake of the window. Pokes from the same person
 // are shown at most once in POKE_QUIET seconds, so nobody can bury anyone in notifications.
@@ -87,7 +89,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Merge `fields` into config.json's "room" block, keeping every other key. False (after
     /// saying why) when the file could not be written.
     @discardableResult
-    func saveRoom(_ fields: [String: Any]) -> Bool {
+    func saveRoom(_ fields: [String: Any], forget: Bool = false) -> Bool {
         let dir = home + "/.config/agent-office", path = dir + "/config.json"
         var j: [String: Any] = [:]
         if let d = FileManager.default.contents(atPath: path) {
@@ -98,9 +100,11 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             }
             j = o
         }
-        var room = j["room"] as? [String: Any] ?? [:]
-        for (k, v) in fields { if let s = v as? String, s.isEmpty { room.removeValue(forKey: k) } else { room[k] = v } }
-        j["room"] = room
+        if forget { j.removeValue(forKey: "room") } else {
+            var room = j["room"] as? [String: Any] ?? [:]
+            for (k, v) in fields { if let s = v as? String, s.isEmpty { room.removeValue(forKey: k) } else { room[k] = v } }
+            j["room"] = room
+        }
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             let d = try JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys])
@@ -114,12 +118,30 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         let env = Config.env().keys.filter { ["AGENT_OFFICE_ROOM_NAME", "AGENT_OFFICE_ROOM_PASSWORD", "AGENT_OFFICE_ROOM_HOST",
                                               "AGENT_OFFICE_ROOM_ENABLED", "AGENT_OFFICE_ROOM_ADDRESS"].contains($0) }
         if !env.isEmpty {
-            let e = NSAlert(); e.messageText = "Saved, but your env file decides"
+            let e = NSAlert(); e.messageText = forget ? "Deleted, but your env file still sets a room" : "Saved, but your env file decides"
             e.informativeText = "~/.config/agent-office/env sets \(env.sorted().joined(separator: ", ")), which wins over config.json. Remove those lines for this change to take effect."
             e.runModal()
         }
         syncRoom()
+        refreshSettingsRoom()
         return true
+    }
+
+    /// Settings → Delete Saved Room: the whole "room" block goes, name and password included.
+    @objc func deleteSavedRoom() {
+        let r = Config.load().room
+        let a = NSAlert()
+        guard !r.name.isEmpty || !r.password.isEmpty else {
+            a.messageText = "No saved room"; a.informativeText = "Create or join a room from the lounge or the Room menu."
+            a.runModal(); return
+        }
+        a.messageText = "Delete the saved room \(r.name)?"
+        a.informativeText = (r.host ? "You host it: it closes for everyone. " : "")
+            + "Its name and password are removed from this Mac. To come back, create or join it again with the password."
+        a.addButton(withTitle: "Delete"); a.addButton(withTitle: "Cancel")
+        a.buttons[0].hasDestructiveAction = true
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        saveRoom([:], forget: true)
     }
 
     // ---- poked ----

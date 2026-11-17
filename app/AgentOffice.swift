@@ -231,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var managerImageSent: String?
     var lastPoke: [String: Date] = [:]                   // who poked you last, and when (RoomSetup.swift)
     var shaking = false
+    var settingsRoomLabel: NSTextField?
     // ---- updates ----
     let updater = Updater()
     var updateTimer: Timer?
@@ -613,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 456),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 520),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -647,15 +648,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             upd.frame = NSRect(x: 20, y: 414, width: 350, height: 22)
             let hint6 = NSTextField(wrappingLabelWithString: "Off by default. Asks GitHub for the latest release; a newer one shows an Update button that rebuilds the app from it and reopens it.")
             hint6.frame = NSRect(x: 38, y: 368, width: 320, height: 44)
-            for h in [hint, hint2, hint3, hint4, hint5, hint6] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            let roomLbl = NSTextField(labelWithString: "")
+            roomLbl.frame = NSRect(x: 20, y: 482, width: 200, height: 20)
+            roomLbl.lineBreakMode = .byTruncatingTail
+            settingsRoomLabel = roomLbl
+            let del = NSButton(title: "Delete Saved Room…", target: self, action: #selector(deleteSavedRoom))
+            del.bezelStyle = .rounded
+            del.frame = NSRect(x: 220, y: 476, width: 145, height: 30)
+            let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
+            hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
+        refreshSettingsRoom()
         settings?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func refreshSettingsRoom() {
+        let r = Config.load().room
+        settingsRoomLabel?.stringValue = r.name.isEmpty ? "Saved room: none" : "Saved room: \(r.name)\(r.host ? " (you host)" : "")"
+    }
     @objc func toggleTop(_ sender: NSButton) { keepOnTop = sender.state == .on }
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }

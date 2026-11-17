@@ -264,6 +264,10 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ## Settings
 
 Agent Office → Settings… (⌘,):
+- **Saved room** and **Delete Saved Room…**: a room you create or join is saved in
+  `~/.config/agent-office/config.json` and joined (or hosted) again at every launch, until you
+  join or create another one, or delete it here. Room → Leave the Room only pauses it and keeps
+  the name and password; Delete removes both.
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
