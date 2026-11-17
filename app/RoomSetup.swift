@@ -158,7 +158,19 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// move into config.json, where the room buttons and Delete Saved Room can change them. The
     /// env file wins over config.json, so the lines are taken out of it (a copy stays in env.bak);
     /// left in, they would undo every later change made from the app.
-    @objc func importFromEnv() {
+    @objc func importFromEnv() { importEnv(ask: true) }
+
+    /// The first launch of a version that has this does the same without asking, once: a setup
+    /// made with the env file becomes editable from the app with nothing to click. After that the
+    /// person's own edits stand, and only the Settings button imports again.
+    func importEnvOnce() {
+        guard !defaults.bool(forKey: "envImported") else { return }
+        if importEnv(ask: false) { defaults.set(true, forKey: "envImported") }
+    }
+
+    /// True when there was nothing to import or config.json now holds it.
+    @discardableResult
+    func importEnv(ask: Bool) -> Bool {
         let path = home + "/.config/agent-office/env"
         let keys: [String: (String, String)] = [          // env key → (config block, field)
             "AGENT_OFFICE_ROOM_NAME": ("room", "name"), "AGENT_OFFICE_ROOM_PASSWORD": ("room", "password"),
@@ -184,16 +196,19 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         }
         let a = NSAlert()
         guard !found.isEmpty else {
+            guard ask else { return true }
             a.messageText = "Nothing to import"
             a.informativeText = "~/.config/agent-office/env has no room or manager settings (AGENT_OFFICE_ROOM_…, AGENT_OFFICE_MANAGER_…)."
-            a.runModal(); return
+            a.runModal(); return true
         }
-        let list = found.map { "\($0.key) = \($0.key == "AGENT_OFFICE_ROOM_PASSWORD" ? "(\($0.value.count) characters)" : $0.value)" }
-        a.messageText = "Import \(found.count) setting\(found.count == 1 ? "" : "s") from the env file?"
-        a.informativeText = list.joined(separator: "\n")
-            + "\n\nThey move to config.json, so the Room menu and Settings can change them, and are taken out of the env file (a copy is kept in env.bak)."
-        a.addButton(withTitle: "Import"); a.addButton(withTitle: "Cancel")
-        guard a.runModal() == .alertFirstButtonReturn else { return }
+        if ask {
+            let list = found.map { "\($0.key) = \($0.key == "AGENT_OFFICE_ROOM_PASSWORD" ? "(\($0.value.count) characters)" : $0.value)" }
+            a.messageText = "Import \(found.count) setting\(found.count == 1 ? "" : "s") from the env file?"
+            a.informativeText = list.joined(separator: "\n")
+                + "\n\nThey move to config.json, so the Room menu and Settings can change them, and are taken out of the env file (a copy is kept in env.bak)."
+            a.addButton(withTitle: "Import"); a.addButton(withTitle: "Cancel")
+            guard a.runModal() == .alertFirstButtonReturn else { return false }
+        }
 
         var room: [String: Any] = [:], manager: [String: Any] = [:]
         let yes = { (v: String) in ["1", "true", "yes"].contains(v.lowercased()) }
@@ -213,7 +228,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         guard writeConfig({ j in
             if !room.isEmpty { var r = j["room"] as? [String: Any] ?? [:]; r.merge(room) { _, b in b }; j["room"] = r }
             if !manager.isEmpty { var m = j["manager"] as? [String: Any] ?? [:]; m.merge(manager) { _, b in b }; j["manager"] = m }
-        }) else { return }
+        }) else { return false }
         do {
             let bak = path + ".bak"
             try? FileManager.default.removeItem(atPath: bak)
@@ -222,17 +237,21 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             try kept.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
         } catch {
+            // left in place the lines still win, exactly as before the import: nothing breaks
+            guard ask else { return true }
             let e = NSAlert(); e.messageText = "Imported, but the env file was not changed"
             e.informativeText = "\(error.localizedDescription)\n\nRemove the AGENT_OFFICE_ROOM_ and AGENT_OFFICE_MANAGER_ lines from ~/.config/agent-office/env by hand, or they keep winning."
             e.runModal()
         }
-        if !room.isEmpty { roomSharing = true }
+        if ask, !room.isEmpty { roomSharing = true }
         managerImageSent = nil
         syncRoom(); push(); refreshSettingsRoom()
+        guard ask else { return true }
         let done = NSAlert(); done.messageText = "Imported"
         done.informativeText = "The room and your character are now set from config.json." + (ProcessInfo.processInfo.environment.keys.contains { keys[$0] != nil }
             ? "\n\nThe app was also started with some of these as environment variables, which still win until it is opened normally." : "")
         done.runModal()
+        return true
     }
 
     // ---- poked ----

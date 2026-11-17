@@ -63,7 +63,11 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   desk: who needs you and who is working, your weekly usage as a battery that drains
   as you use it (orange, then red and blinking as they run low), when the week resets, and
   what the open sessions have cost. Click it
-  for the stats screen. Set it up with `manager` under *Configuration*.
+  for the stats screen. **✎ edit** under its window sets your name and picture (also in
+  Settings, and Agent Office → Your Name and Picture…); the picture is copied next to the config,
+  and a teammate in your shared room sees the change at once. Or set `manager` by hand (see
+  *Configuration*). The weekly number is one for the whole account: each session reports the
+  value from its own last reply, so the gauge shows the highest report for the current week.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
   minutes) leaves its desk for the lounge and keeps itself busy there: it makes a coffee at the machine,
   drinks it at the kitchen table, plays on the console, chats at the high table, each agent in
@@ -264,6 +268,7 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ## Settings
 
 Agent Office → Settings… (⌘,):
+- **Your name and picture**: **Change…** opens the same editor as **✎ edit** in the manager's room.
 - **Saved room** and **Delete Saved Room…**: a room you create or join is saved in
   `~/.config/agent-office/config.json` and joined (or hosted) again at every launch, until you
   join or create another one, or delete it here. Room → Leave the Room only pauses it and keeps
@@ -271,8 +276,11 @@ Agent Office → Settings… (⌘,):
 - **Import from env file…**: for a setup made with `~/.config/agent-office/env`. It moves the
   `AGENT_OFFICE_ROOM_…` and `AGENT_OFFICE_MANAGER_…` lines into `config.json` (it lists them first,
   the password only as its length) and takes them out of the env file, keeping a copy in
-  `env.bak`. The env file wins over `config.json`, so until you import, the Room menu and Delete
-  Saved Room cannot change a room the env file sets (the app says so when you try).
+  `env.bak`. The first launch of a version with this does it by itself, once, without asking:
+  after that your own edits stand and the env file is not read for an import again. The button
+  is for env lines you add later. The env file wins over `config.json`, so until those lines are
+  imported, the Room menu and Delete Saved Room cannot change a room they set (the app says so
+  when you try).
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac

@@ -269,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        importEnvOnce()                                      // before the first look at the room (RoomSetup.swift)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
         syncRoom()
         updater.onChange = { [weak self] in self?.pushUpdate() }
@@ -403,6 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
         if body["update"] == "go" { updater.update() }
+        if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {
             if r == "ready" { roomMembersSent = -1; managerImageSent = nil; pushRoom(); pushUpdate() }   // the page (re)loaded: send everything
             if r == "join" { roomClient?.join() }
@@ -590,6 +592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(withTitle: "About Agent Office", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        app.addItem(withTitle: "Your Name and Picture…", action: #selector(editProfile), keyEquivalent: "")
         app.addItem(withTitle: "Check Setup…", action: #selector(checkSetup), keyEquivalent: "")
         app.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         app.addItem(.separator())
@@ -614,7 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 556),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 592),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -655,6 +658,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let del = NSButton(title: "Delete Saved Room…", target: self, action: #selector(deleteSavedRoom))
             del.bezelStyle = .rounded
             del.frame = NSRect(x: 220, y: 476, width: 145, height: 30)
+            let prof = NSButton(title: "Change…", target: self, action: #selector(editProfile))
+            prof.bezelStyle = .rounded
+            prof.frame = NSRect(x: 220, y: 548, width: 145, height: 30)
+            let profL = NSTextField(labelWithString: "Your name and picture")
+            profL.frame = NSRect(x: 20, y: 554, width: 200, height: 20)
             let imp = NSButton(title: "Import from env file…", target: self, action: #selector(importFromEnv))
             imp.bezelStyle = .rounded
             imp.frame = NSRect(x: 220, y: 510, width: 145, height: 30)
@@ -663,7 +671,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
             for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            for v in [profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }

@@ -19,7 +19,7 @@ mkdir -p "$B/MacOS" "$B/Resources"
 
 # the file with the top-level startup code has to be called main.swift when there are several
 cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
-swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
+swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" "$ROOT/app/Profile.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
 cp "$ROOT/web/office.html" "$B/Resources/"
 
 swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
