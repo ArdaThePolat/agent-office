@@ -98,6 +98,25 @@
   #people .acts { display: flex; flex-direction: column; gap: 5px; padding: 8px 8px; }
   #people .acts button { font: 12px Menlo, monospace; color: #1b1820; background: #8fd6b4; border: 0; border-radius: 5px; padding: 5px 8px; cursor: pointer; }
   #people .acts button.alt { background: #2c252b; color: var(--text); border: 1px solid #4a3d36; }
+  #welcome { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+    background: #0d0b10d0; padding: 16px; }
+  #welcome .card { background: var(--panel); border: 3px solid var(--line); border-radius: 8px; width: min(560px, 100%);
+    max-height: 100%; overflow-y: auto; padding: 18px 22px 16px; box-shadow: 0 10px 40px #000a; }
+  #welcome h1 { font-size: 17px; margin: 0 0 4px; color: var(--accent); }
+  #welcome .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px; line-height: 1.5; }
+  #welcome ul { list-style: none; padding: 0; margin: 0 0 6px; }
+  #welcome li { display: flex; gap: 10px; margin: 0 0 10px; font-size: 12px; line-height: 1.5; }
+  #welcome li .i { flex: 0 0 22px; font-size: 15px; text-align: center; }
+  #welcome li b { color: var(--text); }
+  #welcome li span { color: var(--muted); }
+  #welcome .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  #welcome button { font: 12px Menlo, monospace; border-radius: 5px; padding: 7px 12px; cursor: pointer;
+    border: 1px solid #4a3d36; background: #2d2630; color: var(--text); }
+  #welcome button.go { background: var(--accent); color: #1b1820; border-color: var(--accent); }
+  #welcome .skip { margin-left: auto; color: var(--muted); font-size: 11px; cursor: pointer; text-decoration: underline; }
+  #welcome .dots { display: flex; gap: 5px; margin-bottom: 12px; }
+  #welcome .dots i { width: 18px; height: 4px; background: #3d332e; border-radius: 2px; }
+  #welcome .dots i.on { background: var(--accent); }
   #stats { position: absolute; inset: 0 0 var(--log-h, 92px) 0; z-index: 3; display: none; overflow-y: auto;
     background: #1b1820fa; padding: 34px 16px 16px; }
   #stats h2 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 14px 0 6px; letter-spacing: .06em; }
@@ -132,6 +151,7 @@
   <form id="say"><input id="sayIn" maxlength="500" placeholder="Message the room…" autocomplete="off"><button>Send</button></form></div>
 <div id="people"></div>
 <div id="stats"></div>
+<div id="welcome"><div class="card"></div></div>
 <script>
 // Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
 // in a plain browser (no app bridge) it animates demo data. All art is drawn here, in code.
@@ -285,6 +305,7 @@ function build(raw) {
   for (const l of raw.reviewLog || []) { const e = reviewEvent(l); if (e) events.push(e); }
   events.sort((a, b) => b.t - a.t);
   energy = !!(raw.settings && raw.settings.energySaver);
+  if (raw.settings && raw.settings.welcome && !welcomeSeen) showWelcome();
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
@@ -1482,6 +1503,53 @@ sayForm.addEventListener("submit", ev => {
 });
 if (bridge) bridge.postMessage({ room: "ready" });
 
+// ---------- the welcome tour ----------
+// For someone opening Agent Office for the first time (the app says so: settings.welcome), and
+// again from Agent Office → Welcome Tour…: what the office shows, then their name and picture, then
+// a shared room. Every step can be skipped; finishing or skipping tells the app not to show it again.
+const welcomeEl = document.getElementById("welcome"), welcomeCard = welcomeEl.querySelector(".card");
+let welcomeSeen = false, welcomeStep = 0;
+const WELCOME = [
+  { title: "Welcome to Agent Office", sub: "Your Claude Code sessions as a little pixel office: who is working, who is waiting for you, and who is on a break, at a glance.",
+    items: [["🖥", "The office", "every session at a desk, with what it is doing, its model, effort and how full its context is. Click one to jump to it; right-click for its PR, its folder, or to hide it."],
+            ["👔", "Your room", "you at the manager's desk, with how much of your plan is left this week, when it resets and what the sessions cost."],
+            ["🔍", "Review room", "optional: PR reviews in progress at their desks, the queue waiting on the sofa."],
+            ["☕", "The lounge", "agents with nothing to do take a break here. The jukebox plays what is on in Spotify, Music or a browser, with its buttons."],
+            ["👥", "A shared room", "optional: teammates on your network walk into your lounge. Chat, wave, high five, or poke someone."]],
+    buttons: [["Next", "next", true]] },
+  { title: "Who are you?", sub: "Your name goes on the manager's desk, and over your head when you share a lounge with teammates. A picture is optional: without one, a drawn character sits there. You can change both any time with ✎ edit.",
+    buttons: [["Set my name and picture…", "profile", true], ["Later", "next"]] },
+  { title: "Share a lounge with your team", sub: "Optional. One person creates a room with a name and a password; everyone else on the same network joins it with those two. The host can copy the room's info and send it in one message, and teammates paste it into Join. Only names, pictures and chat are shared, never your sessions.",
+    buttons: [["Create a room…", "create", true], ["Join a room…", "join"], ["Not now", "next"]] },
+  { title: "You're all set", sub: "A few things worth knowing:",
+    items: [["🖱", "Click", "an agent to bring its session to the front; a piece of the lounge to walk your character there."],
+            ["⌨", "C", "shows or hides the chat when you are in a room. Hover your own message to edit or delete it."],
+            ["⚙", "Settings (⌘,)", "sounds, energy saver, the jukebox, open at login, daily update checks."],
+            ["👋", "This tour", "is in the Agent Office menu, if you want it again."]],
+    buttons: [["Start", "done", true]] },
+];
+function showWelcome() { welcomeSeen = true; welcomeStep = 0; renderWelcome(); welcomeEl.style.display = "flex"; }
+function closeWelcome() { welcomeEl.style.display = "none"; if (bridge) bridge.postMessage({ welcome: "done" }); }
+function renderWelcome() {
+  const st = WELCOME[welcomeStep];
+  welcomeCard.innerHTML = `<div class="dots">${WELCOME.map((_, i) => `<i class="${i <= welcomeStep ? "on" : ""}"></i>`).join("")}</div>`
+    + `<h1>${esc(st.title)}</h1><p class="sub">${esc(st.sub)}</p>`
+    + (st.items ? `<ul>${st.items.map(([i, b, t]) => `<li><div class="i">${i}</div><div><b>${esc(b)}</b> <span>${esc(t)}</span></div></li>`).join("")}</ul>` : "")
+    + `<div class="row">${st.buttons.map(([l, a, go]) => `<button data-a="${a}"${go ? ' class="go"' : ""}>${esc(l)}</button>`).join("")}`
+    + (welcomeStep < WELCOME.length - 1 ? `<span class="skip" data-a="done">skip the tour</span>` : "") + `</div>`;
+  const first = welcomeCard.querySelector("button.go"); if (first) setTimeout(() => first.focus(), 0);
+}
+welcomeCard.addEventListener("click", ev => {
+  const a = ev.target.closest("[data-a]"); if (!a) return;
+  const act = a.dataset.a, next = () => { welcomeStep++; renderWelcome(); };
+  // the dialogs open over the page; the tour has moved on underneath when they close
+  if (act === "profile") { if (bridge) bridge.postMessage({ profile: "edit" }); next(); }
+  else if (act === "create" || act === "join") { if (bridge) bridge.postMessage({ room: act === "create" ? "create" : "setup" }); next(); }
+  else if (act === "next") next();
+  else if (act === "done") closeWelcome();
+});
+if (!bridge && new URLSearchParams(location.search).has("welcome")) setTimeout(showWelcome, 0);   // the demo: ?welcome
+
 // ---------- the people panel ----------
 // On the lounge's right side: everyone in the shared room, you first. Click a name for the same
 // menu as clicking their character (hug, high five…); Poke sends them a notification and shakes
@@ -1676,6 +1744,7 @@ document.addEventListener("contextmenu", ev => {
 });
 document.addEventListener("mousedown", ev => { if (!menu.contains(ev.target)) closeMenu(); });
 document.addEventListener("keydown", ev => {
+  if (welcomeEl.style.display === "flex") { if (ev.key === "Escape") closeWelcome(); return; }   // the tour has the keys
   if (ev.key === "Escape") { closeMenu(); if (statsOpen) toggleStats(false); if (docked) sayIn.blur(); else if (chatOpen) toggleChat(false); return; }
   if (ev.target && ev.target.tagName === "INPUT") return;      // typing a message
   if (ev.metaKey || ev.ctrlKey || ev.altKey) return;

@@ -15,7 +15,7 @@ extension AppDelegate {
         var picked: String? = nil                         // nil: unchanged, "": removed, else a file
         let a = NSAlert()
         a.messageText = "Your name and picture"
-        a.informativeText = "You, at the manager's desk, and your character in a shared room."
+        a.informativeText = "You, at the manager's desk, and your character in a shared room. The picture is optional: without one, a drawn character sits there."
         let w: CGFloat = 240                              // the width of the alert's text column
         let name = NSTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24))
         name.placeholderString = "Your name"; name.stringValue = cfg.managerName

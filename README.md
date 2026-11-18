@@ -25,7 +25,9 @@ open ~/Applications/"Agent Office.app"
 Sessions report from their next turn on; start a new Claude Code session (or send a message in an
 open one) and it walks into the office.
 
-Then make it yours, all from the app:
+The first time it opens, a short welcome tour shows what the office is, asks for your name and
+(optionally) a picture, and offers to create or join a room; every step can be skipped, and the
+tour is in the Agent Office menu (Welcome Tour…) to see again. Then make it yours, all from the app:
 - **✎ edit** in the manager's room (or Agent Office → Your Name and Picture…): your name and
   picture, the manager at the desk and your character in a shared room.
 - **Create a room** or **Join a room** in the lounge's right-hand panel (or the **Room** menu):

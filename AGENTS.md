@@ -79,7 +79,8 @@ file for it, and **Stats** in the app shows its context and cost.
 
 ## 6. Tell the person what they set up in the app
 
-Do not write their name, picture or a room into the config for them. Tell them:
+Do not write their name, picture or a room into the config for them. The first launch opens a
+welcome tour that asks for both (and Agent Office → Welcome Tour… opens it again). Tell them:
 - **✎ edit** in the manager's room (or Agent Office → Your Name and Picture…) sets their name and
   picture.
 - **Create a room** / **Join a room** in the lounge's right-hand panel (or the **Room** menu)
