@@ -1373,7 +1373,9 @@ function drawMate(s, spot, p) {
   } else {
     person(p.x, p.y, s.id, s.id, p.walking ? "working" : "lounge", false, p.walking);
   }
-  label(clip(m.name, 12), (p.x + 4) * P, (top - (spot.stagger && !p.walking ? 9.5 : 4.5)) * P, s.self ? "#9fe8b6" : "#ffe7a8", 9, "center");
+  // the mini-games' medal: how many achievements (games.js keeps yours; a teammate's comes with their profile)
+  const badge = s.self ? (window.myBadge ? myBadge() : "") : (m.badge || "");
+  label(clip(m.name, 12) + (badge ? " " + badge : ""), (p.x + 4) * P, (top - (spot.stagger && !p.walking ? 9.5 : 4.5)) * P, s.self ? "#9fe8b6" : "#ffe7a8", 9, "center");
   const doing = { make: "making a coffee", drink: "drinking a coffee", game: "playing on the console", chat: "chatting" }[spot.kind];
   if (s.self) hits.push({ x: (p.x - 4) * P, y: (top - 5) * P, w: 16 * P, h: (p.y + 16 - top + 5) * P, self: true,
     tip: `You · ${doing}${mySpot ? " (you sent yourself here)" : ""}\n` +
@@ -1905,5 +1907,9 @@ if (!bridge) {
 }
 </script>
 <script src="games.js"></script>
+<script src="games-race.js"></script>
+<script src="games-fish.js"></script>
+<script src="games-bugs.js"></script>
+<script src="games-pong.js"></script>
 </body>
 </html>
