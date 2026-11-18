@@ -372,7 +372,9 @@ By hand: `git pull && scripts/build-app.sh` in your checkout, then reopen the ap
 
 **macOS asks for its permissions again after every update?** (Desktop folder, Accessibility,
 Automation, Local Network.) macOS remembers a permission by the app's signature, and an ad-hoc
-signature changes with every build. Run this once in your checkout:
+signature changes with every build. The app offers the fix itself: before an update it asks
+**Keep Agent Office's permissions after updates?** (**Set Up**, **Not Now**, **Don't Ask Again**), and
+Settings has **Keep permissions → Set Up…**. Or run it once in your checkout:
 
 ```bash
 scripts/signing-setup.sh
