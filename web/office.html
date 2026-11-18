@@ -275,9 +275,10 @@ function build(raw) {
   for (const l of raw.reviewLog || []) { const e = reviewEvent(l); if (e) events.push(e); }
   events.sort((a, b) => b.t - a.t);
   energy = !!(raw.settings && raw.settings.energySaver);
+  if (raw.jukebox) loadJukeArt(raw.jukebox.art);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, workspace: raw.workspace || "", slots: raw.slots || 5,
+           events, workspace: raw.workspace || "", slots: raw.slots || 5, jukebox: raw.jukebox || null,
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null };
 }
 
@@ -607,7 +608,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.installed ? "juke" : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -761,7 +762,8 @@ function wants(s) {
 function loungeGeo(L) {
   const y = L.ly, cols = L.lw;
   const kw = Math.max(56, Math.floor(cols * 0.36)), gw = Math.max(52, Math.floor(cols * 0.3)), gx = cols - gw;
-  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), tx = Math.floor(14 + (kw - 14) * 0.6);
+  const chatX = Math.floor((kw + gx) / 2), tvX = Math.floor(gx + gw / 2), juke = !!(snap.jukebox && snap.jukebox.installed),
+    tx = juke ? Math.max(Math.floor(14 + (kw - 14) * 0.6), kw - 17) : Math.floor(14 + (kw - 14) * 0.6);   // with a jukebox, the table moves right as far as its rug fits
   const spots = [
     { kind: "make", x: 17, y: y + 19 }, { kind: "make", x: 29, y: y + 19 },
     { kind: "drink", x: tx - 15, y: y + 40 }, { kind: "drink", x: tx + 7, y: y + 40 },
@@ -769,7 +771,9 @@ function loungeGeo(L) {
     { kind: "chat", x: chatX - 15, y: y + 33 }, { kind: "chat", x: chatX + 7, y: y + 33 }, { kind: "chat", x: chatX - 4, y: y + 27 },
   ];
   if (gw >= 70) spots.push({ kind: "game", x: gx + 5, y: y + 47, bean: true });
-  return { y, cols, kw, gx, gw, chatX, tvX, tx, spots };
+  // the jukebox stands in the kitchen's front-left corner, a speaker on each side (x 1 to 25);
+  // only when Spotify is installed
+  return { y, cols, kw, gx, gw, chatX, tvX, tx, spots, jx: juke ? 6 : -1 };
 }
 function paintLounge(L, sky) {
   const G = loungeGeo(L), y = G.y, cols = G.cols, H = L.loungeH, cw = G.kw - 20;
@@ -802,12 +806,13 @@ function paintLounge(L, sky) {
   if (cw > 46) { px(50, y + 10, 6, 2, "#c49a6c"); px(51, y + 9, 2, 1, "#e06c6c"); px(53, y + 9, 2, 1, "#e3c74f"); px(52, y + 8, 1, 1, "#5fbf7f"); }
   if (cw > 58) { px(14 + cw - 11, y + 6, 9, 6, "#3a3f4b"); px(14 + cw - 10, y + 7, 5, 4, "#1d2330"); px(14 + cw - 4, y + 8, 1, 2, "#8fd6b4"); }
   // a round rug and a warm light pool under the kitchen table
-  px(G.tx - 18, y + 50, 36, 11, "#a85b48"); px(G.tx - 16, y + 49, 32, 13, "#a85b48"); px(G.tx - 15, y + 51, 30, 9, "#c27460");
-  px(G.tx - 12, y + 52, 24, 7, "rgba(255,226,160,0.12)");
+  px(G.tx - 16, y + 50, 32, 11, "#a85b48"); px(G.tx - 14, y + 49, 28, 13, "#a85b48"); px(G.tx - 13, y + 51, 26, 9, "#c27460");
+  px(G.tx - 10, y + 52, 20, 7, "rgba(255,226,160,0.12)");
   // the middle: a window, framed art, a water cooler, a big rug, plants, a bookshelf
   windowAt(G.chatX - 7, y + 4, 14, 7, sky, 17);
   frameArt(G.chatX + 12, y + 4, 4); if (G.chatX - 22 > G.kw + 12) frameArt(G.chatX - 21, y + 4, 2);
   px(G.kw + 4, y + 10, 6, 13, "#dfe7ea"); px(G.kw + 5, y + 4, 4, 6, "#9fd0ea"); px(G.kw + 5, y + 4, 4, 1, "#c4e6f7"); px(G.kw + 6, y + 14, 2, 1, "#5b8def");
+  if (G.jx >= 0) jukeboxBody(G);
   px(G.chatX - 22, y + 44, 44, 16, "#5b6e8f"); px(G.chatX - 20, y + 45, 40, 14, "#6d82a5");
   for (let i = G.chatX - 18; i < G.chatX + 18; i += 6) px(i, y + 51, 3, 2, "#e3c74f");
   plant(G.gx - 11, y + WALL + 8, true); plant(G.kw + 13, y + H - 3, false);
@@ -826,6 +831,126 @@ function paintLounge(L, sky) {
   for (let i = G.gx + 8; i < cols - 8; i += 7) px(i, y + WALL + 30 + (i % 2) * 6, 2, 2, "#4fc1c9");
   if (G.gw >= 70) { px(G.gx + 3, y + 54, 14, 8, "#e06c6c"); px(G.gx + 4, y + 53, 12, 1, "#f08a8a"); px(G.gx + 3, y + 61, 14, 1, "#00000040"); }   // bean bag
   sign("LOUNGE", G.kw + 14, y + 3);
+}
+// ----- the jukebox: what Spotify plays on this Mac, with previous / play-pause / next -----
+// It stands in the kitchen's front corner between two speakers. The app sends {running, state,
+// track, artist, album, art} (Jukebox.swift; art is the cover shrunk to 11×11); none of it leaves
+// this Mac. The lever on top switches soft party lights on in the lounge (remembered per viewer).
+const JUKE_BUTTONS = [["previous", "⏮ previous song"], ["playpause", "⏯ play / pause"], ["next", "⏭ next song"]];
+const JUKE_COLORS = ["#e06c6c", "#f0a35e", "#e3c74f", "#5fbf7f", "#4fc1c9", "#5b8def", "#b98be0"];
+let jukeLights = false, jukeArtSrc = "", jukeArt = null;
+try { jukeLights = localStorage.getItem("jukeboxLights") === "1"; } catch (e) {}
+// a new cover is loaded when it arrives, not while drawing
+function loadJukeArt(src) {
+  if (!src || src === jukeArtSrc) return;
+  const im = new Image(); jukeArtSrc = src; jukeArt = null;
+  im.onload = () => { if (jukeArtSrc === src) jukeArt = im; }; im.src = src;
+}
+function setJukeLights(on) { jukeLights = on; try { localStorage.setItem("jukeboxLights", on ? "1" : "0"); } catch (e) {} draw(); }
+function jukeTop(G) { return G.y + 44; }      // the cabinet's top row; it is 24 rows tall, standing near the front
+function speakerBody(x, t) {       // a floor speaker, 4 wide; t = the jukebox's top row
+  px(x, t + 12, 4, 12, "#2a2326"); px(x, t + 12, 4, 1, "#4a3f44"); px(x + 3, t + 13, 1, 11, "#1c171a");
+  px(x + 1, t + 14, 2, 2, "#3a3236");                                            // the tweeter
+  px(x, t + 17, 4, 4, "#3a3236"); px(x + 1, t + 18, 2, 2, "#151214");            // the woofer
+  px(x, t + 24, 5, 1, "#00000040");
+}
+function jukeboxBody(G) {          // the cabinet and its speakers (the room layer)
+  const x = G.jx, t = jukeTop(G);
+  speakerBody(x - 5, t); speakerBody(x + 16, t);
+  px(x + 1, t + 24, 14, 1, "#00000040");
+  px(x + 3, t, 9, 1, "#7a4a2e"); px(x + 1, t + 1, 13, 1, "#7a4a2e"); px(x + 4, t + 1, 7, 1, "#94603d");
+  px(x, t + 2, 15, 22, "#7a4a2e"); px(x, t + 2, 1, 22, "#94603d"); px(x + 14, t + 2, 1, 22, "#5c3620");
+  px(x + 1, t + 2, 13, 13, "#2a1f1b");                                          // behind the cover
+  px(x + 1, t + 15, 13, 3, "#14182a");                                          // the song display
+  px(x + 1, t + 18.5, 13, 4.5, "#3b2c27");                                      // the button panel
+  px(x, t + 23, 15, 1, "#3b2316");
+  px(x + 5, t - 1, 5, 1, "#5e4232");                                            // the lever's base
+}
+// tiny icons drawn in screen pixels on a button: [x, y, w, h] in CSS pixels
+const JUKE_ICONS = {
+  previous: [[2, 2, 1, 6], [4, 4, 1, 2], [5, 3, 1, 4], [6, 2, 1, 6], [7, 2, 1, 6]],
+  next: [[2, 2, 1, 6], [3, 2, 1, 6], [4, 3, 1, 4], [5, 4, 1, 2], [7, 2, 1, 6]],
+  play: [[3, 1, 1, 8], [4, 2, 1, 6], [5, 3, 1, 4], [6, 4, 1, 2]],
+  pause: [[2, 2, 2, 6], [6, 2, 2, 6]],
+};
+function drawJukebox(G) {
+  const x = G.jx, t = jukeTop(G), j = snap.jukebox || { running: false };
+  if (x < 0) return;
+  const on = !!j.running, playing = on && j.state === "playing", song = on && j.track, live = playing && !energy;
+  const now = performance.now() / 1000;
+  // bubble tubes down both sides of the cover
+  for (let r = 0; r < 11; r++) for (const sx of [x + 1, x + 13]) {
+    const c = JUKE_COLORS[(r + (live ? frame : 0) + (sx > x + 7 ? 3 : 0)) % JUKE_COLORS.length];
+    px(sx, t + 3 + r, 1, 1, on ? c : "#3a2f2a"); if (on && !(playing || jukeLights)) px(sx, t + 3 + r, 1, 1, "#00000080");
+  }
+  // the cover: the album's, as pixel art; a vinyl record while there is none
+  const cx = (x + 2) * P, cy = (t + 3) * P, cs = 11 * P;
+  if (on && j.art && jukeArt && jukeArtSrc === j.art) {
+    const sm = g.imageSmoothingEnabled; g.imageSmoothingEnabled = false; g.drawImage(jukeArt, cx, cy, cs, cs); g.imageSmoothingEnabled = sm;
+  } else {
+    px(x + 2, t + 3, 11, 11, "#1b1820");
+    g.fillStyle = "#0d0c0f"; g.beginPath(); g.arc(cx + cs / 2, cy + cs / 2, cs / 2 - 1, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "#2c2a30"; g.lineWidth = 1; g.beginPath(); g.arc(cx + cs / 2, cy + cs / 2, cs / 3, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = on ? "#e06c6c" : "#5a4a44"; g.beginPath(); g.arc(cx + cs / 2, cy + cs / 2, 3.5, 0, Math.PI * 2); g.fill();
+    if (live) { const a = now * 3; g.fillStyle = "#ffffff60"; g.fillRect(cx + cs / 2 + Math.cos(a) * 10 - 1, cy + cs / 2 + Math.sin(a) * 10 - 1, 3, 3); }
+  }
+  if (on && j.state === "paused") px(x + 2, t + 3, 11, 11, "#00000070");
+  // the display: song · artist, scrolling while it plays
+  const dx = (x + 1) * P + 2, dy = (t + 15) * P, dw = 13 * P - 4, dh = 3 * P;
+  const msg = !on ? "Spotify is off" : song ? `${j.track}  ·  ${j.artist || ""}` : j.state === "stopped" ? "nothing playing" : "♪ press ▶";
+  g.save(); g.beginPath(); g.rect(dx, dy, dw, dh); g.clip();
+  g.font = "8px Menlo, monospace"; const tw = g.measureText(msg).width, gap = 20;
+  const col = !on ? "#5a6a70" : playing ? "#8fd6b4" : "#c9b98a";
+  if (tw <= dw) text(msg, dx + (dw - tw) / 2, dy + 0.5, col, 8);
+  else { const off = live ? (now * 12) % (tw + gap) : 0; text(msg, dx - off, dy + 0.5, col, 8); text(msg, dx - off + tw + gap, dy + 0.5, col, 8); }
+  g.restore();
+  // speakers: the woofers bounce and sound rises while it plays
+  for (const sx of [x - 5, x + 16]) {
+    const beat = live && (frame + (sx > x ? 1 : 0)) % 2 === 0;
+    px(sx + 1, t + 18, 2, 2, beat ? "#5a4f55" : "#151214"); if (beat) { px(sx, t + 17, 4, 1, "#4a4045"); px(sx, t + 20, 4, 1, "#4a4045"); }
+    if (live) for (let k = 0; k < 3; k++) {
+      const r = (frame + k) % 3, a = [0.75, 0.45, 0.2][r];
+      px(sx + 1 - r, t + 10 - r * 2, 2 + 2 * r, 1, `rgba(255,231,168,${a})`);
+    }
+  }
+  if (live) text("♪", (x + 21 + frame % 2) * P, (t + 2 - frame % 3) * P, "#e3c74f", 11);
+  // the lever on top: the party lights
+  px(x + 7 + (jukeLights ? 1 : -1), t - 4, 1, 3, "#c0c6ca"); px(x + 6 + (jukeLights ? 2 : -2), t - 5, 2, 2, jukeLights ? "#e06c6c" : "#8a7f74");
+  hits.push({ x: (x + 3) * P, y: (t - 6) * P, w: 9 * P, h: 7 * P, lights: true,
+    tip: `💡 party lights: ${jukeLights ? "on" : "off"}\nclick: ${jukeLights ? "turn them off" : "turn them on"}` });
+  const tip = (!on ? "Jukebox\nSpotify is not open: open it, then play from here"
+    : !j.state ? "Jukebox · Spotify\nthe song shows at the next change, or press a button"
+    : j.state === "stopped" || !song ? "Jukebox · Spotify\nnothing playing"
+    : `Jukebox · Spotify\n${playing ? "▶ playing" : "❚❚ paused"}\n${j.track}\n${j.artist || ""}${j.album ? " · " + j.album : ""}`
+    ) + (on && j.denied ? "\n⚠ the buttons need your OK: allow Agent Office to control Spotify in\nSystem Settings → Privacy & Security → Automation" : "");
+  JUKE_BUTTONS.forEach(([act, what], k) => {
+    const bx = x + 1 + k * 4.5, by = t + 19;
+    px(bx, by, 4, 3, on ? "#e9e3d6" : "#8a7f74"); px(bx, by + 3, 4, 0.34, on ? "#b8ad9e" : "#6f665d");
+    g.fillStyle = "#2a1f1b";
+    for (const [ix, iy, iw, ih] of JUKE_ICONS[act === "playpause" ? (playing ? "pause" : "play") : act]) g.fillRect(bx * P + ix + 1, by * P + iy - 0.5, iw, ih);
+    if (on) hits.push({ x: bx * P - 1, y: by * P - 2, w: 4 * P + 2, h: 3 * P + 4, juke: act, tip: `${what}\n${tip.split("\n").slice(1).join("\n")}` });
+  });
+  hits.push({ x: (x - 5) * P, y: t * P, w: 25 * P, h: 25 * P, tip });
+}
+// the party lights: soft coloured pools drifting over the lounge and the glints of a mirror ball,
+// on top of everyone; gentle, and still while the energy saver is on
+function drawPartyLights(L) {
+  if (!jukeLights || !(snap.jukebox && snap.jukebox.installed)) return;
+  const y = L.ly + 2, h = L.loungeH - 2, w = L.lw, now = energy ? 0 : performance.now() / 1000;
+  g.fillStyle = "rgba(20,10,40,0.22)"; g.fillRect(0, y * P, w * P, h * P);
+  g.save(); g.beginPath(); g.rect(0, y * P, w * P, h * P); g.clip();
+  g.globalCompositeOperation = "screen";
+  [["255,108,160", 0.31, 0], ["79,193,201", 0.23, 2.1], ["227,199,79", 0.17, 4.2], ["185,139,224", 0.27, 1.3]].forEach(([c, sp, ph]) => {
+    const cx = (0.5 + 0.44 * Math.sin(now * sp + ph)) * w * P, cy = (y + h * (0.55 + 0.4 * Math.cos(now * sp * 1.3 + ph))) * P, r = 26 * P;
+    const gr = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+    gr.addColorStop(0, `rgba(${c},0.42)`); gr.addColorStop(1, `rgba(${c},0)`);
+    g.fillStyle = gr; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+  });
+  for (let k = 0; k < 18; k++) {                // mirror-ball glints sliding slowly to the right
+    const gx = ((hash("glint" + k) % 997) / 997 * w + now * 4) % w, gy = y + 3 + (hash("glint-y" + k) % (h - 6));
+    px(Math.floor(gx), gy, 1, 1, `rgba(255,255,240,${0.35 + 0.35 * Math.abs(Math.sin(now * 2 + k))})`);
+  }
+  g.restore();
 }
 // a figure from behind (facing a counter or the TV)
 function backView(x, y, L2, legs) {
@@ -850,6 +975,7 @@ function drawLounge(L) {
   }
   // the espresso machine, while someone makes a coffee
   if (brewing && !energy) { px(21, y + 10, 1, 1 + frame % 2, "#6b4a32"); px(20 + frame % 2, y + 3 - frame % 3, 1, 2, "#ffffff70"); px(23, y + 7, 1, 1, "#5fbf7f"); }
+  drawJukebox(G);
   label([mates ? `${mates + 1} people here` : "", n ? `${n} on a break` : mates ? "" : "nobody on a break"].filter(Boolean).join(" · "),
     (G.cols - 3) * P, (y + WALL + 2) * P, mates ? "#ffe7a8" : "#f1ebe2", 10, "right");
   const sorted = at.slice().sort((a, b) => a.spot.y - b.spot.y);
@@ -923,6 +1049,7 @@ function drawLounge(L) {
     for (let k = 0; k < 3; k++) if (frame % 3 >= k) px(t.x + 8 + k * 2, t.y - 4, 1, 1, "#1b1820");
   }
   if (n + mates > G.spots.length) label(`+${n + mates - G.spots.length} more`, (G.kw + 3) * P, (y + L.loungeH - 7) * P, "#d9cfc3", 9);
+  drawPartyLights(L);
 }
 // lounge spots: each agent wants what its routine says now, and takes the first free spot of it
 let assignKey = "", assignVal = [];
@@ -1459,10 +1586,10 @@ cv.addEventListener("mousemove", ev => {
   if (!h) { tip.style.display = "none"; cv.style.cursor = "default"; return; }
   tip.textContent = h.tip; tip.style.display = "block";
   tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 330) + "px"; tip.style.top = (ev.clientY + 12) + "px";
-  cv.style.cursor = h.url || h.reveal || h.goto || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
+  cv.style.cursor = h.url || h.reveal || h.goto || h.juke || h.lights || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -1569,9 +1696,15 @@ let lastDraw = 0;
 if (!bridge) {
   document.getElementById("demo").textContent = "demo data";
   const t0 = Date.now() / 1000, hm = m => { const d = new Date(Date.now() - m * 60000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  // an invented 13×13 cover: a sunset over the sea
+  const demoCover = () => { if (demoCover.v) return demoCover.v; const c = document.createElement("canvas"); c.width = c.height = 13; const k = c.getContext("2d");
+    ["#2c3350", "#5b4a8f", "#b85a8a", "#f08a6a", "#f0c06a"].forEach((col, i) => { k.fillStyle = col; k.fillRect(0, i * 2, 13, 2); });
+    k.fillStyle = "#ffe7a8"; k.fillRect(4, 6, 5, 3); k.fillStyle = "#1f4f7a"; k.fillRect(0, 9, 13, 4); k.fillStyle = "#4fc1c9"; k.fillRect(3, 10, 7, 1); k.fillRect(5, 12, 3, 1);
+    return (demoCover.v = c.toDataURL()); };
   let tick = 0;
   const demo = () => { tick++; return {
-    now: Date.now() / 1000, workspace: "example", slots: 5, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
+    now: Date.now() / 1000, workspace: "example", slots: 5,
+    jukebox: { installed: true, running: true, state: tick % 10 < 7 ? "playing" : "paused", track: "Neon Afternoon", artist: "The Pixel Band", album: "Lounge Tapes", art: demoCover() }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
       ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],
