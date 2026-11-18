@@ -244,6 +244,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let updater = Updater()
     let jukebox = Jukebox()                              // the lounge's jukebox (Jukebox.swift)
     var updateTimer: Timer?
+    // ---- the terminal under the office (Terminal.swift) ----
+    let terminal = TerminalPane()
+    var split: OfficeSplit!
+    var terminalShown: Bool {
+        get { defaults.bool(forKey: "terminalShown") }      // false until turned on from the View menu
+        set { defaults.set(newValue, forKey: "terminalShown") }
+    }
     var manualCheck = false
     var checkUpdates: Bool {
         get { defaults.bool(forKey: "checkUpdates") }        // false until turned on in Settings
@@ -265,8 +272,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Agent Office"
         window.minSize = NSSize(width: 380, height: 300)
-        window.contentView = web
+        split = OfficeSplit(office: web, terminal: terminal.view)
+        split.autosaveName = "AgentOfficeTerminal"           // remembers where the divider was
+        terminal.view.isHidden = !terminalShown
+        window.contentView = split
         window.delegate = self
+        if terminalShown { terminal.load() }
         // Catch up at once when the window comes back into view.
         NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in self?.push() }
         window.backgroundColor = NSColor(red: 0.11, green: 0.10, blue: 0.15, alpha: 1)
@@ -296,6 +307,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+
+    func applicationWillTerminate(_ n: Notification) { terminal.stop() }
+
+    /// Show or hide the terminal under the office. Hiding it leaves the shell running.
+    @objc func toggleTerminal(_ sender: NSMenuItem) {
+        terminalShown.toggle()
+        sender.state = terminalShown ? .on : .off
+        if terminalShown {
+            terminal.view.isHidden = false
+            split.adjustSubviews()
+            // first time, or a remembered height that no longer fits: a third of the window
+            let h = split.bounds.height, th = terminal.view.frame.height
+            if th < OfficeSplit.terminalMin || h - th < OfficeSplit.officeMin {
+                split.setPosition(h - max(OfficeSplit.terminalMin, (h / 3).rounded()), ofDividerAt: 0)
+            }
+            terminal.load()
+            terminal.focus()
+        } else {
+            terminal.view.isHidden = true
+            split.adjustSubviews()
+            window.makeFirstResponder(web)
+        }
+    }
 
     func push() {
         // Nothing on screen (minimised, hidden, or covered by other windows): skip the work.
@@ -648,6 +682,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = edit
+        let viewItem = NSMenuItem(); main.addItem(viewItem)
+        let view = NSMenu(title: "View")
+        let term = view.addItem(withTitle: "Terminal", action: #selector(toggleTerminal(_:)), keyEquivalent: "`")
+        term.keyEquivalentModifierMask = [.control]
+        term.state = terminalShown ? .on : .off
+        viewItem.submenu = view
         let roomItem = NSMenuItem(); main.addItem(roomItem)
         let rm = NSMenu(title: "Room")
         rm.addItem(withTitle: "Create a Room…", action: #selector(createRoom), keyEquivalent: "")
