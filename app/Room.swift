@@ -13,8 +13,13 @@
 // proof = HMAC-SHA256(K, "member"). The password never travels; a host that does not know it
 // cannot read anything, and nor can anyone else on the network.
 //   inside a box, member → host:  {t:"profile", name, avatar}  {t:"say", text}
+//                                 {t:"edit", mid, text}  {t:"unsay", mid}
 //   inside a box, host → member:  {t:"welcome", you, members}  {t:"join"|"profile", member}
-//                                 {t:"leave", id}  {t:"msg", id, from, text, at}
+//                                 {t:"leave", id}  {t:"msg", id, mid, from, text, at}
+//                                 {t:"edited", mid, text}  {t:"unsaid", mid}
+// mid names one message; the host gives it out and accepts an edit or an unsay of a message only
+// from the connection that said it. A member whose app predates edit and unsay ignores those two,
+// so it keeps showing the first text.
 
 import Foundation
 import Network
@@ -29,6 +34,7 @@ let ROOM_MAX_FRAME = 200_000          // bytes, any message
 let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
+let ROOM_KEPT_MESSAGES = 300          // messages each app keeps, and the host can still edit or unsay
 let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
 // what one member can do to another; a poke also reaches the poked person's Mac as a notification
 let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave", "poke"]
@@ -112,6 +118,10 @@ final class RoomHost {
     private var listener: NWListener?
     private var peers: [String: Peer] = [:]
     private var failures: [String: (n: Int, until: Date)] = [:]
+    // who said each recent message, for edit and unsay: the latest ROOM_KEPT_MESSAGES
+    private var said: [(mid: String, by: String)] = []
+    private let tag = String(UUID().uuidString.prefix(6)).lowercased()   // mids stay unique across host restarts
+    private var nextMid = 0
     var onState: ((String) -> Void)?
 
     init(_ cfg: RoomConfig) { self.cfg = cfg }
@@ -199,7 +209,24 @@ final class RoomHost {
             guard p.said.count <= 5, !p.name.isEmpty else { return }          // at most 5 messages in 10 s
             let text = cleanText(m["text"] as? String ?? "")
             guard !text.isEmpty else { return }
-            broadcast(["t": "msg", "id": p.id, "from": p.name, "text": text, "at": now.timeIntervalSince1970])
+            nextMid += 1
+            let mid = "\(tag)-\(nextMid)"
+            said.append((mid, p.id)); if said.count > ROOM_KEPT_MESSAGES { said.removeFirst() }
+            broadcast(["t": "msg", "id": p.id, "mid": mid, "from": p.name, "text": text, "at": now.timeIntervalSince1970])
+        case "edit", "unsay":
+            // only your own message; counted with chat messages against the rate limit
+            let now = Date()
+            p.said = p.said.filter { now.timeIntervalSince($0) < 10 } + [now]
+            guard p.said.count <= 5, let mid = m["mid"] as? String,
+                  let i = said.firstIndex(where: { $0.mid == mid }), said[i].by == p.id else { return }
+            if m["t"] as? String == "unsay" {
+                said.remove(at: i)
+                broadcast(["t": "unsaid", "mid": mid])
+            } else {
+                let text = cleanText(m["text"] as? String ?? "")
+                guard !text.isEmpty else { return }
+                broadcast(["t": "edited", "mid": mid, "text": text])
+            }
         case "act":
             // a hug, a high five… for another member; counted with chat messages against the rate limit
             let now = Date()
@@ -224,7 +251,12 @@ final class RoomHost {
 
 // ---------- a member (the host is one too) ----------
 final class RoomClient {
-    struct Message { let id: String, from: String, text: String, at: Double }
+    struct Message {
+        let id: String, mid: String, from: String
+        var text: String
+        let at: Double
+        var edited = false, deleted = false
+    }
     struct Act { let seq: Int, from: String, to: String, kind: String, fromName: String, toName: String, at: Double }
     let cfg: RoomConfig
     var profile: () -> (name: String, avatar: String)
@@ -321,6 +353,17 @@ final class RoomClient {
         q.async { guard !t.isEmpty, let c = self.conn, let k = self.key, let box = seal(["t": "say", "text": t], k) else { return }
             wsSend(c, box) }
     }
+    /// Change or take back one of your own messages (the host refuses anyone else's).
+    func edit(_ mid: String, _ text: String) {
+        let t = cleanText(text)
+        q.async { guard !mid.isEmpty, !t.isEmpty, let c = self.conn, let k = self.key,
+                        let box = seal(["t": "edit", "mid": mid, "text": t], k) else { return }
+            wsSend(c, box) }
+    }
+    func unsay(_ mid: String) {
+        q.async { guard !mid.isEmpty, let c = self.conn, let k = self.key, let box = seal(["t": "unsay", "mid": mid], k) else { return }
+            wsSend(c, box) }
+    }
     func sendProfile() {
         q.async { guard let c = self.conn, let k = self.key else { return }
             let p = DispatchQueue.main.sync { self.profile() }
@@ -387,7 +430,18 @@ final class RoomClient {
         case "msg":
             if let id = m["id"] as? String, let from = m["from"] as? String, let text = m["text"] as? String {
                 let at = m["at"] as? Double ?? Date().timeIntervalSince1970
-                set { $0.messages.append(Message(id: id, from: from, text: text, at: at)); if $0.messages.count > 300 { $0.messages.removeFirst() } }
+                let mid = m["mid"] as? String ?? ""                   // "" from a host without edit and unsay
+                set { $0.messages.append(Message(id: id, mid: mid, from: from, text: text, at: at))
+                      if $0.messages.count > ROOM_KEPT_MESSAGES { $0.messages.removeFirst() } }
+            }
+        case "edited":
+            if let mid = m["mid"] as? String, !mid.isEmpty, let text = m["text"] as? String {
+                set { if let i = $0.messages.firstIndex(where: { $0.mid == mid && !$0.deleted }) { $0.messages[i].text = text; $0.messages[i].edited = true } }
+            }
+        case "unsaid":
+            // kept as a "deleted" line, so the page's count of what you have read stays right
+            if let mid = m["mid"] as? String, !mid.isEmpty {
+                set { if let i = $0.messages.firstIndex(where: { $0.mid == mid }) { $0.messages[i].text = ""; $0.messages[i].deleted = true } }
             }
         default: break
         }
@@ -428,7 +482,8 @@ final class RoomClient {
         var o: [String: Any] = ["status": status, "detail": detail, "name": cfg.name, "you": you, "host": cfg.host,
                                 "alwaysJoin": cfg.alwaysJoin, "nextTry": nextTry?.timeIntervalSince1970 ?? 0,
                                 "count": members.count,
-                                "messages": messages.map { ["id": $0.id, "from": $0.from, "text": $0.text, "at": $0.at] },
+                                "messages": messages.map { ["id": $0.id, "mid": $0.mid, "from": $0.from, "text": $0.text, "at": $0.at,
+                                                              "edited": $0.edited, "deleted": $0.deleted] },
                                 "acts": acts.map { ["seq": $0.seq, "from": $0.from, "to": $0.to, "kind": $0.kind,
                                                     "fromName": $0.fromName, "toName": $0.toName, "at": $0.at] }]
         if withMembers { o["members"] = Array(members.values) }
