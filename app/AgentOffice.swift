@@ -8,7 +8,7 @@
 // Configuration: ~/.config/agent-office/config.json, every key optional:
 //   { "officeState": "~/.local/state/agent-office",
 //     "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
-//                  "slots": 5, "bitbucketWorkspace": "<workspace>" } }
+//                  "slots": 5, "overdueMinutes": 45, "bitbucketWorkspace": "<workspace>" } }
 // Without a "reviews" block the review room is shown empty.
 // Settings (⌘,): "Keep on top", "Play a sound" and "Energy saver", all off unless turned on.
 //
@@ -34,6 +34,7 @@ struct Config {
     var reviewState: String? = nil
     var reviewLog: String? = nil
     var slots = 5
+    var overdueMinutes = 45                               // a review desk running longer is flagged; 0: never
     var workspace = ""
     var managerName = ""
     var managerImage = ""
@@ -88,6 +89,7 @@ struct Config {
             if let s = r["state"] as? String { c.reviewState = expand(s) }
             if let s = r["log"] as? String { c.reviewLog = expand(s) }
             if let n = r["slots"] as? Int { c.slots = n }
+            if let n = r["overdueMinutes"] as? Int { c.overdueMinutes = max(0, n) }
             if let w = r["bitbucketWorkspace"] as? String { c.workspace = w }
         }
         if let m = j["manager"] as? [String: Any] {
@@ -195,7 +197,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
     }
     if let rl = cfg.reviewLog { reviewLog = lines(rl, tailBytes: 24_000) }
     return [
-        "now": now, "slots": cfg.slots, "workspace": cfg.workspace,
+        "now": now, "slots": cfg.slots, "overdueMinutes": cfg.overdueMinutes, "workspace": cfg.workspace,
         "sessions": sessions, "reviews": reviews, "queue": queue,
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "reviewLog": Array(reviewLog.suffix(120)),
