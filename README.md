@@ -189,7 +189,9 @@ yourself in the manager's chair.
    `~/.config/agent-office/config.json` (readable only by you) and opens the room.
 4. macOS asks whether Agent Office may accept incoming connections and find devices on the local
    network: allow both. The panel lists you, and says *you host it*.
-5. Send the name and password to your team over a private channel.
+5. Send the room to your team over a private channel: Room → Create a Room… (or Join a Room…)
+   shows the current room's name, password and your Mac's address, and **Copy Room Info** copies
+   them as three lines a teammate pastes with **Paste Room Info**.
 6. Tick Settings → **Open at login**, so the room comes back by itself after you restart your Mac.
 
 The room stays saved: every launch hosts it again, with the same password, until you create or
@@ -221,9 +223,16 @@ join another one or use Settings → **Delete Saved Room…**. Room → **Leave 
 
 1. Install Agent Office, or update it (Agent Office → **Check for Updates…** → **Update Now**).
 2. Set your name and picture with **✎ edit** (or Agent Office → Your Name and Picture…).
-3. Click **Join a room** in the lounge's panel (or Room → Join a Room…), type the room's name and
-   password, and click **Join**. Leave the host address empty unless the room is not found by
-   name (see below).
+3. Click **Join a room** in the lounge's panel (or Room → Join a Room…). Copy the room info the
+   host sent you and click **Paste Room Info**, or type the room's name and password; then click
+   **Join**. Leave the host address empty unless the room is not found by name (see below).
+   The lines it reads look like this (the host's **Copy Room Info** writes them):
+
+   ```
+   AGENT_OFFICE_ROOM_NAME=team lounge
+   AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
+   AGENT_OFFICE_ROOM_ADDRESS=their-mac.local
+   ```
 4. Allow Agent Office to find devices on the local network. Within a few seconds the host and
    everyone else walk into your lounge, and the panel lists them, each with a **👉 Poke** button.
 

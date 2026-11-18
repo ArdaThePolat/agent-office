@@ -603,6 +603,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(withTitle: "Hide Agent Office", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         app.addItem(withTitle: "Quit Agent Office", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = app
+        // the text fields in the dialogs get their keyboard shortcuts (⌘V, ⌘C, ⌘X, ⌘A, ⌘Z) from
+        // this menu: without it pasting into them does nothing
+        let editItem = NSMenuItem(); main.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
         let roomItem = NSMenuItem(); main.addItem(roomItem)
         let rm = NSMenu(title: "Room")
         rm.addItem(withTitle: "Create a Room…", action: #selector(createRoom), keyEquivalent: "")
