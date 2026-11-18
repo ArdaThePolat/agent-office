@@ -12,7 +12,8 @@ extension AppDelegate {
         web.evaluateJavaScript("window.openGames && openGames()", completionHandler: nil)
     }
 
-    /// From the page: {game: JSON of a game message}, {score: "board|value"}, {gameNotice: text}.
+    /// From the page: {game: JSON of a game message}, {score: "board|value"}, {gameNotice: text},
+    /// {badge: "🏅 12"}.
     func gameMessage(_ body: [String: String]) {
         if let g = body["game"], let d = g.data(using: .utf8),
            let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { roomClient?.sendGame(obj) }
@@ -21,6 +22,8 @@ extension AppDelegate {
             if parts.count == 2, let v = Double(parts[1]) { roomClient?.submitScore(String(parts[0]), v) }
         }
         if let t = body["gameNotice"] { gameNotice(t) }
+        // the achievements' medal on your character, kept for the next connection
+        if let b = body["badge"] { defaults.set(b, forKey: "gameBadge"); roomClient?.setBadge(b) }
     }
 
     /// A game message from the room, to the page at once (not with the next snapshot).
