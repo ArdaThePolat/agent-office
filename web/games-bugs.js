@@ -50,6 +50,7 @@ function openBugs(together) {
 const bwLobby = k => ({ g: "bugs", k, id: BW.id, players: BW.players, owner: BW.owner, ownerName: BW.ownerName });
 function joinBugs(id) {
   const l = BW.lobbies[id]; if (!l) return;
+  leaveCurrent();
   if (!GAME.open) openGames("home");
   Object.assign(BW, { phase: "lobby", id, owner: l.owner, ownerName: l.ownerName, players: l.players.filter(p => p.id !== myId()).concat([{ id: myId(), name: myName() }]) });
   gsend({ g: "bugs", k: "join", id });
@@ -122,12 +123,14 @@ function endBugs() {
 /// The referee gives bug n to `by` (when nobody has it yet) and works out the points.
 function refereeHit(n, by) {
   const b = BW.sched[n]; if (!b) return;
-  if (!BW.claimed[n] && BW.t < b.at + b.life + 0.5) {
+  const had = BW.claimed[n];
+  if (!had && BW.t < b.at + b.life + 0.5) {
     BW.claimed[n] = by;
     if (b.kind === "feature") { BW.pts[by] = Math.max(0, (BW.pts[by] || 0) - 3); BW.streak[by] = 0; }
     else { BW.streak[by] = (BW.streak[by] || 0) + 1; BW.pts[by] = (BW.pts[by] || 0) + (b.kind === "gold" ? 5 : 1) + (BW.streak[by] % 5 === 0 ? 1 : 0); }
   }
-  if (BW.players.length > 1) gsend({ g: "bugs", k: "got", id: BW.id, n, by: BW.claimed[n] || "", pts: BW.pts });
+  // one word per bug: a click that lost already heard who got it; one too late hears "nobody"
+  if (BW.players.length > 1 && (!had || had === by) && (BW.claimed[n] || by !== myId())) gsend({ g: "bugs", k: "got", id: BW.id, n, by: BW.claimed[n] || "", pts: BW.pts });
   gotBug(n, BW.claimed[n]);
 }
 function gotBug(n, by) {
@@ -181,6 +184,9 @@ function drawBugs(t) {
 }
 function bugsMsg(from, name, d) {
   const now = Date.now() / 1000;
+  // a round is its opener's: only they announce, start or close it (the host stamps who sent what)
+  const owner = (BW.lobbies[d.id] && BW.lobbies[d.id].owner) || (BW.id === d.id ? BW.owner : "");
+  if (["open", "lobby", "start", "close"].includes(d.k) && owner && owner !== from) return;
   if (d.k === "score") { if (+d.pts > 0) { const t = `🪲 ${name} whacked ${Math.round(+d.pts)} points of bugs`; if (GAME.open) toast(esc(t), null, 4000); else note(t); } return; }
   if ((d.k === "open" || d.k === "lobby") && Array.isArray(d.players)) {
     const fresh = !BW.lobbies[d.id];

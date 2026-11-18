@@ -19,7 +19,7 @@ extension AppDelegate {
            let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any] { roomClient?.sendGame(obj) }
         if let s = body["score"] {
             let parts = s.split(separator: "|")
-            if parts.count == 2, let v = Double(parts[1]) { roomClient?.submitScore(String(parts[0]), v) }
+            if parts.count == 2, let v = Double(parts[1]), v.isFinite { roomClient?.submitScore(String(parts[0]), v) }
         }
         if let t = body["gameNotice"] { gameNotice(t) }
         // the achievements' medal on your character, kept for the next connection

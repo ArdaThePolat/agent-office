@@ -25,7 +25,7 @@ function pongSide() {
   gside.innerHTML = `<h3>HOW</h3><div class="hint">↑ ↓ / W S or the mouse move your paddle. First to ${PONG_TO}.</div>
     ${PONG.phase === "play" ? `<h3>${PONG.mode === "cpu" ? "VS THE COMPUTER" : "VS " + esc(pongOpp()).toUpperCase()}</h3><div class="row"><span class="n">you</span><span class="v">${PONG.s[PONG.me === "l" ? 0 : 1]}</span></div><div class="row"><span class="n">${esc(pongOpp())}</span><span class="v">${PONG.s[PONG.me === "l" ? 1 : 0]}</span></div>`
       : `<h3>&nbsp;</h3><button class="go" data-cpu="1">Play the computer</button>`}
-    ${asks.length ? `<h3>CHALLENGES</h3>` + asks.map(a => `<div class="row"><span class="n">${esc(a.name)}</span><button class="go" data-yes="${esc(a.id)}">Accept</button></div>`).join("") : ""}
+    ${asks.length ? `<h3>CHALLENGES</h3>` + asks.map(a => `<div class="row"><span class="n">${esc(a.name)}</span><button class="go" data-yes="${esc(a.id)}">Accept</button><button data-no="${esc(a.id)}">Not now</button></div>`).join("") : ""}
     ${mates.length && PONG.phase !== "play" ? `<h3>CHALLENGE A TEAMMATE</h3>` + mates.map(m => `<div class="row"><span class="n">${esc(m.name)}</span><button data-ask="${esc(m.id)}">Challenge</button></div>`).join("") : ""}
     ${PONG.phase === "wait" ? `<div class="hint" style="margin-top:8px">Waiting for ${esc(pongOpp())} to accept…</div>` : ""}
     <h3>MOST WINS</h3>${(boardsNow().boards["pong-wins"] || []).slice(0, 5).map((e, i) => `<div class="row"><span class="n">${i + 1}. ${esc(e.name)}</span><span class="v">${Math.round(e.value)}</span></div>`).join("") || `<div class="hint">none yet</div>`}
@@ -40,11 +40,18 @@ function ask(id) {
 function accept(id) {
   const a = PONG.asks[id]; if (!a) return;
   delete PONG.asks[id];
+  leaveCurrent();
   if (!GAME.open) openGames("home");
   Object.assign(PONG, { id, mode: "net", me: "r", phase: "play", opp: a.from, oppName: a.name, heard: Date.now() / 1000 });
   resetPong();
   gsend({ g: "pong", k: "yes", id });
   gshow("pong");
+}
+function decline(id) {
+  if (!PONG.asks[id]) return;
+  delete PONG.asks[id]; peopleKey = "";
+  gsend({ g: "pong", k: "no", id });
+  if (GAME.open && GAME.view === "pong") side();
 }
 function pongStep(dt) {
   const P = PONG, k = GAME.keys, now = Date.now() / 1000;
@@ -142,15 +149,17 @@ registerGame("pong", {
     if (b.dataset.cpu) { Object.assign(PONG, { mode: "cpu", me: "l", phase: "play", id: "", opp: "" }); resetPong(); side(); }
     if (b.dataset.ask) ask(b.dataset.ask);
     if (b.dataset.yes) accept(b.dataset.yes);
+    if (b.dataset.no) decline(b.dataset.no);
   },
   tab: () => {
     const asks = Object.values(PONG.asks).filter(a => Date.now() / 1000 - a.at < 60);
     const mates = inRoom() ? roomMates() : [];
-    return (asks.length ? `<div class="gh">CHALLENGES</div>` + asks.map(a => `<div class="g"><span class="gn">🏓 ${esc(a.name)} challenges you</span><button data-gyes="${esc(a.id)}">Accept</button></div>`).join("") : "")
+    return (asks.length ? `<div class="gh">CHALLENGES</div>` + asks.map(a => `<div class="g"><span class="gn">🏓 ${esc(a.name)} challenges you</span><button data-gyes="${esc(a.id)}">Accept</button><button class="alt" data-gno="${esc(a.id)}">✕</button></div>`).join("") : "")
       + (mates.length ? `<div class="gh">PING-PONG</div>` + mates.map(m => `<div class="g"><span class="gn">🏓 ${esc(m.name)}</span><button class="alt" data-gask="${esc(m.id)}">Challenge</button></div>`).join("") : "");
   },
   tabClick: b => {
     if (b.dataset.gyes) { accept(b.dataset.gyes); return true; }
+    if (b.dataset.gno) { decline(b.dataset.gno); return true; }
     if (b.dataset.gask) { openGames("home"); gshow("pong"); ask(b.dataset.gask); return true; }
     return false;
   },
