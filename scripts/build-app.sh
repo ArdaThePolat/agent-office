@@ -21,6 +21,7 @@ mkdir -p "$B/MacOS" "$B/Resources"
 cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
 swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" "$ROOT/app/Profile.swift" "$ROOT/app/Jukebox.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
 cp "$ROOT/web/office.html" "$B/Resources/"
+cp "$ROOT/app/nowplaying.py" "$B/Resources/"                 # the jukebox's Now Playing helper (Jukebox.swift)
 
 swift "$ROOT/scripts/make-icon.swift" "$BUILD/icon.png"
 mkdir "$BUILD/AppIcon.iconset"
