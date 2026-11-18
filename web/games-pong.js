@@ -11,6 +11,10 @@
 "use strict";
 
 const PONG_TO = 7, PAD_H = 32, PAD_X = 12, BALL = 4, PONG_RATE = 1 / 15;
+// Every return makes the ball HIT_GAIN times faster, up to TOP_SPEED (px/s). Now and then a fire pad
+// burns somewhere in the middle for a few seconds: a ball through it is FIRE_GAIN times faster at
+// once (up to FIRE_TOP) and stays on fire until the point is over.
+const HIT_GAIN = 1.18, TOP_SPEED = 360, FIRE_GAIN = 1.6, FIRE_TOP = 520, FIRE_R = 7, PAD_SPEED = 200, CPU_SPEED = 120;
 const PONG = { phase: "idle", mode: "cpu", id: "", me: "l", l: 84, r: 84, b: [160, 100, 0, 0], s: [0, 0], sent: 0, heard: 0, asks: {}, mouseY: null };
 const pongOpp = () => PONG.mode === "cpu" ? "the computer" : PONG.oppName || "your opponent";
 function pongStart(arg) {
@@ -18,11 +22,23 @@ function pongStart(arg) {
   gshow("pong");
 }
 function resetPong() { Object.assign(PONG, { l: 84, r: 84, s: [0, 0] }); serve(Math.random() < 0.5 ? 1 : -1); }
-function serve(dir) { const a = (Math.random() - 0.5) * 0.8; PONG.b = [GW / 2, GH / 2, Math.cos(a) * 110 * dir, Math.sin(a) * 110]; PONG.wait = 0.8; }
+function serve(dir) { const a = (Math.random() - 0.5) * 0.8; PONG.b = [GW / 2, GH / 2, Math.cos(a) * 110 * dir, Math.sin(a) * 110]; PONG.wait = 0.8; PONG.hot = false; }
+/// The fire pad: one at a time, somewhere between the paddles, gone after a few seconds; the next
+/// comes a few seconds later. Only the side that runs the ball decides it (the other is told).
+function fireStep(dt) {
+  const P = PONG;
+  if (P.fire) { P.fire.life -= dt; if (P.fire.life <= 0) { P.fire = null; P.fireIn = 3 + Math.random() * 6; } }
+  else { P.fireIn = (P.fireIn ?? 4) - dt; if (P.fireIn <= 0) P.fire = { x: 90 + Math.random() * (GW - 180), y: 20 + Math.random() * (GH - 40), life: 3 + Math.random() * 4 }; }
+  const b = P.b;
+  if (P.fire && Math.hypot(b[0] + BALL / 2 - P.fire.x, b[1] + BALL / 2 - P.fire.y) < FIRE_R + BALL / 2) {
+    const sp = Math.hypot(b[2], b[3]), to = Math.min(FIRE_TOP, sp * FIRE_GAIN);
+    b[2] *= to / sp; b[3] *= to / sp; P.hot = true; P.fire = null; P.fireIn = 3 + Math.random() * 6;
+  }
+}
 function pongSide() {
   const mates = typeof roomMates === "function" ? roomMates() : [];
   const asks = Object.values(PONG.asks).filter(a => Date.now() / 1000 - a.at < 60);
-  gside.innerHTML = `<h3>HOW</h3><div class="hint">↑ ↓ / W S or the mouse move your paddle. First to ${PONG_TO}.</div>
+  gside.innerHTML = `<h3>HOW</h3><div class="hint">↑ ↓ / W S or the mouse move your paddle. First to ${PONG_TO}. Every return is faster; a ball through the 🔥 is much faster until the point is over.</div>
     ${PONG.phase === "play" ? `<h3>${PONG.mode === "cpu" ? "VS THE COMPUTER" : "VS " + esc(pongOpp()).toUpperCase()}</h3><div class="row"><span class="n">you</span><span class="v">${PONG.s[PONG.me === "l" ? 0 : 1]}</span></div><div class="row"><span class="n">${esc(pongOpp())}</span><span class="v">${PONG.s[PONG.me === "l" ? 1 : 0]}</span></div>`
       : `<h3>&nbsp;</h3><button class="go" data-cpu="1">Play the computer</button>`}
     ${asks.length ? `<h3>CHALLENGES</h3>` + asks.map(a => `<div class="row"><span class="n">${esc(a.name)}</span><button class="go" data-yes="${esc(a.id)}">Accept</button><button data-no="${esc(a.id)}">Not now</button></div>`).join("") : ""}
@@ -58,8 +74,8 @@ function pongStep(dt) {
   if (P.phase !== "play") { ginfo.textContent = P.phase === "over" ? P.result : P.phase === "wait" ? "waiting for an answer" : "pick an opponent"; return; }
   // your paddle
   const mine = P.me, up = k.has("arrowup") || k.has("w"), down = k.has("arrowdown") || k.has("s");
-  if (up) P[mine] -= 150 * dt; if (down) P[mine] += 150 * dt;
-  if (P.mouseY !== null && !up && !down) P[mine] += Math.max(-150 * dt, Math.min(150 * dt, P.mouseY - PAD_H / 2 - P[mine]));
+  if (up) P[mine] -= PAD_SPEED * dt; if (down) P[mine] += PAD_SPEED * dt;
+  if (P.mouseY !== null && !up && !down) P[mine] += Math.max(-PAD_SPEED * dt, Math.min(PAD_SPEED * dt, P.mouseY - PAD_H / 2 - P[mine]));
   P[mine] = Math.max(0, Math.min(GH - PAD_H, P[mine]));
   if (P.mode === "net" && now - P.heard > 8) { endPong(false, `${pongOpp()} left`); return; }
   if (P.mode === "net" && P.me === "r") {
@@ -74,16 +90,17 @@ function pongStep(dt) {
     // the computer chases the ball only while it comes its way, aims a little off (a new guess at
     // every return) and is slower than a fast ball: it can be beaten
     const target = P.b[2] > 0 ? P.b[1] - PAD_H / 2 + (P.cpuErr || 0) : GH / 2 - PAD_H / 2;
-    P.r += Math.max(-100 * dt, Math.min(100 * dt, target - P.r)); P.r = Math.max(0, Math.min(GH - PAD_H, P.r));
+    P.r += Math.max(-CPU_SPEED * dt, Math.min(CPU_SPEED * dt, target - P.r)); P.r = Math.max(0, Math.min(GH - PAD_H, P.r));
   }
   if (P.wait > 0) P.wait -= dt;
   else {
+    fireStep(dt);
     const b = P.b; b[0] += b[2] * dt; b[1] += b[3] * dt;
     if (b[1] < 0) { b[1] = 0; b[3] = Math.abs(b[3]); } if (b[1] > GH - BALL) { b[1] = GH - BALL; b[3] = -Math.abs(b[3]); }
     const hit = (px, side) => {
       const pad = side === "l" ? P.l : P.r;
       if (b[1] + BALL < pad || b[1] > pad + PAD_H) return false;
-      const off = (b[1] + BALL / 2 - (pad + PAD_H / 2)) / (PAD_H / 2), speed = Math.min(260, Math.hypot(b[2], b[3]) * 1.06);
+      const off = (b[1] + BALL / 2 - (pad + PAD_H / 2)) / (PAD_H / 2), speed = Math.min(P.hot ? FIRE_TOP : TOP_SPEED, Math.max(Math.hypot(b[2], b[3]), Math.hypot(b[2], b[3]) * HIT_GAIN));
       // where it meets the paddle sets the angle, plus a little spin, so no rally is flat forever
       const ang = Math.max(-1, Math.min(1, off * 0.9 + (Math.random() - 0.5) * 0.4));
       b[2] = Math.cos(ang) * speed * (side === "l" ? 1 : -1); b[3] = Math.sin(ang) * speed; b[0] = px;
@@ -101,7 +118,8 @@ function pongStep(dt) {
   }
   if (P.mode === "net" && now - P.sent > PONG_RATE) {
     P.sent = now;
-    gsend({ g: "pong", k: "st", id: P.id, b: P.b.map(v => Math.round(v * 10) / 10), l: Math.round(P.l), s: P.s });
+    gsend({ g: "pong", k: "st", id: P.id, b: P.b.map(v => Math.round(v * 10) / 10), l: Math.round(P.l), s: P.s,
+      f: P.fire ? [Math.round(P.fire.x), Math.round(P.fire.y)] : 0, h: P.hot ? 1 : 0 });
   }
   ginfo.textContent = `you ${P.s[0]} : ${P.s[1]} ${pongOpp()}`;
 }
@@ -118,7 +136,18 @@ function drawPong() {
   for (let y = 4; y < GH; y += 10) gpx(GW / 2 - 1, y, 2, 6, "#f1ebe2aa");
   gpx(PAD_X, P.l, 4, PAD_H, P.me === "l" ? myColor() : colorOf(P.opp || "cpu"));
   gpx(GW - PAD_X - 4, P.r, 4, PAD_H, P.me === "r" ? myColor() : P.mode === "cpu" ? "#a79d93" : colorOf(P.opp || "cpu"));
-  if (P.phase === "play") gpx(P.b[0], P.b[1], BALL, BALL, "#ffe7a8");
+  if (P.fire && P.phase === "play") {                // the fire pad, flickering
+    const fl = Math.sin(Date.now() / 70) * 1.5;
+    gpx(P.fire.x - FIRE_R, P.fire.y + 2, FIRE_R * 2, 3, "#5a2a14");
+    gpx(P.fire.x - 5, P.fire.y - 3, 10, 6, "#e06c6c"); gpx(P.fire.x - 3, P.fire.y - 6 + fl, 6, 6, "#f0a35e"); gpx(P.fire.x - 1.5, P.fire.y - 8 - fl, 3, 5, "#ffe7a8");
+  }
+  if (P.phase === "play") {
+    if (P.hot) {                                       // a ball on fire leaves a trail
+      const sp = Math.hypot(P.b[2], P.b[3]) || 1;
+      for (let k = 1; k <= 4; k++) gpx(P.b[0] - P.b[2] / sp * k * 3, P.b[1] - P.b[3] / sp * k * 3, BALL - k * 0.6, BALL - k * 0.6, ["#ffe7a8", "#f0a35e", "#e06c6c", "#8a3a2a"][k - 1]);
+    }
+    gpx(P.b[0], P.b[1], BALL, BALL, P.hot ? "#fff3b0" : "#ffe7a8");
+  }
   gtext(String(P.s[0]), GW / 2 - 24, 10, "#f1ebe2", 16, "center"); gtext(String(P.s[1]), GW / 2 + 24, 10, "#f1ebe2", 16, "center");
   if (P.phase !== "play") { gpx(GW / 2 - 90, GH / 2 - 16, 180, 32, "#0d0b10cc"); gtext(P.phase === "over" ? P.result : P.phase === "wait" ? "waiting for an answer…" : "play the computer or a teammate", GW / 2, GH / 2 - 5, "#ffe7a8", 8, "center"); }
 }
@@ -136,7 +165,8 @@ function pongMsg(from, name, d) {
   if (d.k === "yes" && P.phase === "wait" && from === P.opp) { P.phase = "play"; resetPong(); side(); }
   if (d.k === "no" && P.phase === "wait") { P.phase = "idle"; toast(`${esc(name)} said not now`, null, 3000); side(); }
   if (d.k === "pad" && P.me === "l" && from === P.opp) P.r = Math.max(0, Math.min(GH - PAD_H, +d.y || 0));
-  if (d.k === "st" && P.me === "r" && from === P.opp && Array.isArray(d.b)) { P.b = d.b.map(Number); P.l = +d.l || 0; const before = P.s.join(); P.s = (d.s || [0, 0]).map(Number); if (P.s.join() !== before) side(); }
+  if (d.k === "st" && P.me === "r" && from === P.opp && Array.isArray(d.b)) { P.b = d.b.map(Number); P.l = +d.l || 0;
+    P.fire = Array.isArray(d.f) ? { x: +d.f[0], y: +d.f[1], life: 1 } : null; P.hot = !!d.h; const before = P.s.join(); P.s = (d.s || [0, 0]).map(Number); if (P.s.join() !== before) side(); }
   if (d.k === "end" && P.me === "r") { P.s = (d.s || P.s).map(Number); endPong(P.s[1] > P.s[0], P.s[1] > P.s[0] ? "you won" : `${pongOpp()} won`); }
   if (d.k === "bye" && P.phase !== "over") { P.phase = "over"; P.result = `${pongOpp()} left`; P.id = ""; side(); }
 }

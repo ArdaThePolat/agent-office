@@ -544,8 +544,10 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
 (or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes.
 
 - **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
-  **↑/W** go, **↓/S** brake, **←→/AD** steer. On the asphalt you reach full speed; on the grass
-  you slow right down until you are back on it; cars bump off each other. In a room, **Open the
+  **↑/W** go, **↓/S** brake, **←→/AD** steer. Three numbered checkpoints stand across each track:
+  a lap counts only after all three, in order (the next one blinks yellow, passed ones turn green,
+  and the top bar says which is next). On the asphalt you reach full speed; on the grass you slow
+  right down until you are back on it; cars bump off each other. In a room, **Open the
   race to the room** makes a lobby: teammates see it (a toast in their game, a line in the log,
   **Join** in their Games tab) and join; you press **Start** when everyone is in, and every car
   starts the same countdown from its own spot on the grid. The leaderboard keeps the **best lap**
@@ -560,7 +562,9 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   worth 5, every fifth hit in a row 1 more), but leave the green ones, they are features (−3). Play
   alone or **open a round for the room**: everyone who joins gets the same bugs at the same moment,
   the first click takes each one, and the scores show live.
-- **🏓 Ping-pong:** first to 7, with **↑↓/WS** or the mouse. Play the computer, or **Challenge** a
+- **🏓 Ping-pong:** first to 7, with **↑↓/WS** or the mouse. Every return makes the ball quicker,
+  and now and then a **🔥 fire pad** burns in the middle for a few seconds: a ball through it is
+  much faster, and stays on fire until the point is over. Play the computer, or **Challenge** a
   teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
 - **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
   everyone in the room on the same day (in the same time zone), with their own boards (the best lap

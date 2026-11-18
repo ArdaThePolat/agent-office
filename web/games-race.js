@@ -32,6 +32,10 @@ for (const t of TRACKS) {
   t.line = out;
 }
 const CAR_R = 3.5, START_IN = 4, LOBBY_PING = 20, LOBBY_GONE = 60;
+// The checkpoints: gates across the track at these fractions of a lap, drawn on the map. A lap counts
+// only after all of them, in order; the next one is the highlighted gate. A car is through a gate
+// when the nearest point of the track to it is just past the gate (within GATE_WINDOW of a lap).
+const GATES = [0.25, 0.5, 0.75], GATE_WINDOW = 0.06;
 const RACE = { phase: "none", track: 0, laps: 3, lobbies: {}, others: {}, players: [] };
 
 function nearest(t, x, y) {
@@ -106,7 +110,7 @@ function raceSide() {
       ${RACE.daily ? `<div class="hint" style="margin-top:6px">📅 Today's track: your best lap also counts for the daily board.</div>` : ""}
       <h3>&nbsp;</h3><button class="go" data-open="1">${inRoom() ? "Open the race to the room" : "Start"}</button>
       ${inRoom() ? `<div class="hint" style="margin-top:6px">Everyone in the room can join; you press Start when they are in.</div>` : ""}
-      <h3>HOW</h3><div class="hint">↑ / W go · ↓ / S brake · ← → / A D steer. Off the asphalt you slow right down. Cars bump.</div>
+      <h3>HOW</h3><div class="hint">↑ / W go · ↓ / S brake · ← → / A D steer. Pass the checkpoints 1, 2, 3 in order (the next one blinks), then the line. Off the asphalt you slow right down. Cars bump.</div>
       ${bestHTML()}<h3>&nbsp;</h3><button data-home="1">Games</button>`;
     return;
   }
@@ -123,7 +127,7 @@ function raceSide() {
       : `<div class="hint" style="margin-top:8px">Waiting for ${esc(RACE.ownerName || "the host")} to start.</div><h3>&nbsp;</h3><button data-leave="1">Leave</button>`) : ""}
     ${P === "done" && order.length ? `<h3>RESULTS</h3>` + order.map((r, i) => `<div class="row"><span class="n">${i + 1}. ${esc(r.name)}</span><span class="v">${fmtTime(r.time)}</span></div>`).join("") : ""}
     ${P === "done" ? `<h3>&nbsp;</h3><button class="go" data-again="1">Race again</button> <button data-home="1">Games</button>` : ""}
-    <h3>HOW</h3><div class="hint">↑ / W go · ↓ / S brake · ← → / A D steer. Off the asphalt you slow right down. Cars bump.</div>${bestHTML()}`;
+    <h3>HOW</h3><div class="hint">↑ / W go · ↓ / S brake · ← → / A D steer. Pass the checkpoints 1, 2, 3 in order (the next one blinks), then the line. Off the asphalt you slow right down. Cars bump.</div>${bestHTML()}`;
 }
 function bestHTML() {
   const best = boardsNow().boards["race-" + (RACE.track + 1)];
@@ -179,14 +183,15 @@ function raceStep(dt) {
   }
   // laps: past a third, then two thirds, then over the line
   const N = t.line.length, f = n.i / N;
-  if (RACE.cp === 0 && f > 0.3 && f < 0.45) RACE.cp = 1;
-  if (RACE.cp === 1 && f > 0.63 && f < 0.78) RACE.cp = 2;
-  if (RACE.cp === 2 && f < 0.08) {
+  if (RACE.cp < GATES.length && f >= GATES[RACE.cp] && f < GATES[RACE.cp] + GATE_WINDOW) {
+    RACE.cp++; RACE.gateFlash = RACE.t;
+  }
+  if (RACE.cp === GATES.length && f < 0.08) {
     const lapT = RACE.t - RACE.lapStart; RACE.best = RACE.best ? Math.min(RACE.best, lapT) : lapT; RACE.lapStart = RACE.t; RACE.cp = 0;
     if (RACE.lap >= RACE.laps) finishRace(); else RACE.lap++;
     side();
   }
-  if (RACE.phase === "go") ginfo.textContent = `lap ${Math.min(RACE.lap, RACE.laps)}/${RACE.laps} · ${fmtTime(RACE.t)}${RACE.best ? " · best lap " + fmtTime(RACE.best) : ""}${on ? "" : " · off the track!"}`;
+  if (RACE.phase === "go") ginfo.textContent = `lap ${Math.min(RACE.lap, RACE.laps)}/${RACE.laps} · ${RACE.cp < GATES.length ? `checkpoint ${RACE.cp + 1}/${GATES.length}` : "to the finish line"} · ${fmtTime(RACE.t)}${RACE.best ? " · best lap " + fmtTime(RACE.best) : ""}${on ? "" : " · off the track!"}`;
   if (inRoom() && RACE.players.length > 1 && now - RACE.sent > 0.1) {
     RACE.sent = now;
     gsend({ g: "race", k: "pos", id: RACE.id, x: Math.round(RACE.x * 10) / 10, y: Math.round(RACE.y * 10) / 10, a: Math.round(RACE.a * 100) / 100, v: Math.round(RACE.v), lap: RACE.lap });
@@ -229,9 +234,26 @@ function drawTrack(t) {
   for (let j = -t.w; j < t.w; j += 2) for (let i = 0; i < 4; i += 2) gpx(i + ((j / 2) % 2 ? 2 : 0) - 2, j, 2, 2, "#f1ebe2");
   gx.restore();
 }
+/// The checkpoint gates across the track: the next one yellow and blinking, passed ones green,
+/// the rest white; each numbered at its side.
+function drawGates(t, racing) {
+  const N = t.line.length;
+  GATES.forEach((fr, k) => {
+    const i = Math.floor(fr * N), p = t.line[i], q = t.line[(i + 1) % N], ang = Math.atan2(q[1] - p[1], q[0] - p[0]);
+    const next = racing && RACE.cp === k, done = racing && RACE.cp > k;
+    const col = done ? "#5fbf7f" : next ? ((Math.floor(Date.now() / 250) % 2) ? "#ffe7a8" : "#e3c74f") : "#f1ebe2";
+    gx.save(); gx.translate(p[0], p[1]); gx.rotate(ang);
+    for (let j = -t.w; j < t.w; j += 3) gpx(-1, j, 2, 2, col);            // the gate's line across the asphalt
+    gpx(-1.5, -t.w - 4, 3, 4, col); gpx(-1.5, t.w, 3, 4, col);            // a post at each side
+    gx.restore();
+    const nx = p[0] - Math.sin(ang) * (t.w + 9), ny = p[1] + Math.cos(ang) * (t.w + 9);
+    gpx(nx - 4, ny - 4, 8, 9, "#0d0b10aa"); gtext(String(k + 1), nx, ny - 3, col, 7, "center");
+  });
+}
 function drawRace() {
   const t = TRACKS[RACE.track], now = Date.now() / 1000, P = RACE.phase;
   drawTrack(t);
+  drawGates(t, P === "go" || P === "done");
   if (P === "pick" || P === "none") { gpx(GW / 2 - 70, 8, 140, 16, "#0d0b10cc"); gtext(`${t.name} · ${RACE.laps} lap${RACE.laps > 1 ? "s" : ""}`, GW / 2, 12, "#ffe7a8", 8, "center"); return; }
   // the others: on their grid spot until they move, then where they last said they were
   RACE.players.forEach((p, slot) => {
