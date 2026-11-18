@@ -81,6 +81,13 @@ const myColor = () => colorOf(myId());
 const fmtTime = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, "0")}`;
 const fmtScore = (b, v) => LOW_WINS(b) ? fmtTime(v) : b.startsWith("fish") || b.startsWith("daily-fish") ? v.toFixed(2) + " kg" : String(Math.round(v));
 function gsend(d) { if (bridge && inRoom()) bridge.postMessage({ game: JSON.stringify(d) }); }
+/// A random number generator from a seed: the same seed gives the same numbers on every Mac, so a
+/// shared round (the bugs, the pond's fish) is the same everywhere without being sent.
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const newSeed = () => Math.floor(Math.random() * 2 ** 31);
 function store(key, fallback) { try { return JSON.parse(localStorage.getItem("agentOffice." + key) || "null") ?? fallback; } catch (e) { return fallback; } }
 function keep(key, v) { try { localStorage.setItem("agentOffice." + key, JSON.stringify(v)); } catch (e) {} }
 
