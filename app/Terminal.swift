@@ -1,14 +1,93 @@
 import Cocoa
 import WebKit
 
-/// The terminal under the office: the user's login shell on a pseudo-terminal, drawn by xterm.js
-/// (web/terminal.html) in its own web view. The shell starts the first time the pane is shown and
-/// keeps running while the pane is hidden; it ends with the app.
+/// The terminal beside the office: tabs of the user's login shell, each on its own pseudo-terminal,
+/// drawn by xterm.js (web/terminal.html) in one web view. The page owns the tabs and asks for a
+/// shell per tab; a shell keeps running while the pane is hidden, and ends with its tab or the app.
 final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     private(set) var view: WKWebView!
     private var loaded = false
+    private var shells: [Int: Shell] = [:]
+    /// How many tabs the page shows: ⌘W closes a tab only while there is more than one.
+    private(set) var tabCount = 0
+
+    override init() {
+        super.init()
+        let conf = WKWebViewConfiguration()
+        conf.userContentController.add(WeakHandler(self), name: "term")
+        view = TermWebView(frame: .zero, configuration: conf)
+        view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = self
+    }
+
+    /// This view carries a handler that types into your shell, so the one page it may show is
+    /// terminal.html: any other navigation (a link in the output, say) is cancelled.
+    func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let u = a.request.url
+        decisionHandler(u?.isFileURL == true && u?.lastPathComponent == "terminal.html" ? .allow : .cancel)
+    }
+
+    var isLoaded: Bool { loaded }
+
+    /// Load the page once; it opens its first tab, which starts a shell.
+    func load() {
+        guard !loaded, let page = Bundle.main.url(forResource: "terminal", withExtension: "html") else { return }
+        loaded = true
+        view.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+    }
+
+    func focus() {
+        view.window?.makeFirstResponder(view)
+        js("window.termFocus && termFocus()")
+    }
+
+    /// Whether typing goes to the terminal right now.
+    var hasFocus: Bool {
+        guard !view.isHidden, let r = view.window?.firstResponder as? NSView else { return false }
+        return r.isDescendant(of: view)
+    }
+
+    func newTab() { js("termNewTab()") }
+    func closeTab() { js("termCloseTab()") }
+    func selectTab(by step: Int) { js("termStep(\(step))") }
+
+    /// Hang up on every shell (the app is quitting).
+    func stop() { shells.values.forEach { $0.hangUp() } }
+
+    private func js(_ s: String, _ done: (() -> Void)? = nil) {
+        view.evaluateJavaScript(s) { _, _ in done?() }
+    }
+
+    func userContentController(_ c: WKUserContentController, didReceive msg: WKScriptMessage) {
+        guard let m = msg.body as? [String: Any], let t = m["t"] as? String else { return }
+        if t == "tabs" { tabCount = m["n"] as? Int ?? 0; return }
+        guard let id = m["id"] as? Int else { return }
+        switch t {
+        case "open", "restart":
+            let sh = shells[id] ?? Shell(id: id) { [weak self] s, done in self?.js(s, done) }
+            shells[id] = sh
+            sh.setSize(m)
+            sh.spawn()
+        case "resize":
+            shells[id]?.setSize(m)
+        case "in":
+            if let s = m["d"] as? String { shells[id]?.send(Data(s.utf8)) }
+        case "bin":
+            if let s = m["d"] as? String { shells[id]?.send(Data(s.unicodeScalars.map { UInt8(truncatingIfNeeded: $0.value) })) }
+        case "close":
+            shells.removeValue(forKey: id)?.closeTab()
+        default: break
+        }
+    }
+}
+
+/// One tab's shell on a pseudo-terminal. Its output goes to the page as termWrite(id, base64).
+private final class Shell {
+    let id: Int
+    private let js: (String, @escaping () -> Void) -> Void
     private var master: Int32 = -1
     private var child: pid_t = 0
+    private var closed = false
     private var reader: DispatchSourceRead?
     private var exitWatch: DispatchSourceProcess?
     private var size = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
@@ -27,62 +106,27 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var writer: DispatchSourceWrite?
     private static let maxInput = 1 << 20
 
-    override init() {
-        super.init()
-        let conf = WKWebViewConfiguration()
-        conf.userContentController.add(WeakHandler(self), name: "term")
-        view = WKWebView(frame: .zero, configuration: conf)
-        view.setValue(false, forKey: "drawsBackground")
-        view.navigationDelegate = self
-    }
+    init(id: Int, js: @escaping (String, @escaping () -> Void) -> Void) { self.id = id; self.js = js }
 
-    /// This view carries a handler that types into your shell, so the one page it may show is
-    /// terminal.html: any other navigation (a link in the output, say) is cancelled.
-    func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let u = a.request.url
-        decisionHandler(u?.isFileURL == true && u?.lastPathComponent == "terminal.html" ? .allow : .cancel)
-    }
-
-    /// Load the page once; its "ready" message starts the shell.
-    func load() {
-        guard !loaded, let page = Bundle.main.url(forResource: "terminal", withExtension: "html") else { return }
-        loaded = true
-        view.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
-    }
-
-    func focus() {
-        view.window?.makeFirstResponder(view)
-        view.evaluateJavaScript("window.termFocus && termFocus()", completionHandler: nil)
-    }
-
-    /// Hang up on the shell (the app is quitting).
-    func stop() {
-        if child > 0 { kill(child, SIGHUP) }
-    }
-
-    func userContentController(_ c: WKUserContentController, didReceive msg: WKScriptMessage) {
-        guard let m = msg.body as? [String: Any], let t = m["t"] as? String else { return }
-        switch t {
-        case "ready", "restart":
-            setSize(m)
-            if child == 0 { spawn() }
-        case "resize":
-            setSize(m)
-        case "in":
-            if let s = m["d"] as? String { send(Data(s.utf8)) }
-        case "bin":
-            if let s = m["d"] as? String { send(Data(s.unicodeScalars.map { UInt8(truncatingIfNeeded: $0.value) })) }
-        default: break
-        }
-    }
-
-    private func setSize(_ m: [String: Any]) {
+    func setSize(_ m: [String: Any]) {
         guard let cols = m["cols"] as? Int, let rows = m["rows"] as? Int, cols > 0, rows > 0 else { return }
         size.ws_col = UInt16(clamping: cols); size.ws_row = UInt16(clamping: rows)
         if master >= 0 { _ = ioctl(master, TIOCSWINSZ, &size) }
     }
 
-    private func send(_ d: Data) {
+    func hangUp() { if child > 0 { kill(child, SIGHUP) } }
+
+    // A closed tab's shell holds itself until it has exited, so it is still reaped.
+    private var keepAlive: Shell?
+
+    /// The tab is gone: hang up, and say nothing more to the page about it.
+    func closeTab() {
+        closed = true
+        if child > 0 { keepAlive = self }
+        hangUp()
+    }
+
+    func send(_ d: Data) {
         guard master >= 0 else { return }
         toShell.append(d.prefix(max(0, Self.maxInput - toShell.count)))
         drainInput()
@@ -107,9 +151,8 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         writer?.cancel(); writer = nil
     }
 
-    // ---- the shell ----
-
-    private func spawn() {
+    func spawn() {
+        guard child == 0, !closed else { return }
         let pw = getpwuid(getuid())
         var shell = pw.flatMap { String(cString: $0.pointee.pw_shell) } ?? ""
         if shell.isEmpty || access(shell, X_OK) != 0 { shell = "/bin/zsh" }
@@ -145,7 +188,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         r.resume()
         reader = r
         let w = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
-        w.setEventHandler { [weak self] in self?.shellExited() }
+        w.setEventHandler { [weak self] in self?.exited() }
         w.resume()
         exitWatch = w
     }
@@ -158,7 +201,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             let n = read(master, &buf, buf.count)
             if n > 0 { pending.append(buf, count: n) } else { break }
         }
-        flush()
+        if closed { pending.removeAll() } else { flush() }
     }
 
     private func flush() {
@@ -176,7 +219,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
             let chunk = self.pending.prefix(Self.maxBatch)
             self.pending.removeFirst(chunk.count)
             self.inFlight += 1
-            self.view.evaluateJavaScript("termWrite('\(chunk.base64EncodedString())')") { [weak self] _, _ in
+            self.js("termWrite(\(self.id), '\(chunk.base64EncodedString())')") { [weak self] in
                 guard let self else { return }
                 self.inFlight -= 1
                 if self.readerPaused && self.inFlight < Self.maxInFlight { self.readerPaused = false; self.reader?.resume() }
@@ -186,7 +229,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         }
     }
 
-    private func shellExited() {
+    private func exited() {
         var status: Int32 = 0
         waitpid(child, &status, WNOHANG)
         // what is still in the pipe is the shell's last output: show it before the notice
@@ -197,11 +240,20 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         exitWatch?.cancel(); exitWatch = nil
         if master >= 0 { close(master); master = -1 }
         child = 0
+        guard !closed else { keepAlive = nil; return }
         let code = (status & 0x7f) == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-        let notify: () -> Void = { [weak self] in self?.view.evaluateJavaScript("termExited(\(code))", completionHandler: nil) }
+        let notify: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.js("termExited(\(self.id), \(code))") {}
+        }
         // after the output still on its way to the page
         if pending.isEmpty && inFlight == 0 { notify() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: notify) }
     }
+}
+
+/// A click on a tab, or the +, acts even while the window is not the active one.
+private final class TermWebView: WKWebView {
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
 }
 
 /// WKUserContentController keeps its handlers strongly; this keeps the pane free to go.
@@ -213,31 +265,72 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
-/// The office above, the terminal below; the divider drags, and its place is remembered.
-final class OfficeSplit: NSSplitView, NSSplitViewDelegate {
-    static let officeMin: CGFloat = 200
-    static let terminalMin: CGFloat = 80
+/// Which side of the office the terminal sits on.
+enum TerminalSide: String, CaseIterable {
+    case bottom, top, left, right
+    var title: String { rawValue.capitalized }
+    var vertical: Bool { self == .left || self == .right }        // side by side
+    var terminalFirst: Bool { self == .top || self == .left }
+}
 
-    init(office: NSView, terminal: NSView) {
+/// The office and the terminal side by side or one above the other; the divider drags, and its
+/// place is remembered for each side.
+final class OfficeSplit: NSSplitView, NSSplitViewDelegate {
+    private let office: NSView, terminal: NSView
+    private(set) var side: TerminalSide = .bottom
+    private var unsized = false                                     // nothing saved for this side yet
+
+    init(office: NSView, terminal: NSView, side: TerminalSide) {
+        self.office = office; self.terminal = terminal
         super.init(frame: .zero)
-        isVertical = false
         dividerStyle = .thin
         delegate = self
-        addArrangedSubview(office)
-        addArrangedSubview(terminal)
-        // the office takes the window's resizing; the terminal keeps its height
-        setHoldingPriority(.defaultLow - 1, forSubviewAt: 0)
-        setHoldingPriority(.defaultLow + 10, forSubviewAt: 1)
+        place(side)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The least the office and the terminal each keep along the divider's axis.
+    var officeMin: CGFloat { 200 }
+    var terminalMin: CGFloat { side.vertical ? 160 : 80 }
+    private var length: CGFloat { side.vertical ? bounds.width : bounds.height }
+    private var terminalLength: CGFloat { side.vertical ? terminal.frame.width : terminal.frame.height }
+
+    /// Put the terminal on `side`. Each side has its own saved divider; bottom keeps the name the
+    /// single-side layout saved under, so an existing height carries over.
+    func place(_ s: TerminalSide) {
+        side = s
+        autosaveName = nil
+        arrangedSubviews.forEach { removeArrangedSubview($0); $0.removeFromSuperview() }
+        isVertical = s.vertical
+        for v in s.terminalFirst ? [terminal, office] : [office, terminal] { addArrangedSubview(v) }
+        // the office takes the window's resizing; the terminal keeps its size
+        let t = s.terminalFirst ? 0 : 1
+        setHoldingPriority(.defaultLow + 10, forSubviewAt: t)
+        setHoldingPriority(.defaultLow - 1, forSubviewAt: 1 - t)
+        let name = s == .bottom ? "AgentOfficeTerminal" : "AgentOfficeTerminal-" + s.rawValue
+        unsized = UserDefaults.standard.object(forKey: "NSSplitView Subview Frames " + name) == nil
+        autosaveName = name
+        adjustSubviews()
+    }
+
+    /// First time on this side, or a saved size that no longer fits: a third of the window.
+    func fitTerminal() {
+        guard !terminal.isHidden else { return }
+        adjustSubviews()
+        let l = length, tl = terminalLength
+        guard unsized || tl < terminalMin || l - tl < officeMin else { return }
+        unsized = false
+        let want = max(terminalMin, (l / 3).rounded())
+        setPosition(side.terminalFirst ? want : l - want - dividerThickness, ofDividerAt: 0)
+    }
 
     override var dividerColor: NSColor { NSColor(red: 0.25, green: 0.23, blue: 0.32, alpha: 1) }
 
     func splitView(_ s: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        max(p, Self.officeMin)
+        max(p, side.terminalFirst ? terminalMin : officeMin)
     }
     func splitView(_ s: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        min(p, s.bounds.height - Self.terminalMin - s.dividerThickness)
+        min(p, length - (side.terminalFirst ? officeMin : terminalMin) - dividerThickness)
     }
     func splitView(_ s: NSSplitView, canCollapseSubview v: NSView) -> Bool { false }
 }

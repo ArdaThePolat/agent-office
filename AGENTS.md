@@ -92,6 +92,8 @@ welcome tour that asks for both (and Agent Office → Welcome Tour… opens it a
 - **Create a room** / **Join a room** in the lounge's right-hand panel (or the **Room** menu)
   shares the lounge and a chat with teammates on their network; the host gives out the name and
   password, never you.
+- **View → Terminal** (⌃`) opens their own shell next to the office, with tabs (⌘T) and a side
+  of their choosing (View → Terminal Position).
 
 ## Uninstall
 

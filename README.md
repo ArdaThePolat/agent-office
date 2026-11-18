@@ -340,14 +340,21 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
   guesses against it offline. After three wrong passwords from one address the host ignores it
   for 10 minutes.
 
-### Terminal (optional): a shell under the office
+### Terminal (optional): a shell next to the office
 
-**View → Terminal** (⌃`) opens a terminal under the office; drag the divider to set its height,
+**View → Terminal** (⌃`) opens a terminal under the office; drag the divider to set its size,
 and the app remembers it and whether the terminal was open. It runs your own login shell (the one
 in your user account, as Terminal and iTerm start it), so your `.zshrc`, Oh My Zsh, prompt
-themes and aliases load as usual. Hiding the terminal keeps the shell running; quitting the app
-ends it. When the shell exits, Return starts a new one.
+themes and aliases load as usual. Hiding the terminal keeps its shells running; quitting the app
+ends them.
 
+- **Tabs:** each tab is its own shell. **⌘T** (or **+** in the tab bar) opens one; **⌘⇧]** and
+  **⌘⇧[** step through them, **⌘1**…**⌘8** pick one and **⌘9** the last. **⌘W** closes the tab
+  while you type in the terminal and more than one is open (otherwise it closes the window, as
+  before); so do the tab's **×** and a middle click. A tab shows the title your prompt sets.
+  `exit` closes its tab; in the last tab, Return starts a new shell.
+- **Where:** **View → Terminal Position** puts it below, above, left or right of the office. Each
+  side remembers its own size.
 - It is drawn by [xterm.js](https://xtermjs.org) (`web/vendor/xterm/`, MIT), bundled with the app:
   nothing is fetched at run time.
 - Font: MesloLGS NF when it is installed (the Nerd Font Powerlevel10k and similar prompts draw
