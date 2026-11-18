@@ -325,7 +325,8 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
   On the host it also asks to accept incoming connections.
 - **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
   block (`AGENT_OFFICE_ROOM_ENABLED=0`).
-- **What is shared:** your name, a small picture and your chat messages. Nothing about your
+- **What is shared:** your name, a small picture, your chat messages, and the mini-games' moves and
+  scores (see *Mini-games*). Nothing about your
   sessions, folders or prompts. Messages are kept in each app's memory only, and are gone when
   it quits; someone who joins later does not see earlier ones.
 - **Security:** the password never crosses the network. Each connection derives a key from it
@@ -494,6 +495,31 @@ claude plugin uninstall agent-office          # the companion mod, if you instal
 rm -rf ~/Applications/"Agent Office.app"
 rm -rf ~/.local/state/agent-office            # session files and the event log
 ```
+
+## Mini-games
+
+The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
+(or Room → Mini-Games…) opens the games over the office; **Esc** goes back.
+
+- **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), three laps.
+  **↑/W** go, **↓/S** brake, **←→/AD** steer. On the asphalt you reach full speed; on the grass
+  you slow right down until you are back on it. In a room, picking a track opens the race to
+  everyone: whoever joins in the next 10 seconds (a toast in their game, a line in the log, and
+  **Join** in their Games tab) races with you, and you see each other's cars.
+- **🎣 Fishing:** hold **Space** to charge a cast and let go to throw; when the bobber dives and
+  **!** shows, press Space to hook it; then hold Space to reel and let go when the line's tension
+  climbs into the red, or it snaps. Eight kinds of fish, from bluegill to a rare golden koi. Start
+  a **2-minute round** alone or with the room: everyone's catch adds up live. The room sees what
+  you catch.
+- **Leaderboard (Scores tab):** the fastest three laps on each track, the biggest fish and the best
+  2-minute round. In a room it is the room's: the host keeps it in
+  `~/.config/agent-office/leaderboard.json` on its own Mac, taking only scores within each board's
+  bounds and each name's best, top 10. Without a room, your own bests on this Mac.
+- **While you play,** an agent that starts waiting for you shows at the top of the game (click it
+  to go to that session) and as a macOS notification.
+
+What crosses the network for the games: your name, which race or round you opened or joined, your
+car's position ten times a second while racing, finish times, and what you caught.
 
 ## Trying a change: the dev app
 
