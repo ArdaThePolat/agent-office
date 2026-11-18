@@ -232,6 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var lastPoke: [String: Date] = [:]                   // who poked you last, and when (RoomSetup.swift)
     var shaking = false
     var settingsRoomLabel: NSTextField?
+    var settingsSigningLabel: NSTextField?, settingsSigningButton: NSButton?
     // ---- updates ----
     let updater = Updater()
     let jukebox = Jukebox()                              // the lounge's jukebox (Jukebox.swift)
@@ -368,7 +369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                     : "This copy was not built from a checkout, so it cannot rebuild itself: open the release page to get it.")
                 a.addButton(withTitle: build ? "Update Now" : "Open Release Page")
                 a.addButton(withTitle: "Later")
-                if a.runModal() == .alertFirstButtonReturn { self.updater.update() }
+                if a.runModal() == .alertFirstButtonReturn { self.offerSigning { self.updater.update() } }
                 return
             case "current": a.messageText = "Agent Office is up to date"; a.informativeText = "You have \(self.updater.current), the latest release."
             default: a.messageText = "Could not check for updates"; a.informativeText = self.updater.detail
@@ -409,7 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let parts = a.split(separator: "|", maxSplits: 1).map(String.init)
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
-        if body["update"] == "go" { updater.update() }
+        if body["update"] == "go" { DispatchQueue.main.async { self.offerSigning { self.updater.update() } } }   // Signing.swift
         if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
@@ -655,7 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 664),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -699,6 +700,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let prof = NSButton(title: "Change…", target: self, action: #selector(editProfile))
             prof.bezelStyle = .rounded
             prof.frame = NSRect(x: 220, y: 620, width: 145, height: 30)
+            let sigL = NSTextField(labelWithString: "Keep permissions")
+            sigL.frame = NSRect(x: 20, y: 662, width: 200, height: 20); sigL.lineBreakMode = .byTruncatingTail
+            settingsSigningLabel = sigL
+            let sig = NSButton(title: "Set Up…", target: self, action: #selector(setUpSigning))
+            sig.bezelStyle = .rounded
+            sig.frame = NSRect(x: 220, y: 656, width: 145, height: 30)
+            settingsSigningButton = sig
             let profL = NSTextField(labelWithString: "Your name and picture")
             profL.frame = NSRect(x: 20, y: 626, width: 200, height: 20)
             let imp = NSButton(title: "Import from env file…", target: self, action: #selector(importFromEnv))
@@ -714,11 +722,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 516, width: 340, height: 30)
             for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
+            for v in [sigL, sig, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
-        refreshSettingsRoom()
+        refreshSettingsRoom(); refreshSettingsSigning()
         settings?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
