@@ -508,12 +508,16 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   **Join** in their Games tab) and join; you press **Start** when everyone is in, and every car
   starts the same countdown from its own spot on the grid. The leaderboard keeps the **best lap**
   on each track, so races of any length compare.
-- **🎣 Fishing:** hold **Space** to charge a cast and let go to throw; when the bobber dives and
-  **!** shows, press Space to hook it; then hold Space to reel and let go when the line's tension
-  climbs into the red, or it snaps. Eight kinds of fish, up to a rare golden koi. Start a
-  **2-minute round** alone or with the room: everyone's catch adds up live.
+- **🎣 Fishing:** one pond for the whole room. Hold **Space** to charge a cast and let go to throw;
+  when a fish swims by your bobber it may bite (**!**): press Space to hook it, then hold Space to
+  reel and let go when the line's tension climbs into the red, or it snaps. Everyone sees the same
+  fish and each other's lines on the dock; a fish someone hooks is theirs (when two try, the first
+  to reach the pond's keeper gets it), and once caught it is gone for everyone. Eight kinds, up to a
+  rare golden koi. Start a **2-minute round** alone or with the room: everyone's catch adds up live.
 - **🪲 Bug Whack:** 45 seconds of bugs climbing out of the monitors: click them (golden ones are
-  worth 5, every fifth hit in a row 1 more), but leave the green ones, they are features (−3).
+  worth 5, every fifth hit in a row 1 more), but leave the green ones, they are features (−3). Play
+  alone or **open a round for the room**: everyone who joins gets the same bugs at the same moment,
+  the first click takes each one, and the scores show live.
 - **🏓 Ping-pong:** first to 7, with **↑↓/WS** or the mouse. Play the computer, or **Challenge** a
   teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
 - **📅 Daily challenge:** today's track and today's fish, the same for everyone in the room that
@@ -529,9 +533,15 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
 - **While you play,** an agent that starts waiting for you shows at the top of the game (click it
   to go to that session) and as a macOS notification.
 
-What crosses the network for the games: your name and medal, which race, round or match you opened
-or joined, your car's position ten times a second while racing, the ball and paddles fifteen times
-a second in ping-pong, finish times, catches and scores.
+How the shared games stay in step: a round's bugs and the pond's fish come from a random seed that
+whoever opened it sends once, so every Mac shows the same ones without sending them; whoever opened
+it is also the referee for who got a bug or hooked a fish first (in the pond, when its keeper
+leaves, the next person keeps it, with the same fish).
+
+What crosses the network for the games: your name and medal, which race, round, pond or match you
+opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
+times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
+finish times, catches and scores.
 
 ## Trying a change: the dev app
 
