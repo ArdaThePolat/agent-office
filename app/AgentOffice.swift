@@ -332,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             c.onChange = { [weak self] in self?.pushRoom() }
             c.onPoked = { [weak self] name in self?.poked(by: name) }
             c.onGame = { [weak self] msg in self?.gameIn(msg) }            // Games.swift
+            c.setBadge(defaults.string(forKey: "gameBadge") ?? "")
             // the host's own member waits a moment for its listener to be advertised
             DispatchQueue.main.asyncAfter(deadline: .now() + (want.host ? 1.5 : 0)) { c.start() }
             roomClient = c

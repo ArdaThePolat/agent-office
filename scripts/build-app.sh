@@ -31,7 +31,7 @@ mkdir -p "$B/MacOS" "$B/Resources"
 cp "$ROOT/app/AgentOffice.swift" "$BUILD/main.swift"
 swiftc -O -o "$B/MacOS/AgentOffice" "$BUILD/main.swift" "$ROOT/app/Room.swift" "$ROOT/app/Update.swift" "$ROOT/app/RoomSetup.swift" "$ROOT/app/Profile.swift" "$ROOT/app/Jukebox.swift" "$ROOT/app/Signing.swift" "$ROOT/app/Games.swift" -framework Cocoa -framework WebKit -framework Network -framework ServiceManagement -framework UserNotifications
 cp "$ROOT/web/office.html" "$B/Resources/"
-cp "$ROOT/web/games.js" "$B/Resources/"                       # the mini-games (office.html loads it)
+cp "$ROOT"/web/games*.js "$B/Resources/"                      # the mini-games (office.html loads them)
 cp "$ROOT/app/nowplaying.py" "$B/Resources/"                 # the jukebox's Now Playing helper (Jukebox.swift)
 cp "$ROOT/scripts/signing-setup.sh" "$B/Resources/"            # the app offers it (Signing.swift)
 
