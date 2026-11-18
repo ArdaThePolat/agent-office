@@ -324,13 +324,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         roomRunning = want
         roomMembersSent = -1
         if want.enabled {
-            if want.host { let h = RoomHost(want); h.start(); roomHost = h }
+            if want.host { let h = RoomHost(want); h.scoresFile = CONFIG_DIR + "/leaderboard.json"; h.start(); roomHost = h }
             let c = RoomClient(want) {
                 let cfg = Config.load()
                 return (cfg.managerName.isEmpty ? "Teammate" : cfg.managerName, managerImageURL(cfg.managerImage, maxH: 96))
             }
             c.onChange = { [weak self] in self?.pushRoom() }
             c.onPoked = { [weak self] name in self?.poked(by: name) }
+            c.onGame = { [weak self] msg in self?.gameIn(msg) }            // Games.swift
             // the host's own member waits a moment for its listener to be advertised
             DispatchQueue.main.asyncAfter(deadline: .now() + (want.host ? 1.5 : 0)) { c.start() }
             roomClient = c
@@ -415,6 +416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let parts = a.split(separator: "|", maxSplits: 1).map(String.init)
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
+        gameMessage(body)                                                   // Games.swift
         if body["update"] == "go" { DispatchQueue.main.async { self.offerSigning { self.updater.update() } } }   // Signing.swift
         if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
@@ -647,6 +649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let rm = NSMenu(title: "Room")
         rm.addItem(withTitle: "Create a Room…", action: #selector(createRoom), keyEquivalent: "")
         rm.addItem(withTitle: "Join a Room…", action: #selector(joinRoom), keyEquivalent: "")
+        rm.addItem(.separator())
+        rm.addItem(withTitle: "Mini-Games…", action: #selector(showGames), keyEquivalent: "")
         rm.addItem(.separator())
         rm.addItem(withTitle: "Leave the Room", action: #selector(leaveRoom), keyEquivalent: "")
         roomItem.submenu = rm
