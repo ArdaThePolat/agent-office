@@ -217,7 +217,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
     ]
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, NSWindowDelegate, NSMenuItemValidation {
     var window: NSWindow!
     var web: WKWebView!
     var settings: NSWindow?
@@ -256,13 +256,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     let updater = Updater()
     let jukebox = Jukebox()                              // the lounge's jukebox (Jukebox.swift)
     var updateTimer: Timer?
-    // ---- the terminal under the office (Terminal.swift) ----
+    // ---- the terminal beside the office (Terminal.swift) ----
     let terminal = TerminalPane()
     var split: OfficeSplit!
     var terminalShown: Bool {
         get { defaults.bool(forKey: "terminalShown") }      // false until turned on from the View menu
         set { defaults.set(newValue, forKey: "terminalShown") }
     }
+    var terminalSide: TerminalSide {
+        get { TerminalSide(rawValue: defaults.string(forKey: "terminalSide") ?? "") ?? .bottom }
+        set { defaults.set(newValue.rawValue, forKey: "terminalSide") }
+    }
+    var terminalItem: NSMenuItem!
     var manualCheck = false
     var checkUpdates: Bool {
         get { defaults.bool(forKey: "checkUpdates") }        // false until turned on in Settings
@@ -284,9 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Agent Office"
         window.minSize = NSSize(width: 380, height: 300)
-        split = OfficeSplit(office: web, terminal: terminal.view)
-        split.autosaveName = "AgentOfficeTerminal"           // remembers where the divider was
         terminal.view.isHidden = !terminalShown
+        split = OfficeSplit(office: web, terminal: terminal.view, side: terminalSide)
         window.contentView = split
         window.delegate = self
         if terminalShown { terminal.load() }
@@ -295,6 +299,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.backgroundColor = NSColor(red: 0.11, green: 0.10, blue: 0.15, alpha: 1)
         window.center()
         window.setFrameAutosaveName("AgentOfficeMain")       // remembers size and position
+        window.tabbingMode = .disallowed                     // the terminal has tabs; the window has none
+        split.fitTerminal()                                  // a shown terminal with no saved size gets a third
         applyKeepOnTop()
         if let page = Bundle.main.url(forResource: "office", withExtension: "html") {
             web.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
@@ -322,24 +328,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func applicationWillTerminate(_ n: Notification) { terminal.stop() }
 
-    /// Show or hide the terminal under the office. Hiding it leaves the shell running.
-    @objc func toggleTerminal(_ sender: NSMenuItem) {
-        terminalShown.toggle()
-        sender.state = terminalShown ? .on : .off
-        if terminalShown {
-            terminal.view.isHidden = false
-            split.adjustSubviews()
-            // first time, or a remembered height that no longer fits: a third of the window
-            let h = split.bounds.height, th = terminal.view.frame.height
-            if th < OfficeSplit.terminalMin || h - th < OfficeSplit.officeMin {
-                split.setPosition(h - max(OfficeSplit.terminalMin, (h / 3).rounded()), ofDividerAt: 0)
-            }
+    /// Show or hide the terminal. Hiding it leaves its shells running.
+    @objc func toggleTerminal(_ sender: NSMenuItem) { showTerminal(!terminalShown) }
+
+    func showTerminal(_ on: Bool) {
+        terminalShown = on
+        terminalItem.state = on ? .on : .off
+        terminal.view.isHidden = !on
+        if on {
+            split.fitTerminal()
             terminal.load()
             terminal.focus()
         } else {
-            terminal.view.isHidden = true
             split.adjustSubviews()
             window.makeFirstResponder(web)
+        }
+    }
+
+    /// ⌘T: a new tab, showing the terminal first if it is hidden (a first showing opens one tab).
+    @objc func newTerminalTab(_ sender: Any?) {
+        let fresh = !terminal.isLoaded
+        if !terminalShown { showTerminal(true) }
+        if !fresh { terminal.newTab(); terminal.focus() }
+    }
+    @objc func nextTerminalTab(_ sender: Any?) { terminal.selectTab(by: 1) }
+    @objc func previousTerminalTab(_ sender: Any?) { terminal.selectTab(by: -1) }
+
+    /// ⌘W: the terminal's tab while you type in it and it has more than one, the window otherwise.
+    @objc func closeTabOrWindow(_ sender: Any?) {
+        if terminal.hasFocus && terminal.tabCount > 1 { terminal.closeTab() } else { window.performClose(sender) }
+    }
+
+    @objc func setTerminalSide(_ sender: NSMenuItem) {
+        guard let side = sender.representedObject as? String, let s = TerminalSide(rawValue: side) else { return }
+        terminalSide = s
+        sender.menu?.items.forEach { $0.state = $0 === sender ? .on : .off }
+        split.place(s)
+        if terminalShown { split.fitTerminal(); terminal.focus() }
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(nextTerminalTab(_:)), #selector(previousTerminalTab(_:)): return terminalShown && terminal.tabCount > 1
+        default: return true
         }
     }
 
@@ -699,6 +730,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let term = view.addItem(withTitle: "Terminal", action: #selector(toggleTerminal(_:)), keyEquivalent: "`")
         term.keyEquivalentModifierMask = [.control]
         term.state = terminalShown ? .on : .off
+        terminalItem = term
+        view.addItem(withTitle: "New Terminal Tab", action: #selector(newTerminalTab(_:)), keyEquivalent: "t")
+        view.addItem(withTitle: "Next Terminal Tab", action: #selector(nextTerminalTab(_:)), keyEquivalent: "}")
+        view.addItem(withTitle: "Previous Terminal Tab", action: #selector(previousTerminalTab(_:)), keyEquivalent: "{")
+        let sideItem = view.addItem(withTitle: "Terminal Position", action: nil, keyEquivalent: "")
+        let sides = NSMenu(title: "Terminal Position")
+        for s in TerminalSide.allCases {
+            let it = sides.addItem(withTitle: s.title, action: #selector(setTerminalSide(_:)), keyEquivalent: "")
+            it.representedObject = s.rawValue
+            it.state = s == terminalSide ? .on : .off
+        }
+        sideItem.submenu = sides
         viewItem.submenu = view
         let roomItem = NSMenuItem(); main.addItem(roomItem)
         let rm = NSMenu(title: "Room")
@@ -712,7 +755,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let winItem = NSMenuItem(); main.addItem(winItem)
         let win = NSMenu(title: "Window")
         win.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        win.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        win.addItem(withTitle: "Close", action: #selector(closeTabOrWindow(_:)), keyEquivalent: "w")
         winItem.submenu = win
         NSApp.mainMenu = main
         NSApp.windowsMenu = win
