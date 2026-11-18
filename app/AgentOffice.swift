@@ -22,6 +22,11 @@ import WebKit
 import ServiceManagement
 
 let home = FileManager.default.homeDirectoryForCurrentUser.path
+/// "agent-office", or "agent-office-dev" in the dev app (scripts/build-app.sh --dev): its own config
+/// folder, so a build being tried never touches the installed app's room, name or picture.
+let APP_SLUG = Bundle.main.object(forInfoDictionaryKey: "AgentOfficeSlug") as? String ?? "agent-office"
+let CONFIG_DIR = home + "/.config/" + APP_SLUG
+let CONFIG_SHOWN = "~/.config/" + APP_SLUG
 func expand(_ p: String) -> String { p.hasPrefix("~/") ? home + p.dropFirst(1) : p }
 
 struct Config {
@@ -40,7 +45,7 @@ struct Config {
     /// to set these for it.
     static func env() -> [String: String] {
         var e: [String: String] = [:]
-        if let t = try? String(contentsOfFile: home + "/.config/agent-office/env", encoding: .utf8) {
+        if let t = try? String(contentsOfFile: CONFIG_DIR + "/env", encoding: .utf8) {
             for line in t.split(separator: "\n") {
                 let l = line.trimmingCharacters(in: .whitespaces)
                 guard !l.hasPrefix("#"), let eq = l.firstIndex(of: "=") else { continue }
@@ -75,7 +80,7 @@ struct Config {
 
     private static func fromJSON() -> Config {
         var c = Config()
-        let url = URL(fileURLWithPath: home + "/.config/agent-office/config.json")
+        let url = URL(fileURLWithPath: CONFIG_DIR + "/config.json")
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
         if let s = j["officeState"] as? String { c.officeState = expand(s) }
@@ -256,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         web.setValue(false, forKey: "drawsBackground")
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Agent Office"
+        window.title = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Agent Office"
         window.minSize = NSSize(width: 380, height: 300)
         window.contentView = web
         window.delegate = self
@@ -786,7 +791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         } else { lines.append("⚠️ No session has reported yet. Sessions started after the hook was installed appear here.") }
         if let rs = cfg.reviewState {
             lines.append(fm.fileExists(atPath: rs) ? "✅ Review room reads \(rs)." : "⚠️ Review state folder not found: \(rs)")
-        } else { lines.append("ℹ️ No review room configured (~/.config/agent-office/config.json).") }
+        } else { lines.append("ℹ️ No review room configured (\(CONFIG_SHOWN)/config.json).") }
         let a = NSAlert(); a.messageText = "Agent Office setup"; a.informativeText = lines.joined(separator: "\n\n")
         a.runModal()
     }

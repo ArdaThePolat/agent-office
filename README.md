@@ -495,6 +495,25 @@ rm -rf ~/Applications/"Agent Office.app"
 rm -rf ~/.local/state/agent-office            # session files and the event log
 ```
 
+## Trying a change: the dev app
+
+```bash
+scripts/build-app.sh --dev        # builds ~/Applications/Agent Office Dev.app from this checkout
+open ~/Applications/"Agent Office Dev.app"
+```
+
+It runs next to your installed Agent Office without touching it:
+- **Its own app:** a separate bundle id (`local.agent-office.dev`), so its own settings and macOS
+  permissions, and its own Dock icon (an orange stripe along the bottom).
+- **Its own config:** `~/.config/agent-office-dev/`, so its own name, picture, room and scores.
+- **No updater:** it never replaces itself.
+
+It reads the same sessions, so your agents show up in it too. To try the shared room, mini-games
+and chat with yourself, join your room from the dev app as a second person (Room → Join a Room…).
+Both apps can even host: when the room's port is taken, the second one listens on any free port and
+is found by name. Rebuild with the same command after each change. Remove it with
+`rm -rf ~/Applications/"Agent Office Dev.app" ~/.config/agent-office-dev`.
+
 ## Debugging
 
 - `"$HOME/Applications/Agent Office.app/Contents/MacOS/AgentOffice" --dump-snapshot` prints exactly

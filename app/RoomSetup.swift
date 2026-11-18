@@ -165,7 +165,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Change config.json through `edit`, keeping every other key; mode 0600. False (after saying
     /// why) when it could not be read or written.
     func writeConfig(_ edit: (inout [String: Any]) -> Void) -> Bool {
-        let dir = home + "/.config/agent-office", path = dir + "/config.json"
+        let dir = CONFIG_DIR, path = dir + "/config.json"
         var j: [String: Any] = [:]
         if let d = FileManager.default.contents(atPath: path) {
             guard let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else {
@@ -203,7 +203,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
                                               "AGENT_OFFICE_ROOM_ENABLED", "AGENT_OFFICE_ROOM_ADDRESS"].contains($0) }
         if !env.isEmpty {
             let e = NSAlert(); e.messageText = forget ? "Deleted, but your env file still sets a room" : "Saved, but your env file decides"
-            e.informativeText = "~/.config/agent-office/env sets \(env.sorted().joined(separator: ", ")), which wins over config.json. Settings → Import from env file… moves them here, so this change takes effect."
+            e.informativeText = "\(CONFIG_SHOWN)/env sets \(env.sorted().joined(separator: ", ")), which wins over config.json. Settings → Import from env file… moves them here, so this change takes effect."
             e.runModal()
         }
         syncRoom()
@@ -244,7 +244,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
 
     /// Replace the env file's lines with `lines`, keeping the old file as env.bak; both mode 0600.
     func rewriteEnv(_ lines: [String]) throws {
-        let path = home + "/.config/agent-office/env", bak = path + ".bak"
+        let path = CONFIG_DIR + "/env", bak = path + ".bak"
         try? FileManager.default.removeItem(atPath: bak)
         try FileManager.default.copyItem(atPath: path, toPath: bak)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bak)
@@ -255,7 +255,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// Take `keys` out of the env file (comments and every other line stay; a copy is kept in
     /// env.bak), so config.json decides them. False when the file could not be rewritten.
     func dropEnvKeys(_ keys: Set<String>) -> Bool {
-        let path = home + "/.config/agent-office/env"
+        let path = CONFIG_DIR + "/env"
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return true }
         var dropped = false
         let kept = text.components(separatedBy: "\n").filter { line in
@@ -273,7 +273,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     /// True when there was nothing to import or config.json now holds it.
     @discardableResult
     func importEnv(ask: Bool) -> Bool {
-        let path = home + "/.config/agent-office/env"
+        let path = CONFIG_DIR + "/env"
         let keys: [String: (String, String)] = [          // env key → (config block, field)
             "AGENT_OFFICE_ROOM_NAME": ("room", "name"), "AGENT_OFFICE_ROOM_PASSWORD": ("room", "password"),
             "AGENT_OFFICE_ROOM_HOST": ("room", "host"), "AGENT_OFFICE_ROOM_ALWAYS_JOIN": ("room", "alwaysJoin"),
@@ -300,7 +300,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         guard !found.isEmpty else {
             guard ask else { return true }
             a.messageText = "Nothing to import"
-            a.informativeText = "~/.config/agent-office/env has no room or manager settings (AGENT_OFFICE_ROOM_…, AGENT_OFFICE_MANAGER_…)."
+            a.informativeText = "\(CONFIG_SHOWN)/env has no room or manager settings (AGENT_OFFICE_ROOM_…, AGENT_OFFICE_MANAGER_…)."
             a.runModal(); return true
         }
         if ask {
@@ -335,7 +335,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             // left in place the lines still win, exactly as before the import: nothing breaks
             guard ask else { return true }
             let e = NSAlert(); e.messageText = "Imported, but the env file was not changed"
-            e.informativeText = "\(error.localizedDescription)\n\nRemove the AGENT_OFFICE_ROOM_ and AGENT_OFFICE_MANAGER_ lines from ~/.config/agent-office/env by hand, or they keep winning."
+            e.informativeText = "\(error.localizedDescription)\n\nRemove the AGENT_OFFICE_ROOM_ and AGENT_OFFICE_MANAGER_ lines from \(CONFIG_SHOWN)/env by hand, or they keep winning."
             e.runModal()
         }
         if ask, !room.isEmpty { roomSharing = true }

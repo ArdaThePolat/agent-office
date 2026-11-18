@@ -56,7 +56,7 @@ extension AppDelegate {
         var image: String? = nil                          // the value to store, when it changes
         if let p = picked {
             if p.isEmpty { image = "" } else {
-                let dir = home + "/.config/agent-office", ext = (p as NSString).pathExtension.lowercased()
+                let dir = CONFIG_DIR, ext = (p as NSString).pathExtension.lowercased()
                 let dest = dir + "/manager." + (ext.isEmpty ? "png" : ext)
                 do {
                     try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -94,7 +94,7 @@ extension AppDelegate {
             let e = NSAlert(); e.messageText = "Saved, but \(still.sorted().joined(separator: ", ")) still decides"
             e.informativeText = dropped
                 ? "Agent Office was started with it as an environment variable, which wins over config.json. Open the app normally (from the Dock or Finder) for this change to show."
-                : "~/.config/agent-office/env sets it and could not be changed. Remove that line by hand for this change to show."
+                : "\(CONFIG_SHOWN)/env sets it and could not be changed. Remove that line by hand for this change to show."
             e.runModal()
         }
         managerImageSent = nil
