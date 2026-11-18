@@ -34,7 +34,8 @@ let ROOM_MAX_FRAME = 200_000          // bytes, any message
 let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
-let ROOM_KEPT_MESSAGES = 300          // messages each app keeps, and the host can still edit or unsay
+let ROOM_KEPT_MESSAGES = 300
+let ROOM_AWAY: Double = 15 * 60       // seconds someone who left is listed as reconnecting          // messages each app keeps, and the host can still edit or unsay
 let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
 // what one member can do to another; a poke also reaches the poked person's Mac as a notification
 let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave", "poke"]
@@ -288,9 +289,18 @@ final class RoomClient {
     private var found = 0                                 // the attempt that found the room
     private var cn = Data()
     private var retry: Timer?
+    private var watcher: NWBrowser?                       // q: waits for the room to be announced again
     private var attempt = 0
 
-    init(_ cfg: RoomConfig, profile: @escaping () -> (name: String, avatar: String)) { self.cfg = cfg; self.profile = profile }
+    init(_ cfg: RoomConfig, profile: @escaping () -> (name: String, avatar: String)) {
+        self.cfg = cfg; self.profile = profile
+        recent = UserDefaults.standard.dictionary(forKey: "roomRecent." + cfg.name) as? [String: Double] ?? [:]
+    }
+    // Who was in this room lately, by name, with when they were last seen; kept across restarts.
+    // The page lists the ones not here now as reconnecting, for ROOM_AWAY seconds: after a host's
+    // restart (an update), the people who were there show up again as they come back.
+    private var recent: [String: Double] = [:]
+    private var recentSaved = 0.0
 
     func start() {
         join()
@@ -302,7 +312,8 @@ final class RoomClient {
     }
     var discover = true                                   // look for the room by name (off: by address only)
     private var stopped = false
-    func stop() { stopped = true; retry?.invalidate(); onChange = nil; onPoked = nil; q.async { self.browser?.cancel(); self.conn?.cancel() } }
+    func stop() { stopped = true; retry?.invalidate(); onChange = nil; onPoked = nil
+        q.async { self.browser?.cancel(); self.watcher?.cancel(); self.watcher = nil; self.conn?.cancel() } }
 
     /// Look for the room on the network and join it; if it is not there within 8 seconds, stay local.
     func join() {
@@ -312,6 +323,7 @@ final class RoomClient {
         set { $0.status = "looking"; $0.detail = "looking for \($0.cfg.name)…" }
         q.async {
             self.browser?.cancel()
+            self.watcher?.cancel(); self.watcher = nil
             let b = NWBrowser(for: .bonjour(type: self.discover ? ROOM_SERVICE : "_agent-office-none._tcp", domain: nil), using: .tcp)
             b.browseResultsChangedHandler = { [weak self] results, _ in
                 guard let self, self.conn == nil else { return }
@@ -453,13 +465,17 @@ final class RoomClient {
         local(wasIn ? "lost the room" : answered ? "the room did not let us in (wrong password?)"
               : "could not reach the room" + (cfg.address.isEmpty ? "" : " at \(cfg.address)"), lost: wasIn)
     }
-    /// Out of the room. Losing a room we were in is usually the host restarting its app or its Mac,
-    /// so the next looks come quickly (after 30 s, then 2 min) before falling back to the 15-minute
-    /// timer; without that, everyone would sit outside for up to 15 minutes after a host restart.
+    /// Out of the room. Losing a room we were in is usually the host restarting its app (an update
+    /// rebuilds it, which takes a minute or two) or its Mac, so the next looks come quickly, for
+    /// about 15 minutes, before falling back to the 15-minute timer. And while out, the room's
+    /// Bonjour announcement is watched: a host that comes back announces the room again, and that
+    /// is the "join me again" a host could not otherwise send (it does not know where its members
+    /// are, and members take no incoming connections). Without the watch, a room behind a hidden
+    /// network (joined by address) still has the quick looks.
     private func local(_ why: String, lost: Bool = false) {
         set {
             $0.status = "local"; $0.detail = why; $0.members = [:]; $0.membersVersion += 1
-            if lost { $0.quick = [30, 120] }
+            if lost { $0.quick = [10, 20, 30, 45, 60, 90, 120, 180, 300] }
             guard $0.cfg.alwaysJoin else { $0.nextTry = nil; return }
             if !$0.quick.isEmpty {
                 let d = $0.quick.removeFirst()
@@ -470,6 +486,32 @@ final class RoomClient {
             } else {
                 $0.nextTry = Date().addingTimeInterval(15 * 60)
             }
+            // a wrong password stays wrong: no watching, or every announcement would try it again
+            if !why.contains("did not let us in") { $0.watch() }
+        }
+    }
+    /// Join the moment the room is announced on this network again. The first answer lists what is
+    /// there already (the room we just failed to reach, perhaps): only a later appearance counts.
+    private func watch() {
+        guard cfg.alwaysJoin, discover, !stopped else { return }
+        q.async {
+            guard self.watcher == nil else { return }
+            let b = NWBrowser(for: .bonjour(type: ROOM_SERVICE, domain: nil), using: .tcp)
+            var first = true
+            b.browseResultsChangedHandler = { [weak self] _, changes in
+                guard let self else { return }
+                defer { first = false }
+                guard !first else { return }
+                for c in changes {
+                    if case .added(let r) = c, case .service(let name, _, _, _) = r.endpoint, name == self.cfg.name {
+                        self.watcher?.cancel(); self.watcher = nil
+                        DispatchQueue.main.async { if self.status == "local" { self.join() } }
+                        return
+                    }
+                }
+            }
+            b.start(queue: self.q)
+            self.watcher = b
         }
     }
     private var quick: [TimeInterval] = []                // main queue: the quick looks still to come
@@ -479,9 +521,17 @@ final class RoomClient {
 
     /// What the page needs; `withMembers` adds the members' pictures, sent only when they change.
     func json(withMembers: Bool) -> [String: Any] {
+        let now = Date().timeIntervalSince1970
+        let here = Set(members.compactMap { $0.key == you ? nil : ($0.value["name"] as? String) }.filter { !$0.isEmpty })
+        if status == "joined" { for n in here { recent[n] = now } }
+        recent = recent.filter { now - $0.value < ROOM_AWAY }
+        if now - recentSaved > 60 || recent.count != (UserDefaults.standard.dictionary(forKey: "roomRecent." + cfg.name)?.count ?? 0) {
+            UserDefaults.standard.set(recent, forKey: "roomRecent." + cfg.name); recentSaved = now
+        }
+        let away = recent.filter { !here.contains($0.key) }.sorted { $0.key < $1.key }.map { ["name": $0.key, "at": $0.value] }
         var o: [String: Any] = ["status": status, "detail": detail, "name": cfg.name, "you": you, "host": cfg.host,
                                 "alwaysJoin": cfg.alwaysJoin, "nextTry": nextTry?.timeIntervalSince1970 ?? 0,
-                                "count": members.count,
+                                "count": members.count, "away": away,
                                 "messages": messages.map { ["id": $0.id, "mid": $0.mid, "from": $0.from, "text": $0.text, "at": $0.at,
                                                               "edited": $0.edited, "deleted": $0.deleted] },
                                 "acts": acts.map { ["seq": $0.seq, "from": $0.from, "to": $0.to, "kind": $0.kind,

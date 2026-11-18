@@ -91,6 +91,10 @@
   #people .p:hover { background: #3a302c; }
   #people .p .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
   #people .p.me .nm { color: #9fe8b6; cursor: default; }
+  #people .p.away { opacity: .55; }
+  #people .p.away .dot { background: #6f665d; }
+  #people .p.away .an { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #people .p.away .ago { font-size: 10px; color: var(--muted); }
   #people .p .poke { font: 11px Menlo, monospace; color: #1b1820; background: #ffc370; border: 0; border-radius: 4px;
     padding: 1px 6px; cursor: pointer; }
   #people .p .poke:disabled { background: #4a3d36; color: var(--muted); cursor: default; }
@@ -1565,7 +1569,12 @@ function dockPeople(L) {
   const now = Date.now() / 1000, mates = roomMates();
   const waits = mates.map(m => Math.max(0, Math.ceil(POKE_WAIT - (now - (pokedAt.get(m.id) || 0)))));
   const me = (snap.manager && snap.manager.name) || "You";
-  const key = [room.status, room.name, room.detail, room.sharing, room.host, me, mates.map((m, i) => m.id + m.name + (waits[i] > 0)).join(",")].join("|");
+  // people who were in the room lately and are not now (a host's restart, a dropped connection):
+  // listed greyed, with how long ago, until they are back or ROOM_AWAY has passed (Room.swift)
+  const here = new Set(mates.map(m => m.name)), away = (room.away || []).filter(a => !here.has(a.name) && a.name !== me);
+  const ago = a => { const m = Math.max(1, Math.round((now - a.at) / 60)); return `away · ${m}m`; };
+  const key = [room.status, room.name, room.detail, room.sharing, room.host, me, mates.map((m, i) => m.id + m.name + (waits[i] > 0)).join(","),
+    away.map(a => a.name + ago(a)).join(",")].join("|");
   if (key === peopleKey) return;
   peopleKey = key;
   let html;
@@ -1582,9 +1591,10 @@ function dockPeople(L) {
       .concat(mates.map((m, i) => `<div class="p" data-m="${esc(m.id)}"><span class="dot" style="background:${SHIRTS[hash(m.id) % SHIRTS.length]}"></span>` +
         `<span class="nm" title="Hug, high five, wave…">${esc(m.name)}</span>` +
         `<button class="poke" data-poke="${esc(m.id)}" ${waits[i] ? "disabled" : ""} title="${waits[i] ? "You just poked them" : "A notification on their Mac, and their window shakes"}">👉 Poke</button></div>`));
+    const gone = away.map(a => `<div class="p away" title="In the room lately; joins again by itself when they (or the host) are back"><span class="dot"></span><span class="an">${esc(a.name)}</span><span class="ago">${ago(a)}</span></div>`).join("");
     html = `<div class="ph"><b>${esc(room.name || "Room")}</b><button data-more="1" title="Room options">⋯</button></div><div class="sub">${esc(sub)}</div>` +
-      `<div class="list">${room.status === "joined" ? rows.join("") + (mates.length ? "" : `<div class="empty">Nobody else yet.</div>`)
-        : `<div class="empty">${esc(room.detail || "")}</div>`}</div>` +
+      `<div class="list">${room.status === "joined" ? rows.join("") + gone + (mates.length || away.length ? "" : `<div class="empty">Nobody else yet.</div>`)
+        : `<div class="empty">${esc(room.detail || "")}</div>${gone}`}</div>` +
       (room.status === "local" ? `<div class="acts"><button class="alt" data-r="join">Try now</button></div>` : "");
   }
   peopleEl.innerHTML = html;
