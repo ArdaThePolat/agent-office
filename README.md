@@ -325,7 +325,8 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
   On the host it also asks to accept incoming connections.
 - **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
   block (`AGENT_OFFICE_ROOM_ENABLED=0`).
-- **What is shared:** your name, a small picture and your chat messages. Nothing about your
+- **What is shared:** your name, a small picture, your chat messages, and the mini-games' moves and
+  scores (see *Mini-games*). Nothing about your
   sessions, folders or prompts. Messages are kept in each app's memory only, and are gone when
   it quits; someone who joins later does not see earlier ones.
 - **Security:** the password never crosses the network. Each connection derives a key from it
@@ -512,6 +513,75 @@ claude plugin uninstall agent-office          # the companion mod, if you instal
 rm -rf ~/Applications/"Agent Office.app"
 rm -rf ~/.local/state/agent-office            # session files and the event log
 ```
+
+## Mini-games
+
+The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
+(or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes.
+
+- **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
+  **↑/W** go, **↓/S** brake, **←→/AD** steer. On the asphalt you reach full speed; on the grass
+  you slow right down until you are back on it; cars bump off each other. In a room, **Open the
+  race to the room** makes a lobby: teammates see it (a toast in their game, a line in the log,
+  **Join** in their Games tab) and join; you press **Start** when everyone is in, and every car
+  starts the same countdown from its own spot on the grid. The leaderboard keeps the **best lap**
+  on each track, so races of any length compare.
+- **🎣 Fishing:** one pond for the whole room. Hold **Space** to charge a cast and let go to throw;
+  when a fish swims by your bobber it may bite (**!**): press Space to hook it, then hold Space to
+  reel and let go when the line's tension climbs into the red, or it snaps. Everyone sees the same
+  fish and each other's lines on the dock; a fish someone hooks is theirs (when two try, the first
+  to reach the pond's keeper gets it), and once caught it is gone for everyone. Eight kinds, up to a
+  rare golden koi. Start a **2-minute round** alone or with the room: everyone's catch adds up live.
+- **🪲 Bug Whack:** 45 seconds of bugs climbing out of the monitors: click them (golden ones are
+  worth 5, every fifth hit in a row 1 more), but leave the green ones, they are features (−3). Play
+  alone or **open a round for the room**: everyone who joins gets the same bugs at the same moment,
+  the first click takes each one, and the scores show live.
+- **🏓 Ping-pong:** first to 7, with **↑↓/WS** or the mouse. Play the computer, or **Challenge** a
+  teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
+- **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
+  everyone in the room on the same day (in the same time zone), with their own boards (the best lap
+  on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
+  score only for its yesterday, today or tomorrow, so teammates in other time zones still count.
+- **🏅 Achievements:** sixteen of them (finish on all five tracks, a 10-lap race, win against a
+  teammate, a golden koi, 50 in a Bug Whack round, beat the computer…), kept on your Mac and listed
+  in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
+  teammates too.
+- **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
+  in its config folder (`~/.config/agent-office`, or `~/.config/agent-office-dev` for the dev app),
+  taking only scores within each board's bounds, a few a minute per person, and each name's best,
+  top 10. Entries go by display name: the room trusts its members, so two people with the same name
+  share a line. Without a room, your own bests on this Mac.
+- **While you play,** an agent that starts waiting for you shows at the top of the game (click it
+  to go to that session) and as a macOS notification.
+
+How the shared games stay in step: a round's bugs and the pond's fish come from a random seed that
+whoever opened it sends once, so every Mac shows the same ones without sending them; whoever opened
+it is also the referee for who got a bug or hooked a fish first (in the pond, when its keeper
+leaves, the next person keeps it, with the same fish).
+
+What crosses the network for the games: your name and medal, which race, round, pond or match you
+opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
+times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
+finish times, catches and scores.
+
+## Trying a change: the dev app
+
+```bash
+scripts/build-app.sh --dev        # builds ~/Applications/Agent Office Dev.app from this checkout
+open ~/Applications/"Agent Office Dev.app"
+```
+
+It runs next to your installed Agent Office without touching it:
+- **Its own app:** a separate bundle id (`local.agent-office.dev`), so its own settings and macOS
+  permissions, and its own Dock icon (an orange stripe along the bottom).
+- **Its own config:** `~/.config/agent-office-dev/`, so its own name, picture, room and scores.
+- **No updater:** it never replaces itself.
+
+It reads the same sessions, so your agents show up in it too. To try the shared room, mini-games
+and chat with yourself, join your room from the dev app as a second person (Room → Join a Room…).
+Both apps can even host: when the room's port is taken, the second one listens on any free port and
+is found by name. Rebuild with the same command after each change. Remove it with
+`rm -rf ~/Applications/"Agent Office Dev.app" ~/.config/agent-office-dev`.
 
 ## Debugging
 
