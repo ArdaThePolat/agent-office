@@ -270,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        decideWelcome()                                      // before the env import: it looks at what was set up before
         importEnvOnce()                                      // before the first look at the room (RoomSetup.swift)
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
         syncRoom()
@@ -292,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         // Nothing on screen (minimised, hidden, or covered by other windows): skip the work.
         guard window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) else { return }
         var snap = snapshot(Config.load())
-        snap["settings"] = ["energySaver": energySaver]
+        snap["settings"] = ["energySaver": energySaver, "welcome": !defaults.bool(forKey: "welcomed")]
         snap["jukebox"] = jukebox.snapshot
         snap["hidden"] = defaults.string(forKey: "hidden") ?? "{}"
         // the manager's picture only when it changed: it is most of a snapshot otherwise
@@ -409,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
         if body["update"] == "go" { updater.update() }
+        if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {
@@ -590,6 +592,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window?.collectionBehavior = keepOnTop ? [.canJoinAllSpaces, .fullScreenAuxiliary] : []
     }
 
+    // ---- the welcome tour ----
+    // The page shows it while "welcomed" is false: what the office is, then your name and picture,
+    // then a room, each step skippable. Someone who used the app before this existed (an env
+    // import already ran, or a name, picture or room is set up) is counted as welcomed and never
+    // sees it; Agent Office → Welcome Tour… shows it to anyone.
+    func decideWelcome() {
+        guard defaults.object(forKey: "welcomed") == nil else { return }
+        let cfg = Config.load()
+        let before = defaults.object(forKey: "envImported") != nil || !cfg.managerName.isEmpty
+            || !cfg.managerImage.isEmpty || !cfg.room.name.isEmpty
+        defaults.set(before, forKey: "welcomed")
+    }
+    @objc func showWelcome() {
+        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        web.evaluateJavaScript("window.showWelcome && showWelcome()", completionHandler: nil)
+    }
+
     // ---- menu and settings ----
     func buildMenu() {
         let main = NSMenu()
@@ -599,6 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         app.addItem(.separator())
         app.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         app.addItem(withTitle: "Your Name and Picture…", action: #selector(editProfile), keyEquivalent: "")
+        app.addItem(withTitle: "Welcome Tour…", action: #selector(showWelcome), keyEquivalent: "")
         app.addItem(withTitle: "Check Setup…", action: #selector(checkSetup), keyEquivalent: "")
         app.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         app.addItem(.separator())
