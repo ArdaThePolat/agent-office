@@ -71,7 +71,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   what the open sessions have cost. Click it
   for the stats screen. **✎ edit** under its window sets your name and picture (also in
   Settings, and Agent Office → Your Name and Picture…); the picture is copied next to the config,
-  and a teammate in your shared room sees the change at once. Or set `manager` by hand (see
+  and a teammate in your shared room sees the change at once. Saving makes it the manager right
+  away: `AGENT_OFFICE_MANAGER_…` lines in the env file, which would win over it, are taken out
+  (a copy stays in `env.bak`). Or set `manager` by hand (see
   *Configuration*). The weekly number is one for the whole account: each session reports the
   value from its own last reply, so the gauge shows the highest report for the current week.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
@@ -377,7 +379,8 @@ file, not in the repository. Every key is optional.
   white or transparent background is cut away and the rest redrawn as pixel art, so a pixel-art
   avatar looks best. `name` goes on the desk's name plate. With a name and no image, a drawn
   manager sits there. `local/` in the repository is ignored by git: a good place to keep the
-  picture. `AGENT_OFFICE_MANAGER_IMAGE` and `AGENT_OFFICE_MANAGER_NAME` override both keys.
+  picture. `AGENT_OFFICE_MANAGER_IMAGE` and `AGENT_OFFICE_MANAGER_NAME` override both keys, until
+  **✎ edit** saves a new name and picture: that takes those two lines out of the env file.
 - **`reviews`** feeds the review room from a PR reviewer that keeps:
   - `<state>/running/<repo>-<pr>`: one tab-separated line per review in progress (repo name, repo
     slug, PR number, commit, author, start time `HH:MM`, pid, title);

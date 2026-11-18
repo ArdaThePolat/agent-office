@@ -2,7 +2,9 @@
 //
 // The dialog writes the "manager" block of ~/.config/agent-office/config.json. A chosen picture
 // is copied next to the config (manager.<ext>), so moving or deleting the original does not
-// take it away; Remove picture goes back to a drawn character.
+// take it away; Remove picture goes back to a drawn character. Saving makes this the manager at
+// once: AGENT_OFFICE_MANAGER_ lines in the env file, which would win over config.json, are taken
+// out of it (a copy stays in env.bak).
 
 import Cocoa
 import UniformTypeIdentifiers
@@ -77,12 +79,22 @@ extension AppDelegate {
             var m = j["manager"] as? [String: Any] ?? [:]
             if n.isEmpty { m.removeValue(forKey: "name") } else { m["name"] = n }
             if let image { if image.isEmpty { m.removeValue(forKey: "image") } else { m["image"] = image } }
+            // a picture only the env file set, left as it was: kept here, as the env line goes below
+            else if m["image"] == nil, !cfg.managerImage.isEmpty { m["image"] = cfg.managerImage }
             if m.isEmpty { j.removeValue(forKey: "manager") } else { j["manager"] = m }
         }) else { return }
-        let env = Config.env().keys.filter { $0 == "AGENT_OFFICE_MANAGER_NAME" || $0 == "AGENT_OFFICE_MANAGER_IMAGE" }
-        if !env.isEmpty {
-            let e = NSAlert(); e.messageText = "Saved, but your env file decides"
-            e.informativeText = "~/.config/agent-office/env sets \(env.sorted().joined(separator: ", ")), which wins over config.json. Settings → Import from env file… moves it here, so this change takes effect."
+        // You just chose who you are: an AGENT_OFFICE_MANAGER_ line in the env file would win over
+        // it, so it goes (a copy stays in env.bak). The process environment cannot be changed from
+        // here, so that one is only named.
+        let keys: Set<String> = ["AGENT_OFFICE_MANAGER_NAME", "AGENT_OFFICE_MANAGER_IMAGE"]
+        let dropped = dropEnvKeys(keys)
+        let still = keys.filter { ProcessInfo.processInfo.environment[$0] != nil }
+            .union(dropped ? [] : keys.filter { Config.env()[$0] != nil })
+        if !still.isEmpty {
+            let e = NSAlert(); e.messageText = "Saved, but \(still.sorted().joined(separator: ", ")) still decides"
+            e.informativeText = dropped
+                ? "Agent Office was started with it as an environment variable, which wins over config.json. Open the app normally (from the Dock or Finder) for this change to show."
+                : "~/.config/agent-office/env sets it and could not be changed. Remove that line by hand for this change to show."
             e.runModal()
         }
         managerImageSent = nil
