@@ -335,6 +335,24 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
   guesses against it offline. After three wrong passwords from one address the host ignores it
   for 10 minutes.
 
+### Terminal (optional): a shell under the office
+
+**View → Terminal** (⌃`) opens a terminal under the office; drag the divider to set its height,
+and the app remembers it and whether the terminal was open. It runs your own login shell (the one
+in your user account, as Terminal and iTerm start it), so your `.zshrc`, Oh My Zsh, prompt
+themes and aliases load as usual. Hiding the terminal keeps the shell running; quitting the app
+ends it. When the shell exits, Return starts a new one.
+
+- It is drawn by [xterm.js](https://xtermjs.org) (`web/vendor/xterm/`, MIT), bundled with the app:
+  nothing is fetched at run time.
+- Font: MesloLGS NF when it is installed (the Nerd Font Powerlevel10k and similar prompts draw
+  their icons with), else SF Mono or Menlo; 13 pt.
+- Option types your keyboard layout's characters; it is not Meta.
+- The shell inherits the app's background priority (`nice` 10), like everything the app starts:
+  a long build in it yields to other work on a busy Mac.
+- `TERM_PROGRAM` is `AgentOffice`, so clicking an agent that runs in this terminal does not bring
+  a Terminal or iTerm tab to the front.
+
 ## Settings
 
 Agent Office → Settings… (⌘,):
