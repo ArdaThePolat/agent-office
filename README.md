@@ -2,7 +2,7 @@
 
 A small macOS window that shows your Claude Code agents at work, as a pixel-art office.
 
-![Agent Office: the manager in the corner office with its edit button, three PR reviews at their desks and three in the queue on the sofa; Claude Code sessions with their subagents, each with its state, model and effort, beside the shared room's chat; the lounge at the bottom with teammates on a break and the list of people in the room, each with a Poke button](docs/screenshot.png)
+![Agent Office: the manager in the corner office with its edit button, three PR reviews at their desks and three in the queue on the sofa; Claude Code sessions with their subagents, each with its state, model and effort, beside the shared room's chat; the lounge at the bottom with the jukebox playing in the kitchen corner, teammates on a break and the list of people in the room, each with a Poke button](docs/screenshot.png)
 
 *Demo data. Open `web/office.html` in a browser to see it live.*
 
@@ -80,15 +80,22 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   its own order, walking between spots. It walks back to a desk the moment it gets work. **Right-click → Release to the lounge** sends
   one there yourself and empties its desk; it comes back on its own when you send it a message,
   or with **Back to the desk**.
-- **Jukebox** (only when Spotify is installed): in the kitchen's corner, between two speakers. It
-  shows what Spotify is playing on this Mac: the album cover as pixel art and the song and artist
-  scrolling on its display (hover it for the album too). Its three buttons skip back, play/pause
-  and skip ahead. The first press makes macOS ask once whether Agent Office may control Spotify;
-  if you said no, the jukebox's tooltip says where to change it (System Settings → Privacy &
-  Security → Automation). It never starts Spotify, and nothing about what you play goes to the
+- **Jukebox**: in the kitchen's corner, between two speakers. It shows what is playing on this
+  Mac, from any app that shows in macOS's Now Playing (Spotify, Music, a YouTube video in Chrome
+  or Safari, a podcast app): the cover as pixel art, the title and artist scrolling on its display
+  with a line for how far in it is, and the app, album and time when you hover it. Its three
+  buttons skip back, play/pause and skip ahead in that app, with no permission to give. The cover
+  stays while you pause. It never starts an app, and nothing about what you play goes to the
   shared room. The lever on top switches soft party lights on over the lounge (drifting colours
-  and mirror-ball glints; they hold still with Energy saver on). The lever is remembered on this
-  Mac.
+  and mirror-ball glints; they hold still with Energy saver on), remembered on this Mac. Turn the
+  jukebox off in Settings.
+
+  macOS gives Now Playing only to Apple's own programs, so the app reads it through a small helper
+  (`app/nowplaying.py`) that runs with the python3 of the Xcode command line tools the build
+  already needs. Without them, the jukebox shows Spotify only: Spotify's own notification for the
+  song, and Apple Events for the buttons, which makes macOS ask once whether Agent Office may
+  control Spotify (if you said no, the tooltip says where to change it: System Settings → Privacy
+  & Security → Automation).
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
   been running, and a sofa for the queue. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
@@ -331,6 +338,7 @@ Agent Office → Settings… (⌘,):
   when you try).
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
+- **Jukebox in the lounge** (on by default): off hides it and stops its helper.
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
   that hosts a room, so the room is back after a restart. macOS may ask you to approve it in
   System Settings → General → Login Items.
@@ -433,14 +441,16 @@ PR reviewer ─────────▶ <reviews state>/running/*, queue, log
   effort. Where a session runs (the app, its terminal device) is recorded so a click can open it.
   With the companion mod, each session's context use, cost, plan usage and subagent states too.
   Everything stays on your Mac, under `~/.local/state/agent-office/`. There are two exceptions. The
-  optional shared room sends your name, picture and chat messages to the room. The jukebox (when
-  Spotify is installed) asks Spotify's public oEmbed endpoint (`open.spotify.com/oembed`) for each
-  new song's cover, by its track id; Spotify already knows what you play, and nothing about it is
-  sent anywhere else.
+  optional shared room sends your name, picture and chat messages to the room. The jukebox reads
+  covers from macOS's Now Playing, on your Mac; only when that is not available (no Xcode command
+  line tools) does it ask Spotify's public oEmbed endpoint (`open.spotify.com/oembed`) for each new
+  Spotify song's cover, by its track id. Spotify already knows what you play, and nothing about it
+  is sent anywhere else.
 - **CPU and memory:** the app runs at background priority and reads its state only while its window
   is visible. It redraws at most 6 times a second (none while hidden) and draws at most 30 sessions;
   walls, floors and furniture are painted once and cached. Measured on an M-series Mac with the
-  window visible: about 4% of one core and about 55 MB of memory.
+  window visible: about 4% of one core and about 55 MB of memory. The jukebox's helper adds about
+  25 MB and wakes only when what is playing changes (and every 5 seconds to check).
 
 ## Uninstall
 

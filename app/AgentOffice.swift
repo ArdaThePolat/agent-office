@@ -234,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     var settingsRoomLabel: NSTextField?
     // ---- updates ----
     let updater = Updater()
-    let jukebox = Jukebox()                              // the lounge's Spotify jukebox (Jukebox.swift)
+    let jukebox = Jukebox()                              // the lounge's jukebox (Jukebox.swift)
     var updateTimer: Timer?
     var manualCheck = false
     var checkUpdates: Bool {
@@ -633,61 +633,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 592),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 664),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
             let box = NSButton(checkboxWithTitle: "Keep the window on top of other windows", target: self, action: #selector(toggleTop(_:)))
             box.state = keepOnTop ? .on : .off
-            box.frame = NSRect(x: 20, y: 198, width: 350, height: 22)
+            box.frame = NSRect(x: 20, y: 270, width: 350, height: 22)
             let hint = NSTextField(wrappingLabelWithString: "Off by default. When on, the office floats above other apps and follows you across Spaces.")
-            hint.frame = NSRect(x: 38, y: 162, width: 320, height: 32)
+            hint.frame = NSRect(x: 38, y: 234, width: 320, height: 32)
             let snd = NSButton(checkboxWithTitle: "Play a sound when an agent needs you or finishes", target: self, action: #selector(toggleSound(_:)))
             snd.state = sound ? .on : .off
-            snd.frame = NSRect(x: 20, y: 126, width: 350, height: 22)
+            snd.frame = NSRect(x: 20, y: 198, width: 350, height: 22)
             let hint2 = NSTextField(wrappingLabelWithString: "Off by default. \u{201C}Glass\u{201D} when one waits for your permission, \u{201C}Pop\u{201D} when one finishes its turn.")
-            hint2.frame = NSRect(x: 38, y: 90, width: 320, height: 32)
+            hint2.frame = NSRect(x: 38, y: 162, width: 320, height: 32)
             let eco = NSButton(checkboxWithTitle: "Energy saver", target: self, action: #selector(toggleEnergy(_:)))
             eco.state = energySaver ? .on : .off
-            eco.frame = NSRect(x: 20, y: 54, width: 350, height: 22)
+            eco.frame = NSRect(x: 20, y: 126, width: 350, height: 22)
             let hint3 = NSTextField(wrappingLabelWithString: "Off by default. Redraws 2 times a second instead of 6, with no walking or blinking.")
-            hint3.frame = NSRect(x: 38, y: 18, width: 320, height: 32)
+            hint3.frame = NSRect(x: 38, y: 90, width: 320, height: 32)
             let shr = NSButton(checkboxWithTitle: "Join the shared room", target: self, action: #selector(toggleRoom(_:)))
             shr.state = roomSharing ? .on : .off
-            shr.frame = NSRect(x: 20, y: 270, width: 350, height: 22)
+            shr.frame = NSRect(x: 20, y: 342, width: 350, height: 22)
             let hint4 = NSTextField(wrappingLabelWithString: "On by default, when a room is set up in the config. Your lounge joins your teammates': names, pictures and chat. Nothing about your sessions is shared.")
-            hint4.frame = NSRect(x: 38, y: 224, width: 320, height: 44)
+            hint4.frame = NSRect(x: 38, y: 296, width: 320, height: 44)
             let lgn = NSButton(checkboxWithTitle: "Open at login", target: self, action: #selector(toggleLogin(_:)))
             lgn.state = SMAppService.mainApp.status == .enabled ? .on : .off
-            lgn.frame = NSRect(x: 20, y: 342, width: 350, height: 22)
+            lgn.frame = NSRect(x: 20, y: 414, width: 350, height: 22)
             let hint5 = NSTextField(wrappingLabelWithString: "Off by default. Starts Agent Office when you log in, so a room you host is there after a restart. macOS may ask you to allow it in Login Items.")
-            hint5.frame = NSRect(x: 38, y: 296, width: 320, height: 44)
+            hint5.frame = NSRect(x: 38, y: 368, width: 320, height: 44)
             let upd = NSButton(checkboxWithTitle: "Check for updates once a day", target: self, action: #selector(toggleUpdates(_:)))
             upd.state = checkUpdates ? .on : .off
-            upd.frame = NSRect(x: 20, y: 414, width: 350, height: 22)
+            upd.frame = NSRect(x: 20, y: 486, width: 350, height: 22)
             let hint6 = NSTextField(wrappingLabelWithString: "Off by default. Asks GitHub for the latest release; a newer one shows an Update button that rebuilds the app from it and reopens it.")
-            hint6.frame = NSRect(x: 38, y: 368, width: 320, height: 44)
+            hint6.frame = NSRect(x: 38, y: 440, width: 320, height: 44)
             let roomLbl = NSTextField(labelWithString: "")
-            roomLbl.frame = NSRect(x: 20, y: 482, width: 200, height: 20)
+            roomLbl.frame = NSRect(x: 20, y: 554, width: 200, height: 20)
             roomLbl.lineBreakMode = .byTruncatingTail
             settingsRoomLabel = roomLbl
             let del = NSButton(title: "Delete Saved Room…", target: self, action: #selector(deleteSavedRoom))
             del.bezelStyle = .rounded
-            del.frame = NSRect(x: 220, y: 476, width: 145, height: 30)
+            del.frame = NSRect(x: 220, y: 548, width: 145, height: 30)
             let prof = NSButton(title: "Change…", target: self, action: #selector(editProfile))
             prof.bezelStyle = .rounded
-            prof.frame = NSRect(x: 220, y: 548, width: 145, height: 30)
+            prof.frame = NSRect(x: 220, y: 620, width: 145, height: 30)
             let profL = NSTextField(labelWithString: "Your name and picture")
-            profL.frame = NSRect(x: 20, y: 554, width: 200, height: 20)
+            profL.frame = NSRect(x: 20, y: 626, width: 200, height: 20)
             let imp = NSButton(title: "Import from env file…", target: self, action: #selector(importFromEnv))
             imp.bezelStyle = .rounded
-            imp.frame = NSRect(x: 220, y: 510, width: 145, height: 30)
+            imp.frame = NSRect(x: 220, y: 582, width: 145, height: 30)
             let impL = NSTextField(labelWithString: "Set up with the env file?")
-            impL.frame = NSRect(x: 20, y: 516, width: 200, height: 20)
+            impL.frame = NSRect(x: 20, y: 588, width: 200, height: 20)
+            let jbx = NSButton(checkboxWithTitle: "Jukebox in the lounge", target: self, action: #selector(toggleJukebox(_:)))
+            jbx.state = jukebox.enabled ? .on : .off
+            jbx.frame = NSRect(x: 20, y: 54, width: 350, height: 22)
+            let hint8 = NSTextField(wrappingLabelWithString: "On by default. Shows what plays on this Mac (Spotify, Music, a video in a browser) with previous, play/pause and next.")
+            hint8.frame = NSRect(x: 38, y: 18, width: 320, height: 32)
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
-            hint7.frame = NSRect(x: 20, y: 444, width: 340, height: 30)
-            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3] { w.contentView?.addSubview(v) }
+            hint7.frame = NSRect(x: 20, y: 516, width: 340, height: 30)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }
@@ -703,6 +708,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     @objc func toggleTop(_ sender: NSButton) { keepOnTop = sender.state == .on }
     @objc func toggleSound(_ sender: NSButton) { sound = sender.state == .on }
     @objc func toggleEnergy(_ sender: NSButton) { energySaver = sender.state == .on }
+    @objc func toggleJukebox(_ sender: NSButton) { jukebox.enabled = sender.state == .on }
     @objc func toggleRoom(_ sender: NSButton) { roomSharing = sender.state == .on }
     @objc func toggleUpdates(_ sender: NSButton) { checkUpdates = sender.state == .on }
     // Open at login: registers this app as a login item with macOS. When macOS wants the person
