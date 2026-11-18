@@ -4,7 +4,7 @@ import WebKit
 /// The terminal under the office: the user's login shell on a pseudo-terminal, drawn by xterm.js
 /// (web/terminal.html) in its own web view. The shell starts the first time the pane is shown and
 /// keeps running while the pane is hidden; it ends with the app.
-final class TerminalPane: NSObject, WKScriptMessageHandler {
+final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     private(set) var view: WKWebView!
     private var loaded = false
     private var master: Int32 = -1
@@ -20,6 +20,12 @@ final class TerminalPane: NSObject, WKScriptMessageHandler {
     private var flushQueued = false
     private static let maxInFlight = 4
     private static let maxBatch = 256 * 1024
+    // Input waits here while the program in front is not reading (a dev server, `sleep`): a write
+    // source sends it as the terminal takes it, so typing or a paste never blocks the app. Beyond
+    // maxInput the rest is dropped, as a terminal drops a paste that goes nowhere.
+    private var toShell = Data()
+    private var writer: DispatchSourceWrite?
+    private static let maxInput = 1 << 20
 
     override init() {
         super.init()
@@ -27,6 +33,14 @@ final class TerminalPane: NSObject, WKScriptMessageHandler {
         conf.userContentController.add(WeakHandler(self), name: "term")
         view = WKWebView(frame: .zero, configuration: conf)
         view.setValue(false, forKey: "drawsBackground")
+        view.navigationDelegate = self
+    }
+
+    /// This view carries a handler that types into your shell, so the one page it may show is
+    /// terminal.html: any other navigation (a link in the output, say) is cancelled.
+    func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let u = a.request.url
+        decisionHandler(u?.isFileURL == true && u?.lastPathComponent == "terminal.html" ? .allow : .cancel)
     }
 
     /// Load the page once; its "ready" message starts the shell.
@@ -70,13 +84,27 @@ final class TerminalPane: NSObject, WKScriptMessageHandler {
 
     private func send(_ d: Data) {
         guard master >= 0 else { return }
-        d.withUnsafeBytes { raw in
-            var off = 0
-            while off < raw.count {
-                let n = write(master, raw.baseAddress! + off, raw.count - off)
-                if n > 0 { off += n } else if n < 0 && (errno == EAGAIN || errno == EINTR) { usleep(1000) } else { break }
+        toShell.append(d.prefix(max(0, Self.maxInput - toShell.count)))
+        drainInput()
+    }
+    /// Write what the terminal takes now; when it is full, wait for it to be writable again.
+    private func drainInput() {
+        while !toShell.isEmpty {
+            let n = toShell.withUnsafeBytes { write(master, $0.baseAddress!, $0.count) }
+            if n > 0 { toShell.removeFirst(n); continue }
+            if n < 0 && errno == EINTR { continue }
+            if n < 0 && errno == EAGAIN {
+                if writer == nil {
+                    let w = DispatchSource.makeWriteSource(fileDescriptor: master, queue: .main)
+                    w.setEventHandler { [weak self] in self?.drainInput() }
+                    w.resume()
+                    writer = w
+                }
+                return
             }
+            toShell.removeAll(); break                                 // the terminal is gone
         }
+        writer?.cancel(); writer = nil
     }
 
     // ---- the shell ----
@@ -165,6 +193,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler {
         if master >= 0 { readOutput() }
         if readerPaused { reader?.resume(); readerPaused = false }
         reader?.cancel(); reader = nil
+        writer?.cancel(); writer = nil; toShell.removeAll()
         exitWatch?.cancel(); exitWatch = nil
         if master >= 0 { close(master); master = -1 }
         child = 0

@@ -353,6 +353,11 @@ ends it. When the shell exits, Return starts a new one.
   a long build in it yields to other work on a busy Mac.
 - `TERM_PROGRAM` is `AgentOffice`, so clicking an agent that runs in this terminal does not bring
   a Terminal or iTerm tab to the front.
+- macOS counts what you run here as Agent Office: the first `ls ~/Desktop` (or Documents,
+  Downloads…) asks whether *Agent Office* may open that folder. Allow it once; with
+  `scripts/signing-setup.sh` it stays allowed across updates.
+- A paste into a program that is not reading its input (a dev server, `sleep`) waits until it reads,
+  without holding up the app; beyond 1 MB the rest of it is dropped, as a terminal does.
 
 ## Settings
 
