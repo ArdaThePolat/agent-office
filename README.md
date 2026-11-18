@@ -365,6 +365,22 @@ hook is registered for every event and when a session last reported.
 
 By hand: `git pull && scripts/build-app.sh` in your checkout, then reopen the app.
 
+**macOS asks for its permissions again after every update?** (Desktop folder, Accessibility,
+Automation, Local Network.) macOS remembers a permission by the app's signature, and an ad-hoc
+signature changes with every build. Run this once in your checkout:
+
+```bash
+scripts/signing-setup.sh
+```
+
+It makes a certificate for signing this app, good for nothing else, keeps it in your login
+keychain and trusts it for code signing (macOS asks for your password). From then on
+`scripts/build-app.sh` and the in-app updater sign with it, every build is the same app to macOS,
+and a permission you give once stays: you are asked one last time after the first signed build.
+If a dialog asks whether codesign may use the key, choose **Always Allow**.
+`scripts/signing-setup.sh --remove` takes it out again. (The Desktop folder is asked for when your
+checkout lives there: the updater builds from it.)
+
 Or let the app do it: tick Settings → **Check for updates once a day**, or use Agent Office →
 **Check for Updates…** once (when it finds a newer release, **Update Now** in its alert does the
 same as the button). It asks GitHub for the repository's latest release and compares it

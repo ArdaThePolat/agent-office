@@ -23,8 +23,14 @@ scripts/build-app.sh
 ```
 
 It compiles `app/AgentOffice.swift`, bundles `web/office.html` and installs
-`~/Applications/Agent Office.app` (ad-hoc signed, so it runs on this Mac only). Check:
+`~/Applications/Agent Office.app` (it runs on this Mac only). Check:
 `ls ~/Applications/"Agent Office.app"`.
+
+Optional (ASK FIRST: it adds a certificate to their login keychain and macOS asks for their
+password): `scripts/signing-setup.sh` makes every later build the same app to macOS, so the
+permissions they give (Desktop folder, Accessibility, Automation, Local Network) are not asked for
+again after each update. Without it each build is signed ad-hoc and asks again. Let them run it
+themselves in their terminal, then run `scripts/build-app.sh` again.
 
 ## 2. Register the hook (ASK FIRST)
 
