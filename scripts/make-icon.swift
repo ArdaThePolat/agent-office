@@ -20,6 +20,8 @@ px(3, 11, 1, 1, 0xf1c9a5); px(12, 10, 1, 1, 0xf1c9a5)        // typing hands
 px(5, 10, 6, 3, 0x222222); px(6, 10, 4, 2, 0x7fd1b9)         // monitor
 px(2, 13, 12, 1, 0x8a6a45); px(3, 14, 1, 2, 0x6d5233); px(12, 14, 1, 2, 0x6d5233)   // desk
 px(12, 4, 3, 3, 0xffb347); px(13, 5, 1, 1, 0x1d1b26)         // the "waiting" bubble
+// make-icon.swift <out.png> dev: an orange stripe along the bottom tells the dev app apart
+if CommandLine.arguments.count > 2, CommandLine.arguments[2] == "dev" { px(0, 13, 16, 3, 0xf08a3a); px(0, 13, 16, 1, 0xffb347) }
 img.unlockFocus()
 let rep = NSBitmapImageRep(data: img.tiffRepresentation!)!
 try! rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
