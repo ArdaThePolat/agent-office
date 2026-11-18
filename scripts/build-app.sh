@@ -2,7 +2,8 @@
 #
 # build-app.sh [<install-dir>] — build "Agent Office.app" from app/ and web/ and install it
 # (default ~/Applications). Needs the Xcode command-line tools (swiftc, iconutil, codesign).
-# The app is ad-hoc signed: it runs on this Mac; rebuilding replaces it in place.
+# The app runs on this Mac only: signed with the local certificate from scripts/signing-setup.sh
+# when there is one (permissions survive rebuilds), else ad-hoc. Rebuilding replaces it in place.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -51,7 +52,16 @@ cat > "$B/Info.plist" <<PLIST
   <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window. The lounge's jukebox asks Spotify which song is playing, and to skip or pause it when you press its buttons.</string>
 </dict></plist>
 PLIST
-codesign --force --deep --sign - "$BUILD/Agent Office.app" >/dev/null
+# Signed with the local certificate when scripts/signing-setup.sh made one: then every build is the
+# same app to macOS and the permissions it was given stay. Without it, ad-hoc: each build is a new
+# app to macOS, which asks for every permission again.
+SIGN_ID="Agent Office Local Signing"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$SIGN_ID\""; then
+  codesign --force --deep --sign "$SIGN_ID" "$BUILD/Agent Office.app" >/dev/null
+else
+  codesign --force --deep --sign - "$BUILD/Agent Office.app" >/dev/null
+  echo "Signed ad-hoc: macOS asks for its permissions again after each build. Once: scripts/signing-setup.sh"
+fi
 
 mkdir -p "$DEST"
 rm -rf "$APP"
