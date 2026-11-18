@@ -7,6 +7,10 @@
 // keeps the name and password, so Join can fill them in again; Settings → Delete Saved Room
 // removes the whole block.
 //
+// Both dialogs show the room this Mac has saved (name, password, and the host's address) with Copy
+// Room Info, which puts it on the clipboard as env-file lines; Join's Paste Room Info fills the
+// fields from such lines, so a host can hand the room over in one paste.
+//
 // A poke arrives as a notification and a short shake of the window. Pokes from the same person
 // are shown at most once in POKE_QUIET seconds, so nobody can bury anyone in notifications.
 
@@ -33,35 +37,69 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     }
 
     func roomDialog(create: Bool) {
-        let cur = Config.load().room
+        let cfg = Config.load(), cur = cfg.room
         let a = NSAlert()
         a.messageText = create ? "Create a room" : "Join a room"
         a.informativeText = create
             ? "Your Mac hosts the room while Agent Office is open. Teammates on the same network join it with its name and password."
-            : "Ask the person who hosts the room for its name and password."
+            : "Ask the person who hosts the room for its name and password, or for its room info to paste."
         let w: CGFloat = 240                              // the width of the alert's text column
         func field(_ placeholder: String, _ value: String, secure: Bool = false) -> NSTextField {
             let f = secure ? NSSecureTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24)) : NSTextField(frame: NSRect(x: 0, y: 0, width: w, height: 24))
             f.placeholderString = placeholder; f.stringValue = value
             return f
         }
-        func caption(_ s: String) -> NSTextField {
-            let l = NSTextField(labelWithString: s); l.font = .systemFont(ofSize: 11); l.textColor = .secondaryLabelColor; return l
+        func caption(_ s: String, bold: Bool = false) -> NSTextField {
+            let l = NSTextField(labelWithString: s); l.font = bold ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
+            l.textColor = bold ? .labelColor : .secondaryLabelColor; return l
         }
         let name = field("e.g. team lounge", create && cur.host == false ? "" : cur.name)
         let pass = field(create ? "at least 8 characters" : "", create ? "" : cur.password, secure: true)
         let addr = field("optional, e.g. their-mac.local", cur.host ? "" : cur.address)
-        var rows: [NSView] = [caption("Room name"), name, caption("Password"), pass]
-        if !create { rows += [caption("Host address, if not found by name"), addr] }
+        // (view, height): fields 28, captions 18, buttons 30, the current room's lines 15 each
+        var rows: [(NSView, CGFloat)] = []
+        if !cur.name.isEmpty {
+            // the room this Mac has saved, as the lines Copy Room Info puts on the clipboard
+            let state = cfg.roomOff ? "Saved room (left)" : cur.host ? "Current room (you host it)" : "Current room"
+            rows.append((caption(state, bold: true), 18))
+            let info = NSTextField(labelWithString: roomInfo(cur).map { "\($0.0)  \($0.1)" }.joined(separator: "\n"))
+            info.font = .monospacedSystemFont(ofSize: 10, weight: .regular); info.isSelectable = true
+            info.lineBreakMode = .byTruncatingTail; info.maximumNumberOfLines = 3
+            rows.append((info, 45))
+            let copy = ActionButton(title: "Copy Room Info") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(self.roomInfo(cur).map { "\($0.2)=\($0.1)" }.joined(separator: "\n") + "\n", forType: .string)
+            }
+            rows.append((copy, 30))
+        }
+        if !create {
+            let paste = ActionButton(title: "Paste Room Info") {
+                let found = Self.parseRoomInfo(NSPasteboard.general.string(forType: .string) ?? "")
+                if let v = found["name"] { name.stringValue = v }
+                if let v = found["password"] { pass.stringValue = v }
+                if let v = found["address"] { addr.stringValue = v }
+                if found.isEmpty {
+                    let e = NSAlert(); e.messageText = "No room info on the clipboard"
+                    e.informativeText = "Copy the lines the host's Copy Room Info gives, e.g.\nAGENT_OFFICE_ROOM_NAME=team lounge\nAGENT_OFFICE_ROOM_PASSWORD=…\nAGENT_OFFICE_ROOM_ADDRESS=their-mac.local"
+                    e.runModal()
+                }
+            }
+            rows.append((paste, 30))
+        }
+        rows += [(caption("Room name"), 18), (name, 28), (caption("Password"), 18), (pass, 28)]
+        if !create { rows += [(caption("Host address, if not found by name"), 18), (addr, 28)] }
         // fixed frames, top to bottom, inside the alert's column: a stack view's fitting size runs
         // past it, and NSAlert does not widen itself
-        let h = rows.reduce(CGFloat(0)) { $0 + ($1 is NSSecureTextField || ($1 as? NSTextField)?.isEditable == true ? 28 : 18) }
+        let h = rows.reduce(CGFloat(0)) { $0 + $1.1 }
         let box = NSView(frame: NSRect(x: 0, y: 0, width: w, height: h))
         var y = h
-        for r in rows {
-            let field = r is NSSecureTextField || (r as? NSTextField)?.isEditable == true
-            y -= field ? 28 : 18
-            r.frame = NSRect(x: field ? 0 : 1, y: y + (field ? 4 : 0), width: w, height: field ? 24 : 16)
+        for (r, rh) in rows {
+            y -= rh
+            switch rh {
+            case 28: r.frame = NSRect(x: 0, y: y + 4, width: w, height: 24)                 // a field
+            case 30: r.frame = NSRect(x: -1, y: y + 2, width: w + 2, height: 28)            // a button, its bezel inset
+            default: r.frame = NSRect(x: 1, y: y, width: w - 1, height: rh - 2)             // a caption or text
+            }
             box.addSubview(r)
         }
         a.accessoryView = box
@@ -87,15 +125,43 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         guard saveRoom(block) else { return }
         roomSharing = true
         if create {
-            let host = (ProcessInfo.processInfo.hostName as NSString).deletingPathExtension
             let i = NSAlert(); i.messageText = "\(n) is open"
-            i.informativeText = "Teammates choose Room → Join a Room… (or the Join button in the lounge) and type the name and the password. Tell them the password in person or over a private channel.\n\nIf the room is not found by name on their network, they can add your Mac's address: \(host).local"
+            i.informativeText = "Teammates choose Room → Join a Room… (or the Join button in the lounge) and type the name and the password, or paste the room info: Room → Create a Room… shows it, with Copy Room Info. Tell them the password in person or over a private channel.\n\nIf the room is not found by name on their network, they can add your Mac's address: \(Self.localHostName)"
             i.runModal()
         }
     }
 
-    /// Merge `fields` into config.json's "room" block, keeping every other key. False (after
-    /// saying why) when the file could not be written.
+    /// This Mac's name on the local network, the address teammates use when a name lookup fails.
+    static var localHostName: String { (ProcessInfo.processInfo.hostName as NSString).deletingPathExtension + ".local" }
+
+    /// A room as (label, value, env key) lines: what the dialog shows and Copy Room Info copies.
+    /// The address is this Mac's name when it hosts, else the saved one (left out when empty).
+    func roomInfo(_ r: RoomConfig) -> [(String, String, String)] {
+        var lines = [("name    ", r.name, "AGENT_OFFICE_ROOM_NAME"), ("password", r.password, "AGENT_OFFICE_ROOM_PASSWORD")]
+        let address = r.host ? Self.localHostName : r.address
+        if !address.isEmpty { lines.append(("host    ", address, "AGENT_OFFICE_ROOM_ADDRESS")) }
+        return lines
+    }
+
+    /// Room fields from pasted KEY=VALUE lines (env-file style: `export`, quotes and `#` comments
+    /// allowed). AGENT_OFFICE_ROOM_NAME, _PASSWORD and _ADDRESS, also without the AGENT_OFFICE_
+    /// prefix; other lines are ignored.
+    static func parseRoomInfo(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        for line in text.components(separatedBy: .newlines) {
+            let l = line.trimmingCharacters(in: .whitespaces)
+            guard !l.hasPrefix("#"), let eq = l.firstIndex(of: "=") else { continue }
+            var k = String(l[..<eq]).trimmingCharacters(in: .whitespaces).uppercased()
+            if k.hasPrefix("EXPORT ") { k = String(k.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
+            if k.hasPrefix("AGENT_OFFICE_") { k = String(k.dropFirst(13)) }
+            guard let field = ["ROOM_NAME": "name", "ROOM_PASSWORD": "password", "ROOM_ADDRESS": "address"][k] else { continue }
+            var v = String(l[l.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+            if v.count >= 2, (v.hasPrefix("\"") && v.hasSuffix("\"")) || (v.hasPrefix("'") && v.hasSuffix("'")) { v = String(v.dropFirst().dropLast()) }
+            if !v.isEmpty { out[field] = v }
+        }
+        return out
+    }
+
     /// Change config.json through `edit`, keeping every other key; mode 0600. False (after saying
     /// why) when it could not be read or written.
     func writeConfig(_ edit: (inout [String: Any]) -> Void) -> Bool {
