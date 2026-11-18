@@ -458,8 +458,14 @@ function frameArt(x, y, seed) {
   px(x, y, 9, 7, "#3b2c27"); px(x + 1, y + 1, 7, 5, pals[2]);
   px(x + 2, y + 3, 3, 2, pals[0]); px(x + 4, y + 2, 3, 3, pals[1]);
 }
-function sign(s, x, y) {           // a wooden plaque on the wall
+// a wooden plaque on the wall. A renamed one ("roomLabels") gets the wall space before the room's
+// first window or picture (maxW), but never less than its built-in name (def) has always had: a
+// longer name is shortened with …, and the built-in names look as they always did.
+function sign(s, x, y, maxW, def) {
   g.font = "bold 10px Menlo, monospace";
+  if (def) maxW = Math.max(maxW || 0, Math.ceil(g.measureText(def).width / P) + 6);
+  const fits = t => Math.ceil(g.measureText(t).width / P) + 6 <= maxW;
+  if (maxW && !fits(s)) { let t = s; while (t.length > 1 && !fits(t + "…")) t = t.slice(0, -1); s = t.trimEnd() + "…"; }
   const w = Math.ceil(g.measureText(s).width / P) + 6;
   px(x, y, w, 7, "#5e4232"); px(x + 1, y + 1, w - 2, 5, "#8c6446"); px(x + 1, y + 1, w - 2, 1, "#a37a58");
   text(s, (x + 3) * P, (y + 1.6) * P, "#fbf3e4", 10, "left", "bold");
@@ -510,7 +516,8 @@ function paintRooms(L) {
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
-  sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3);
+  { const nW = Math.max(1, Math.floor(deskSpan / 46)), firstWin = Math.round(from + 0.5 * deskSpan / nW - winW / 2);
+    sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3, firstWin - 2 - (rx + 13), "REVIEW ROOM"); }
   // the others room: warm walls, wood floor
   const oy = L.oy;
   wall(0, oy, cols, "#b9a184", "#8e7458");
@@ -525,7 +532,8 @@ function paintRooms(L) {
   }
   bookshelf(cols - L.chatW - 15, oy + WALL - 10);
   plant(cols - L.chatW - 24, oy + WALL + 3, false);
-  sign(roomLabel("others", "OTHERS"), 13, oy + 3);
+  { const nW = Math.max(1, Math.floor(span / 48)), firstWin = Math.round(40 + 0.5 * span / nW - 8);
+    sign(roomLabel("others", "OTHERS"), 13, oy + 3, firstWin - 2 - 13, "OTHERS"); }
   // team rugs
   for (const c of L.cells) rug(c.x - 3, c.y + 1, L.teamW - 6, c.h - 4, c.rug);
   paintLounge(L, sky);
@@ -871,7 +879,8 @@ function paintLounge(L, sky) {
   px(G.gx + 3, y + WALL + 22, G.gw - 6, H - WALL - 25, "#283a5e"); px(G.gx + 5, y + WALL + 23, G.gw - 10, H - WALL - 27, "#334a75");
   for (let i = G.gx + 8; i < cols - 8; i += 7) px(i, y + WALL + 30 + (i % 2) * 6, 2, 2, "#4fc1c9");
   if (G.gw >= 70) { px(G.gx + 3, y + 54, 14, 8, "#e06c6c"); px(G.gx + 4, y + 53, 12, 1, "#f08a8a"); px(G.gx + 3, y + 61, 14, 1, "#00000040"); }   // bean bag
-  sign(roomLabel("lounge", "LOUNGE"), G.kw + 14, y + 3);
+  // before the framed picture left of the window when there is one, else before the window
+  sign(roomLabel("lounge", "LOUNGE"), G.kw + 14, y + 3, (G.chatX - 22 > G.kw + 12 ? G.chatX - 22 : G.chatX - 8) - 1 - (G.kw + 14), "LOUNGE");
 }
 // ----- the jukebox: what plays on this Mac, with previous / play-pause / next -----
 // It stands in the kitchen's front corner between two speakers. The app sends {available, on, app,

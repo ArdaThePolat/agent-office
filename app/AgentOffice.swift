@@ -96,7 +96,7 @@ struct Config {
             for k in ["others", "review", "lounge"] {
                 if let s = l[k] as? String {
                     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !t.isEmpty { c.roomLabels[k] = String(t.prefix(24)) }
+                    if !t.isEmpty { c.roomLabels[k] = t.count > 24 ? String(t.prefix(23)) + "…" : t }   // cut: it says so
                 }
             }
         }
