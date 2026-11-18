@@ -314,7 +314,13 @@ function build(raw) {
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
            events, workspace: raw.workspace || "", slots: raw.slots || 5, jukebox: raw.jukebox || null,
-           manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null };
+           manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null,
+           roomLabels: raw.roomLabels && typeof raw.roomLabels === "object" ? raw.roomLabels : {} };
+}
+// a room's plaque: "roomLabels" in the config file, else the built-in name
+function roomLabel(k, def) {
+  const s = snap && snap.roomLabels && snap.roomLabels[k];
+  return typeof s === "string" && s.trim() ? s.trim().slice(0, 24).toUpperCase() : def;
 }
 
 // ---------- arrivals, departures, chimes ----------
@@ -504,7 +510,7 @@ function paintRooms(L) {
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
-  sign("REVIEW ROOM", rx + 13, 3);
+  sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3);
   // the others room: warm walls, wood floor
   const oy = L.oy;
   wall(0, oy, cols, "#b9a184", "#8e7458");
@@ -519,7 +525,7 @@ function paintRooms(L) {
   }
   bookshelf(cols - L.chatW - 15, oy + WALL - 10);
   plant(cols - L.chatW - 24, oy + WALL + 3, false);
-  sign("OTHERS", 13, oy + 3);
+  sign(roomLabel("others", "OTHERS"), 13, oy + 3);
   // team rugs
   for (const c of L.cells) rug(c.x - 3, c.y + 1, L.teamW - 6, c.h - 4, c.rug);
   paintLounge(L, sky);
@@ -643,7 +649,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", JSON.stringify(snap.roomLabels || {}), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -865,7 +871,7 @@ function paintLounge(L, sky) {
   px(G.gx + 3, y + WALL + 22, G.gw - 6, H - WALL - 25, "#283a5e"); px(G.gx + 5, y + WALL + 23, G.gw - 10, H - WALL - 27, "#334a75");
   for (let i = G.gx + 8; i < cols - 8; i += 7) px(i, y + WALL + 30 + (i % 2) * 6, 2, 2, "#4fc1c9");
   if (G.gw >= 70) { px(G.gx + 3, y + 54, 14, 8, "#e06c6c"); px(G.gx + 4, y + 53, 12, 1, "#f08a8a"); px(G.gx + 3, y + 61, 14, 1, "#00000040"); }   // bean bag
-  sign("LOUNGE", G.kw + 14, y + 3);
+  sign(roomLabel("lounge", "LOUNGE"), G.kw + 14, y + 3);
 }
 // ----- the jukebox: what plays on this Mac, with previous / play-pause / next -----
 // It stands in the kitchen's front corner between two speakers. The app sends {available, on, app,

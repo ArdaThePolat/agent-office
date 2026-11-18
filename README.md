@@ -438,6 +438,9 @@ file, not in the repository. Every key is optional.
 
   `bitbucketWorkspace` makes a review desk link to its Bitbucket PR. Without a `reviews` block the
   review room stays empty.
+- **`roomLabels`** renames the plaques on the walls: `others`, `review` and `lounge`, each a short
+  line (24 characters at most, shown in capitals), e.g. `{ "others": "MAIN OFFICE" }`. A room left
+  out keeps its name.
 - **`sessionKinds`** tells headless jobs apart from your own sessions by how their first prompt
   starts.
   - `kind` is `review` (drawn at a review desk) or `automation` (⚙ in the others room).

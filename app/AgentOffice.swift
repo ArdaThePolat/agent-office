@@ -8,7 +8,8 @@
 // Configuration: ~/.config/agent-office/config.json, every key optional:
 //   { "officeState": "~/.local/state/agent-office",
 //     "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
-//                  "slots": 5, "bitbucketWorkspace": "<workspace>" } }
+//                  "slots": 5, "bitbucketWorkspace": "<workspace>" },
+//     "roomLabels": { "others": "MAIN OFFICE", "review": "REVIEW ROOM", "lounge": "LOUNGE" } }
 // Without a "reviews" block the review room is shown empty.
 // Settings (⌘,): "Keep on top", "Play a sound" and "Energy saver", all off unless turned on.
 //
@@ -34,6 +35,7 @@ struct Config {
     var managerImage = ""
     var room = RoomConfig()
     var roomOff = false                                   // "enabled": false in the room block
+    var roomLabels: [String: String] = [:]                // "roomLabels": the plaques on the walls
 
     /// KEY=VALUE lines from ~/.config/agent-office/env, then the process environment on top. An app
     /// opened from the Finder or the Dock does not see a shell's exports, so the file is the way
@@ -88,6 +90,15 @@ struct Config {
         if let m = j["manager"] as? [String: Any] {
             if let s = m["name"] as? String { c.managerName = s }
             if let s = m["image"] as? String { c.managerImage = expand(s) }
+        }
+        if let l = j["roomLabels"] as? [String: Any] {
+            // only the three rooms, a short line each: anything else is ignored
+            for k in ["others", "review", "lounge"] {
+                if let s = l[k] as? String {
+                    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { c.roomLabels[k] = String(t.prefix(24)) }
+                }
+            }
         }
         if let r = j["room"] as? [String: Any] {
             if let s = r["name"] as? String { c.room.name = s }
@@ -195,6 +206,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "reviewLog": Array(reviewLog.suffix(120)),
         "manager": ["name": cfg.managerName, "image": managerImageURL(cfg.managerImage)],
+        "roomLabels": cfg.roomLabels,
     ]
 }
 
