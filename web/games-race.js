@@ -72,6 +72,7 @@ function openRace() {
 }
 function joinRace(id) {
   const l = RACE.lobbies[id]; if (!l) return;
+  leaveCurrent();
   if (!GAME.open) openGames("home");
   Object.assign(RACE, { phase: "lobby", id: l.id, track: l.track, laps: l.laps, owner: l.owner, ownerName: l.ownerName, daily: false,
     players: l.players.filter(p => p.id !== myId()).concat([{ id: myId(), name: myName() }]), others: {} });
@@ -254,6 +255,9 @@ function drawRace() {
 
 function raceMsg(from, name, d) {
   const now = Date.now() / 1000;
+  // a lobby is its opener's: only they announce, start or close it (the host stamps who sent what)
+  const owner = (RACE.lobbies[d.id] && RACE.lobbies[d.id].owner) || (RACE.id === d.id ? RACE.owner : "");
+  if (["open", "lobby", "start", "close"].includes(d.k) && owner && owner !== from) return;
   if ((d.k === "open" || d.k === "lobby") && TRACKS[d.track] && Array.isArray(d.players)) {
     const fresh = !RACE.lobbies[d.id];
     RACE.lobbies[d.id] = { id: d.id, track: d.track, laps: Math.max(1, Math.min(10, +d.laps || 3)), owner: from, ownerName: name,

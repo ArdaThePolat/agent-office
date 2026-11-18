@@ -27,14 +27,15 @@ const FISH = [
 ];
 const WATER = 90, POND_X0 = 85, POND_X1 = 312, FISH_EVERY = 3.2, FISH_LIFE = 34, POND_BEAT = 8, POND_GONE = 25;
 const FISHING = { phase: "idle", power: 0, dist: 0, wait: 0, bite: 0, cand: -1, fish: null, reel: 0, tension: 0, slack: 0, caught: [], feed: [], cup: null, daily: false };
-const POND = { id: "", owner: "", ownerName: "", seed: 0, epoch: 0, claims: {}, people: {}, beat: 0, sent: 0, meSent: "" };
+const POND = { id: "", owner: "", ownerName: "", seed: 0, epoch: 0, dailyFish: 0, claims: {}, people: {}, beat: 0, sent: 0, meSent: "" };
 const pondOwner = () => POND.owner === myId();
 const pondT = () => Date.now() / 1000 - POND.epoch;
 
-/// Fish n of the pond: the same on every Mac for the same seed. Today's species comes twice as often.
+/// Fish n of the pond: the same on every Mac for the same seed. The pond's "today's fish" (fixed when
+/// it opened, and sent with it, so time zones and midnight do not change its fish) comes twice as often.
 function fishAt(n) {
-  const r = seeded((POND.seed ^ Math.imul(n + 1, 2654435761)) >>> 0), d = daily();
-  const w = f => f[4] * (FISH.indexOf(f) === d.fish ? 2 : 1), total = FISH.reduce((s, f) => s + w(f), 0);
+  const r = seeded((POND.seed ^ Math.imul(n + 1, 2654435761)) >>> 0);
+  const w = f => f[4] * (FISH.indexOf(f) === POND.dailyFish ? 2 : 1), total = FISH.reduce((s, f) => s + w(f), 0);
   let x = r() * total, kind = 0; for (let i = 0; i < FISH.length; i++) { x -= w(FISH[i]); if (x <= 0) { kind = i; break; } }
   const f = FISH[kind];
   return { n, kind, name: f[0], color: f[1], fight: f[5], kg: +(f[2] + Math.pow(r(), 2.2) * (f[3] - f[2])).toFixed(2),
@@ -52,15 +53,16 @@ function pondFish(t) {
 }
 
 function newPond() {
-  Object.assign(POND, { id: myId() + "-" + Date.now(), owner: myId(), ownerName: myName(), seed: newSeed(), epoch: Date.now() / 1000, claims: {}, beat: Date.now() / 1000, sent: 0 });
+  // the id starts with when it opened: of two ponds, the older (smaller id) is the one everyone keeps
+  Object.assign(POND, { id: Date.now() + "-" + myId(), owner: myId(), ownerName: myName(), seed: newSeed(), epoch: Date.now() / 1000, dailyFish: daily().fish, claims: {}, beat: Date.now() / 1000, sent: 0 });
   announcePond();
 }
 function announcePond() {
   if (!inRoom() || !pondOwner()) return;
-  POND.sent = Date.now() / 1000;
+  POND.sent = POND.beat = Date.now() / 1000;
   const t = pondT(), claims = {};
   for (const [n, c] of Object.entries(POND.claims)) { const f = fishAt(+n); if (t < f.spawn + f.life + 5) claims[n] = [c.by, c.st]; }
-  gsend({ g: "fish", k: "pond", id: POND.id, seed: POND.seed, el: Math.round(t * 100) / 100, owner: POND.owner, ownerName: POND.ownerName, claims });
+  gsend({ g: "fish", k: "pond", id: POND.id, seed: POND.seed, df: POND.dailyFish, el: Math.round(t * 100) / 100, owner: POND.owner, ownerName: POND.ownerName, claims });
 }
 function fishStart(arg) {
   Object.assign(FISHING, { phase: "idle", power: 0, fish: null, tension: 0, daily: arg === "daily" });
@@ -79,21 +81,21 @@ function sayMe(force) {
 
 function fishSide() {
   const F = FISHING, mine = F.caught.slice(-6).reverse(), cup = F.cup, now = Date.now() / 1000, d = daily();
-  const standing = cup ? Object.entries(cup.totals).sort((a, b) => b[1] - a[1]) : [];
+  const standing = cup ? Object.entries(cup.totals).map(([id, kg]) => [id === myId() ? myName() + " (you)" : cup.names[id] || "?", kg]).sort((a, b) => b[1] - a[1]) : [];
   const here = Object.values(POND.people).filter(p => now - p.at < 20);
   gside.innerHTML = `<h3>HOW</h3><div class="hint">Hold Space to charge a cast, let go to throw. When a fish bites (!), press Space. Then hold Space to reel; let go when the line climbs into the red.</div>
     ${inRoom() ? `<h3>THE POND</h3><div class="hint">${here.length ? `fishing with you: ${here.map(p => esc(p.name)).join(", ")}` : "the room's pond: whoever fishes joins you here"}. A fish someone hooks is theirs.</div>` : ""}
     <h3>📅 TODAY'S FISH</h3><div class="hint">${esc(FISH[d.fish][0])}: the biggest one caught today has its own board.</div>
     <h3>2-MINUTE CATCH</h3>${cup && cup.end > now
       ? `<div class="hint">${now < cup.start ? `starts in ${Math.ceil(cup.start - now)} s` : `${Math.ceil(cup.end - now)} s left`}</div>` + standing.map(([n, kg]) => `<div class="row"><span class="n">${esc(n)}</span><span class="v">${kg.toFixed(2)} kg</span></div>`).join("")
-      : `<button class="go" data-cup="1">${inRoom() ? "Start a round with the room" : "Start a round"}</button>`}
+      : cup && !cup.over && now < cup.end ? "" : `<button class="go" data-cup="1">${inRoom() ? "Start a round with the room" : "Start a round"}</button>`}
     <h3>YOUR CATCH</h3>${mine.length ? mine.map(f => `<div class="row"><span class="n">${esc(f.name)}</span><span class="v">${f.kg.toFixed(2)} kg</span></div>`).join("") : `<div class="hint">nothing yet</div>`}
     ${F.feed.length ? `<h3>THE ROOM</h3><div class="feed">${F.feed.slice(-6).reverse().map(x => `<div>${esc(x)}</div>`).join("")}</div>` : ""}
     <h3>&nbsp;</h3><button data-home="1">Games</button>`;
 }
 function startCup(announce) {
   const now = Date.now() / 1000, wait = announce && inRoom() ? 5 : 0;
-  FISHING.cup = { start: now + wait, end: now + wait + 120, totals: { [myName()]: 0 } };
+  FISHING.cup = { start: now + wait, end: now + wait + 120, totals: { [myId()]: 0 }, names: { [myId()]: myName() } };
   if (announce) gsend({ g: "fish", k: "cup", id: POND.id, in: wait, len: 120 });
   toast(wait ? "🎣 A 2-minute round starts in 5 s" : "🎣 2 minutes: catch as much as you can", null, 4000);
   side();
@@ -142,7 +144,7 @@ function fishStep(dt) {
   }
   if (F.cup && now > F.cup.end && !F.cup.over) {
     F.cup.over = true;
-    const mine = F.cup.totals[myName()] || 0;
+    const mine = F.cup.totals[myId()] || 0;
     if (mine > 0) {
       const pb = scoreBoard("fish-haul", +mine.toFixed(2));
       toast(`🏆 Round over: ${mine.toFixed(2)} kg${pb ? " · your best round!" : ""}`, null, 6000);
@@ -187,7 +189,7 @@ function landFish() {
 /// Someone (maybe you) landed fish f: the feed, the round's totals, and for you the boards.
 function caught(by, name, f) {
   const F = FISHING, now = Date.now() / 1000, d = daily();
-  if (F.cup && now >= F.cup.start && now <= F.cup.end) F.cup.totals[name] = (F.cup.totals[name] || 0) + f.kg;
+  if (F.cup && now >= F.cup.start && now <= F.cup.end) { F.cup.totals[by] = (F.cup.totals[by] || 0) + f.kg; F.cup.names[by] = name; }
   if (by !== myId()) { F.feed.push(`${name}: ${f.name} ${f.kg.toFixed(2)} kg`); if (GAME.open && GAME.view === "fish") side(); return; }
   F.caught.push(f);
   const pb = scoreBoard("fish-big", f.kg);
@@ -262,10 +264,11 @@ function drawFishing(t) {
 function fishMsg(from, name, d) {
   const now = Date.now() / 1000, F = FISHING;
   if (d.k === "pond") {
-    // adopt it when we have none, ours went quiet, it is the same pond, or its id wins (the smaller)
-    if (!(POND.id === d.id || !POND.id || now - POND.beat > POND_GONE || d.id < POND.id)) return;
+    // adopt it when it is ours already, we have none, ours went quiet (not when we keep it), or it is older
+    if (!(POND.id === d.id || !POND.id || (!pondOwner() && now - POND.beat > POND_GONE) || String(d.id) < POND.id)) return;
     const moving = POND.id !== d.id;
-    Object.assign(POND, { id: d.id, owner: String(d.owner || from), ownerName: String(d.ownerName || name), seed: (+d.seed) >>> 0, epoch: now - (+d.el || 0), beat: now });
+    Object.assign(POND, { id: String(d.id), owner: String(d.owner || from), ownerName: String(d.ownerName || name), seed: (+d.seed) >>> 0,
+      dailyFish: Math.max(0, Math.min(FISH.length - 1, +d.df || 0)), epoch: now - (+d.el || 0), beat: now });
     if (moving) {
       POND.claims = {};
       if (F.phase === "reel" || F.phase === "bite" || F.phase === "hooking") { F.phase = "idle"; F.fish = null; }
@@ -275,10 +278,11 @@ function fishMsg(from, name, d) {
     return;
   }
   if (d.k === "cup") {
+    if (F.cup && !F.cup.over && now < F.cup.end) return;            // one round at a time: a running one is not replaced
     const len = Math.min(300, Math.max(30, +d.len || 120)), wait = Math.min(30, Math.max(0, +d.in || 5));
-    F.cup = { start: now + wait, end: now + wait + len, totals: { [name]: 0, [myName()]: 0 } };
+    F.cup = { start: now + wait, end: now + wait + len, totals: { [from]: 0, [myId()]: 0 }, names: { [from]: name, [myId()]: myName() } };
     if (GAME.open && GAME.view === "fish") { toast(`🎣 ${esc(name)} started a 2-minute round`, null, 4000); side(); }
-    else if (GAME.open) toast(`🎣 ${esc(name)} started a 2-minute fishing round · click to join`, () => fishStart(), 8000);
+    else if (GAME.open) toast(`🎣 ${esc(name)} started a 2-minute fishing round · click to join`, () => { leaveCurrent(); fishStart(); }, 8000);
     else note(`🎣 ${name} started a 2-minute fishing round: Games tab → Fishing`);
     return;
   }
@@ -311,8 +315,10 @@ function fishMsg(from, name, d) {
       else { F.phase = "wait"; toast(d.by ? "Someone else hooked that one" : "The fish slipped off", null, 2000); }
     }
     if (d.st === "land" && d.by !== myId()) {
-      const who = (POND.people[d.by] && POND.people[d.by].name) || (d.by === POND.owner ? POND.ownerName : "Someone");
-      caught(d.by, who, fishAt(n));
+      const who = (POND.people[d.by] && POND.people[d.by].name) || (d.by === POND.owner ? POND.ownerName : "Someone"), f = fishAt(n);
+      // what the keeper says was caught
+      if (typeof d.kg === "number" && typeof d.name === "string") { f.kg = d.kg; f.name = d.name.slice(0, 20); f.kind = FISH.findIndex(x => x[0] === d.name); }
+      caught(d.by, who, f);
     }
   }
 }

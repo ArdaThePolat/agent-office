@@ -59,7 +59,7 @@ cat > "$B/Info.plist" <<PLIST
   <key>AgentOfficeSource</key><string>$(xml "$ROOT")</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSLocalNetworkUsageDescription</key><string>The shared room: Agent Office finds your team's room on the local network and joins it, so your lounges are one. Only names, pictures and chat are shared.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>The shared room: Agent Office finds your team's room on the local network and joins it, so your lounges are one. Only names, pictures, chat and the mini-games' moves and scores are shared.</string>
   <key>NSBonjourServices</key><array><string>_agent-office._tcp</string></array>
   <key>NSAppleEventsUsageDescription</key><string>Clicking an agent brings its session to the front: Agent Office asks Terminal, iTerm or System Events (for a VS Code window) to show that tab or window. The lounge's jukebox asks Spotify which song is playing, and to skip or pause it when you press its buttons.</string>
 </dict></plist>

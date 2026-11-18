@@ -208,6 +208,9 @@ function closeGames() {
 window.openGames = openGames;
 window.gameOpen = () => GAME.open;
 gameEl.querySelector(".gclose").addEventListener("click", closeGames);
+/// Before joining another game (a toast, the Games tab): leave the one in front properly, so its
+/// lobby is closed or its players told, instead of left waiting.
+function leaveCurrent() { const g = GAME.open && GAMES[GAME.view]; if (g && g.leave) g.leave(); }
 /// Switch the overlay to a view: "home" or a game's id.
 function gshow(view) {
   if (view !== GAME.view) { const g = GAMES[GAME.view]; if (g && g.leave) g.leave(); }

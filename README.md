@@ -520,16 +520,19 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   the first click takes each one, and the scores show live.
 - **🏓 Ping-pong:** first to 7, with **↑↓/WS** or the mouse. Play the computer, or **Challenge** a
   teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
-- **📅 Daily challenge:** today's track and today's fish, the same for everyone in the room that
-  day, with their own boards (the best lap on today's track, the biggest of today's fish). The host
-  keeps the last 7 days and takes scores only for today.
+- **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
+  everyone in the room on the same day (in the same time zone), with their own boards (the best lap
+  on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
+  score only for its yesterday, today or tomorrow, so teammates in other time zones still count.
 - **🏅 Achievements:** sixteen of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, 50 in a Bug Whack round, beat the computer…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
-- **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in
-  `~/.config/agent-office/leaderboard.json` on its own Mac, taking only scores within each board's
-  bounds and each name's best, top 10. Without a room, your own bests on this Mac.
+- **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
+  in its config folder (`~/.config/agent-office`, or `~/.config/agent-office-dev` for the dev app),
+  taking only scores within each board's bounds, a few a minute per person, and each name's best,
+  top 10. Entries go by display name: the room trusts its members, so two people with the same name
+  share a line. Without a room, your own bests on this Mac.
 - **While you play,** an agent that starts waiting for you shows at the top of the game (click it
   to go to that session) and as a macOS notification.
 

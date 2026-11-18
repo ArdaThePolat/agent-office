@@ -39,8 +39,8 @@ let ROOM_MAX_FRAME = 200_000          // bytes, any message
 let ROOM_MAX_AVATAR = 120_000         // bytes of data URL
 let ROOM_MAX_TEXT = 500               // characters per chat message
 let ROOM_MAX_MEMBERS = 40
-let ROOM_KEPT_MESSAGES = 300
-let ROOM_AWAY: Double = 15 * 60
+let ROOM_KEPT_MESSAGES = 300          // messages each app keeps, and the host can still edit or unsay
+let ROOM_AWAY: Double = 15 * 60       // seconds someone who left is listed as reconnecting
 let ROOM_BOARD_SIZE = 10
 // the leaderboards: (lowest is best?, smallest and largest score taken). Race: the best lap on track n,
 // in seconds (a lap, so races of any length compare); fishing: the biggest fish and a two-minute
@@ -64,7 +64,8 @@ func roomBoardRule(_ board: String) -> (lowWins: Bool, min: Double, max: Double)
     return board.hasPrefix("daily-race") ? (true, 3, 600) : (false, 0.01, 100)
 }
 let ROOM_GAME_RATE = 40               // game messages per member in 2 s (a car's position, 10 a second)
-let ROOM_GAME_BYTES = 1500       // seconds someone who left is listed as reconnecting          // messages each app keeps, and the host can still edit or unsay
+let ROOM_GAME_BYTES = 1500            // bytes of one game message
+let ROOM_SCORE_RATE = 5               // scores per member in 10 s
 let ROOM_SPOTS: Set<String> = ["make", "drink", "game", "chat"]   // where a member can stand in the lounge
 // what one member can do to another; a poke also reaches the poked person's Mac as a notification
 let ROOM_ACTS: Set<String> = ["hug", "kiss", "highfive", "fight", "coffee", "wave", "poke"]
@@ -139,7 +140,7 @@ func cleanText(_ s: String) -> String {
 final class RoomHost {
     final class Peer {
         let conn: NWConnection, ip: String, id = String(UUID().uuidString.prefix(8)).lowercased()
-        var sn = Data(), key: SymmetricKey?, name = "", avatar = "", spot = "", badge = "", said: [Date] = [], played: [Date] = []
+        var sn = Data(), key: SymmetricKey?, name = "", avatar = "", spot = "", badge = "", said: [Date] = [], played: [Date] = [], scored: [Date] = []
         init(_ c: NWConnection, ip: String) { conn = c; self.ip = ip }
         var member: [String: Any] { ["id": id, "name": name, "avatar": avatar, "spot": spot, "badge": badge] }
     }
@@ -182,7 +183,10 @@ final class RoomHost {
         l.start(queue: q)
         listener = l
     }
-    func stop() { listener?.cancel(); peers.values.forEach { $0.conn.cancel() }; peers = [:] }
+    func stop() {
+        listener?.cancel(); peers.values.forEach { $0.conn.cancel() }; peers = [:]
+        q.async { if self.saving { self.saving = false; self.writeScores() } }   // a score from the last 2 s is not lost
+    }
 
     private func accept(_ c: NWConnection) {
         var ip = "?"
@@ -263,14 +267,19 @@ final class RoomHost {
                 broadcast(["t": "edited", "mid": mid, "text": text])
             }
         case "g":
+            // only what is passed on counts: a sender a little over the rate loses the excess, not everything
             let now = Date()
-            p.played = p.played.filter { now.timeIntervalSince($0) < 2 } + [now]
-            guard p.played.count <= ROOM_GAME_RATE, !p.name.isEmpty, let d = m["d"] as? [String: Any],
+            p.played = p.played.filter { now.timeIntervalSince($0) < 2 }
+            guard p.played.count < ROOM_GAME_RATE, !p.name.isEmpty, let d = m["d"] as? [String: Any],
                   let raw = try? JSONSerialization.data(withJSONObject: d), raw.count <= ROOM_GAME_BYTES else { return }
+            p.played.append(now)
             broadcast(["t": "g", "from": p.id, "name": p.name, "d": d])
         case "score":
-            guard !p.name.isEmpty, let board = m["board"] as? String, let rule = roomBoardRule(board),
-                  let value = (m["value"] as? NSNumber)?.doubleValue, value >= rule.min, value <= rule.max else { return }
+            let now = Date()
+            p.scored = p.scored.filter { now.timeIntervalSince($0) < 10 }
+            guard p.scored.count < ROOM_SCORE_RATE, !p.name.isEmpty, let board = m["board"] as? String, let rule = roomBoardRule(board),
+                  let value = (m["value"] as? NSNumber)?.doubleValue, value.isFinite, value >= rule.min, value <= rule.max else { return }
+            p.scored.append(now)
             if addScore(board, p.name, value, rule.lowWins) { broadcast(["t": "scores", "boards": boards]) }
         case "act":
             // a hug, a high five… for another member; counted with chat messages against the rate limit
@@ -310,7 +319,14 @@ final class RoomHost {
               let mine = all[cfg.name] as? [String: [[String: Any]]] else { return }
         boards = mine.filter { ROOM_BOARDS[$0.key] != nil || $0.key.hasPrefix("daily-") }
     }
+    /// Written at most every 2 s, the last state wins: a burst of scores is one write.
+    private var saving = false
     private func saveScores() {
+        guard scoresFile != nil, !saving else { return }
+        saving = true
+        q.asyncAfter(deadline: .now() + 2) { self.saving = false; self.writeScores() }
+    }
+    private func writeScores() {
         guard let f = scoresFile else { return }
         var all = (FileManager.default.contents(atPath: f).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
         all[cfg.name] = boards
@@ -356,8 +372,8 @@ final class RoomClient {
     private(set) var you = ""
     private(set) var members: [String: [String: Any]] = [:]
     private(set) var messages: [Message] = []
-    private(set) var acts: [Act] = []
-    private(set) var scores: [String: Any] = [:]          // the room's leaderboards, from the host                     // the latest few, for the page to play
+    private(set) var acts: [Act] = []                     // the latest few, for the page to play
+    private(set) var scores: [String: Any] = [:]          // the room's leaderboards, from the host
     private var actSeq = 0
     private(set) var membersVersion = 0
     private(set) var nextTry: Date?
@@ -464,7 +480,7 @@ final class RoomClient {
             wsSend(c, box) }
     }
     func submitScore(_ board: String, _ value: Double) {
-        q.async { guard roomBoardRule(board) != nil, let c = self.conn, let k = self.key,
+        q.async { guard value.isFinite, roomBoardRule(board) != nil, let c = self.conn, let k = self.key,
                         let box = seal(["t": "score", "board": board, "value": value], k) else { return }
             wsSend(c, box) }
     }
