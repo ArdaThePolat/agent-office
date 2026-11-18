@@ -101,7 +101,11 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   control Spotify (if you said no, the tooltip says where to change it: System Settings → Privacy
   & Security → Automation).
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
-  been running, and a sofa for the queue. See *Configuration*.
+  been running, and a sofa for the queue. A review running longer than `overdueMinutes` (45 by
+  default) gets a red frame and a ⚠ by its time: it may be stuck. A shelf along the front holds the
+  last finished reviews, newest first (up to 5, fewer on a narrow window): PR, how long ago, and
+  the result and cost when the reviewer logs them; green posted, amber asked you on Slack, grey
+  rejected on Slack, red failed. Hover one for the details; a click opens its PR. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
   review started / posted).
 
@@ -118,7 +122,7 @@ VS Code (and Cursor, Windsurf, VSCodium) is found by the folder its window has o
 whose folder holds the session's directory. If no open window holds it, Agent Office falls back to
 matching window titles, which needs **Accessibility** (System Settings → Privacy & Security →
 Accessibility); without it the editor is just brought forward. The first click on a Terminal or
-iTerm session asks once for permission to control that app. A review desk opens its PR.
+iTerm session asks once for permission to control that app. A review desk, or a review on its shelf, opens its PR.
 
 Sessions already running when you install or update Agent Office learn where they run on their next
 message.
@@ -414,7 +418,7 @@ file, not in the repository. Every key is optional.
   "room": { "name": "team-lounge", "password": "<password>", "host": false, "alwaysJoin": true,
             "address": "10.20.30.40" },
   "reviews": { "state": "~/.local/state/pr-watch", "log": "~/Library/Logs/pr-watch.log",
-               "slots": 5, "bitbucketWorkspace": "<workspace>" },
+               "slots": 5, "overdueMinutes": 45, "bitbucketWorkspace": "<workspace>" },
   "sessionKinds": [
     { "startsWith": "You are running the automated PR review", "kind": "review",
       "repoAfter": "for the repo '", "title": "PR review: {repo}" },
@@ -434,10 +438,21 @@ file, not in the repository. Every key is optional.
     slug, PR number, commit, author, start time `HH:MM`, pid, title);
   - `<state>/queue`: one line per waiting PR (repo name, slug, number, commit, author,
     `auto`/`manual`, title);
-  - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`.
+  - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`. A line whose
+    event is `posted comment`, `asked you on Slack`, `rejected on Slack` or starts with `FAILED`
+    is a finished review and goes on the shelf. After the event, optional ` | key: value` fields
+    say how it went: `result` and `cost` are shown on the shelf, any others in its tooltip.
 
-  `bitbucketWorkspace` makes a review desk link to its Bitbucket PR. Without a `reviews` block the
-  review room stays empty.
+    ```
+    2026-11-18 11:03:55 [pr-watch] infra#230: posted comment | result: 2 Blocking, 1 Major | cost: $1.84
+    2026-11-18 11:20:12 [pr-watch] web-app#126: posted comment | result: No blockers | cost: $0.62
+    ```
+
+  `slots` is the number of review desks. `overdueMinutes` (default 45, `0` turns it off) is how
+  long a review may run before its desk is flagged.
+  `bitbucketWorkspace` makes a review desk and a shelf entry link to the Bitbucket PR; the shelf
+  only has the log's repo name, so it is used as the slug. Without a `reviews` block the review
+  room stays empty.
 - **`sessionKinds`** tells headless jobs apart from your own sessions by how their first prompt
   starts.
   - `kind` is `review` (drawn at a review desk) or `automation` (⚙ in the others room).

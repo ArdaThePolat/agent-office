@@ -177,6 +177,7 @@ const CRASH_FRESH = 30 * 60;          // "stopped with an error" for this long, 
                                       // network caused (a Wi-Fi switch, a VPN) is not worth a "needs you" for hours
 const STALL_AFTER = 10 * 60;          // working with no heartbeat this long reads as stalled
 const WALL = 16;                      // height of a room's back wall, in art pixels
+const SHELF_MAX = 5;                  // finished reviews on the review room's shelf, at most
 let snap = null, hits = [], frame = 0, energy = false;
 const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.office;
 let g = ctx;                          // the canvas being painted: the screen, or the room layer
@@ -253,11 +254,23 @@ function hideSession(s, release) { hidden[s.id] = { state: s.state || "", since:
 function backToDesk(s) { delete hidden[s.id]; saveHidden(); refresh(); }
 function unhideAll() { for (const id of Object.keys(hidden)) if (!hidden[id].release) delete hidden[id]; saveHidden(); refresh(); }
 
+// pr-watch's log line → { t, repo, id, pr, event, fields }, or null. After the event, optional
+// " | key: value" fields say how a finished review went: "… posted comment | result: No blockers | cost: $0.62"
+function reviewLine(line) {
+  const m = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \[pr-watch\] ([\w.-]+)#(\d+):? ?(.*)$/); if (!m) return null;
+  const [event, ...rest] = m[4].split(" | "), fields = {};
+  for (const f of rest) { const k = f.indexOf(":"); if (k > 0) fields[f.slice(0, k).trim().toLowerCase()] = f.slice(k + 1).trim(); }
+  return { t: Date.parse(m[1].replace(" ", "T")) / 1000, repo: m[2], id: m[3], pr: m[2] + "#" + m[3], event, fields };
+}
+// a finished review: posted, handed to you on Slack, rejected on Slack, or failed
+function finishedKind(event) {
+  return /^FAILED/.test(event) ? "failed" : /posted comment/.test(event) ? "posted"
+    : /asked you on Slack/.test(event) ? "asked" : /rejected on Slack/.test(event) ? "rejected" : "";
+}
 // pr-watch's log line → a general event, or null
 function reviewEvent(line) {
-  const m = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \[pr-watch\] (.*)$/); if (!m) return null;
-  const t = Date.parse(m[1].replace(" ", "T")) / 1000, msg = m[2];
-  const pr = (msg.match(/^([\w.-]+#\d+)/) || [])[1]; if (!pr) return null;
+  const r = reviewLine(line); if (!r) return null;
+  const t = r.t, msg = r.event, pr = r.pr;
   const rules = [
     [/review started/, "🔍 review started"], [/posted comment/, "📝 review posted"],
     [/Slack notified \(safe\)/, "✅ safe to merge"], [/Slack notified \(nits\)/, "🟢 safe, nits only"],
@@ -308,12 +321,16 @@ function build(raw) {
   for (const l of raw.officeEvents || []) { const f = l.split("\t"); if (f.length >= 3) events.push({ t: +f[0], text: f.slice(2).join(" ") }); }
   for (const l of raw.reviewLog || []) { const e = reviewEvent(l); if (e) events.push(e); }
   events.sort((a, b) => b.t - a.t);
+  // the review room's shelf: the latest finished review of each PR, newest first
+  const finished = new Map();
+  (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event); if (kind) finished.set(r.pr, { ...r, kind, n }); });
+  const shelf = [...finished.values()].sort((a, b) => b.t - a.t || b.n - a.n).slice(0, SHELF_MAX);
   energy = !!(raw.settings && raw.settings.energySaver);
   if (raw.settings && raw.settings.welcome && !welcomeSeen) showWelcome();
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, workspace: raw.workspace || "", slots: raw.slots || 5, jukebox: raw.jukebox || null,
+           events, finished: shelf, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null };
 }
 
@@ -478,6 +495,12 @@ function coffee(x, y) {            // (x, y) = bottom-left
   px(x + 1, y - 10, 6, 7, "#3a3f4b"); px(x + 2, y - 9, 4, 2, "#8fd6b4"); px(x + 3, y - 6, 2, 1, "#1b1820");
   px(x + 3, y - 5, 2, 2, "#f4efe4");
 }
+function lowShelf(x, y, w) {       // (x, y) = top-left of the board the finished reviews stand on
+  px(x, y, w, 2, "#c49a6c"); px(x, y, w, 1, "#dab387");
+  px(x, y + 2, w, 3, "#9b7350"); px(x + 1, y + 3, w - 2, 1, "#8a6445");
+  px(x + 1, y + 5, 2, 2, "#7a5a3e"); px(x + w - 3, y + 5, 2, 2, "#7a5a3e");   // feet
+  px(x + 3, y + 5, w - 6, 1, "#00000038");
+}
 function sofaBack(x, y, w) { px(x, y, w, 7, "#6f5a8f"); px(x, y, w, 1, "#8873a8"); }
 function sofaFront(x, y, w) {
   px(x + 2, y + 7, w - 4, 4, "#7d68a0"); px(x + 2, y + 7, w - 4, 1, "#9783b8");
@@ -504,6 +527,7 @@ function paintRooms(L) {
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
+  if (L.shelf) lowShelf(L.shelf.x, L.shelf.y + 9, L.shelf.w);
   sign("REVIEW ROOM", rx + 13, 3);
   // the others room: warm walls, wood floor
   const oy = L.oy;
@@ -607,11 +631,15 @@ function bubble(x, y, kind) {
   else if (kind === "idle") text("z", (x + 1) * P, (y + 1 - (frame % 3)) * P, "#e8e0d6", 10, "left", "bold");
 }
 const NAME_COLOR = { background: "#9fe3e8", waiting: "#ffc370", working: "#f1ebe2", done: "#9fe8b6", crashed: "#ff9a94", compacting: "#a9c8ff", stalled: "#c9c0d3", idle: "#bdb3a8" };
+const SHELF_COLOR = { posted: { binder: "#5fbf7f", text: "#9fe8b6" }, asked: { binder: "#ffb347", text: "#ffc370" },
+                      rejected: { binder: "#8a8096", text: "#bdb3a8" }, failed: { binder: "#e06c6c", text: "#ff9a94" } };
+const SHELF_WORD = { posted: "review posted", asked: "asked you on Slack", rejected: "rejected on Slack" };
 const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting for you", working: "working", done: "done, your turn", crashed: "stopped with an error", compacting: "compacting", stalled: "quiet", idle: "idle" };
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
-  const reviewH = snap.manager ? 108 : 82, teamW = 64, loungeH = 70;
+  // the review room grows a little for the shelf of finished reviews (the manager's room is tall enough)
+  const reviewH = snap.manager ? 108 : snap.finished.length ? 92 : 82, teamW = 64, loungeH = 70;
   // with a room set up (joined or not), the chat is docked on the others room's right side
   const chatWide = room.status !== "off" && cols >= 240;
   const chatW = chatWide && !chatHidden ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
@@ -625,12 +653,14 @@ function layout() {
   // the manager's room takes the top-left corner when one is configured and the window is wide enough
   const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
+  // the shelf runs along the front of the review room, under the desks, as wide as they are
+  const shelf = snap.finished.length ? { x: rx + 6, y: reviewH - 17, w: bx - 8 - rx - 6 } : null;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
   // the people in the shared room (or Create / Join when there is none) on the lounge's right side
   const peopleW = cols >= 240 ? Math.min(84, Math.max(66, Math.floor(cols * 0.2))) : 0;
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, chatW, chatWide, cells, endY: ry,
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, chatW, chatWide, cells, endY: ry,
            peopleW, lw: cols - peopleW };
 }
 
@@ -643,7 +673,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.shelf ? [L.shelf.x, L.shelf.y, L.shelf.w].join(",") : "", L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -663,20 +693,28 @@ function draw() {
     .concat(snap.manualReviews.map(s => ({ id: "r:" + s.id, top: s.title, sub: "by hand", title: s.title + "\n" + s.cwd, start: s.since })));
   for (let i = 0; i < n; i++) {
     const x0 = L.rx + 6 + i * slotW, x = x0 + Math.floor((slotW - 18) / 2), y = 46, dk = desks[i];
+    // how long it has run: the running file's HH:MM is today's, or yesterday's when that is still to come
+    let run = -1;
+    if (dk && dk.since) { const [h, m] = dk.since.split(":").map(Number); const t = new Date(); t.setHours(h, m, 0, 0); if (t > Date.now() + 60e3) t.setDate(t.getDate() - 1); run = (Date.now() - t) / 1000; }
+    else if (dk && dk.start) run = snap.now - dk.start;
+    const el = run >= 0 ? mins(run) : "", over = snap.overdue > 0 && run >= snap.overdue * 60;
+    if (over) {                  // running past reviews.overdueMinutes: a red frame, and a ⚠ by the time
+      const col = frame % 4 < 2 || energy ? "rgba(224,108,108,0.45)" : "rgba(224,108,108,0.22)";
+      px(x0 + 2, 24, slotW - 4, 1, col); px(x0 + 2, 70, slotW - 4, 1, col); px(x0 + 2, 24, 1, 47, col); px(x0 + slotW - 3, 24, 1, 47, col);
+      px(x0 + 3, 25, slotW - 6, 45, "rgba(224,108,108,0.07)");
+    }
     chair(x + 5, y - 16, 1);
     if (dk) { const p = placed(dk.id, x + 5, y - 16, L.rx + 7, WALL + 1); person(p.x, p.y, dk.id, dk.top.split("#")[0], "working", false, p.walking); }
     desk(x, y, 18, dk ? "on" : "off", false, i);
     const cx = (x0 + slotW / 2) * P;
     if (dk) {
-      let el = "";
-      if (dk.since) { const [h, m] = dk.since.split(":").map(Number); const t = new Date(); t.setHours(h, m, 0, 0); el = mins((Date.now() - t) / 1000); }
-      else if (dk.start) el = mins(snap.now - dk.start);
       const fitc = Math.max(6, Math.floor((slotW - 2) * P / 6.2)), parts = dk.top.split("#");
       label(clip(parts[0], Math.max(5, Math.floor(fitc * 0.9))), cx, (y + 10) * P, "#f1ebe2", 11, "center");
-      label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + el : ""), fitc), cx, (y + 15) * P, "#8fd6b4", 9, "center");
+      label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + (over ? "⚠ " : "") + el : ""), fitc), cx, (y + 15) * P, over ? "#ff9a94" : "#8fd6b4", 9, "center");
       label(clip(dk.sub, fitc), cx, (y + 19.5) * P, "#bdb3a8", 9, "center");
       hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P,
-        tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}${dk.url ? "\nclick: open the PR" : ""}`, url: dk.url });
+        tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}` +
+          (over ? `\n⚠ over the ${snap.overdue} min limit (reviews.overdueMinutes): it may be stuck` : "") + (dk.url ? "\nclick: open the PR" : ""), url: dk.url });
     } else text("free", cx, (y + 10) * P, "#8ea3ad", 9, "center");
   }
   // waiting area: a sofa by the coffee machine
@@ -693,6 +731,23 @@ function draw() {
   sofaFront(sx, 44, sw);
   if (snap.queue.length > fit) label(`+${snap.queue.length - fit}`, (sx + sw / 2) * P, 59 * P, "#bdb3a8", 9, "center");
   if (!snap.queue.length) label("nobody", (sx + sw / 2) * P, 59 * P, "#8ea3ad", 9, "center");
+  // the shelf: finished reviews, newest first, as many as fit side by side (fewer on a narrow window)
+  if (L.shelf) {
+    const S = L.shelf, head = S.w >= 120 ? 15 : 0, k = Math.min(snap.finished.length, Math.floor((S.w - head) / 46));
+    const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
+    if (head && k) label("RECENT", S.x * P, (S.y + 2) * P, "#bdb3a8", 9);
+    snap.finished.slice(0, k).forEach((r, j) => {
+      const ex = S.x + head + j * ew, c = SHELF_COLOR[r.kind], age = snap.now - r.t;
+      const ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago", tail = `#${r.id} · ${ago}`;
+      const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
+      px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
+      label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
+      label(clip([r.fields.result, r.fields.cost].filter(Boolean).join(" · ") || word, chars), (ex + 7) * P, (S.y + 4.5) * P, c.text, 9);
+      const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
+      hits.push({ x: ex * P, y: (S.y - 1) * P, w: ew * P, h: 16 * P, url,
+        tip: `${r.pr} · ${word}\n${hhmm(r.t)}, ${ago} · ${r.event}` + Object.entries(r.fields).map(([f, v]) => `\n${f}: ${v}`).join("") + (url ? "\nclick: open the PR" : "") });
+    });
+  }
 
   // ----- others room -----
   const oy = L.oy, states = snap.others.map(shown);
@@ -1837,12 +1892,12 @@ if (!bridge) {
     return (demoCover.v = c.toDataURL()); };
   let tick = 0;
   const demo = () => { tick++; return {
-    now: Date.now() / 1000, workspace: "example", slots: 5,
+    now: Date.now() / 1000, workspace: "example", slots: 5, overdueMinutes: 45,
     jukebox: { available: true, on: true, app: "Music", state: tick % 10 < 7 ? "playing" : "paused", track: "Neon Afternoon", artist: "The Pixel Band", album: "Lounge Tapes",
       key: "demo", art: demoCover(), duration: 214, elapsed: 61 + tick * 2, at: Date.now() / 1000 }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
-      ["infra", "infra", "123", "abc", "Sam R.", hm(12), "1", "Split stacks into modules"],
+      ["infra", "infra", "123", "abc", "Sam R.", hm(52), "1", "Split stacks into modules"],
     ].concat(tick % 6 > 2 ? [["deploy-scripts", "deploy-scripts", "214", "abc", "Jordan K.", hm(0), "1", "Database migration"]] : []).map(f => f.join("\t")),
     queue: [["infra", "infra", "109", "x", "Jordan K.", "auto", "Notifications table index"],
             ["web-app", "web-app", "464", "x", "Jordan K.", "manual", "Expire old generation rows"],
@@ -1865,7 +1920,10 @@ if (!bridge) {
     ],
     officeEvents: [`${Math.floor(t0 - 20)}\ts2\twaiting for you · Agent Office app`, `${Math.floor(t0 - 90)}\ts6\tstopped with an error · Flaky test hunt`,
                    `${Math.floor(t0 - 200)}\ts3\tdone, your turn · TTS latency investigation`],
-    reviewLog: [[14, "web-app#466: posted comment 1001"], [13, "web-app#466: Slack notified (safe)"], [12, "infra#123: review started"],
+    reviewLog: [[95, "engine#88: review started"], [86, "engine#88: posted comment | result: 2 Blocking, 1 Major | cost: $1.84"],
+                [70, "docs#41: review started"], [64, "docs#41: FAILED"], [52, "infra#123: review started"],
+                [41, "deploy-scripts#211: posted comment | result: No blockers | cost: $0.62"], [27, "infra#118: asked you on Slack (low confidence)"],
+                [14, "web-app#466: posted comment 1001"], [13, "web-app#466: Slack notified (safe)"],
                 [6, "web-app#470: review started"], [0, "deploy-scripts#214: review started"]].map(([m, msg]) => {
       const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
