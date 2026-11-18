@@ -15,3 +15,17 @@ the dev app, never in the installed one:
 - To check only that it compiles, build into a scratch folder: `scripts/build-app.sh --dev <folder>`.
 - For shared features (the room, chat, mini-games), join the person's room from the dev app as a
   second person.
+
+## Testing the terminal
+
+The terminal (`app/Terminal.swift`, `web/terminal.html`) has tabs, each its own login shell, and sits
+on the side chosen in View → Terminal Position.
+- Drive it through the View menu (Terminal, New Terminal Tab, Next / Previous Terminal Tab,
+  Terminal Position) and Window → Close: those reach the app from the background. A click sent to
+  a background window does not reach the web view, so test the tab bar's clicks (+, ×, a tab) by
+  serving `web/terminal.html` with a stub for `window.webkit.messageHandlers.term`, or ask the
+  person to click.
+- After closing a tab, check its shell is gone: the dev app's child processes should hold one
+  shell per open tab and no zombie.
+- Each side saves its divider in the dev app's defaults (`local.agent-office.dev`,
+  `NSSplitView Subview Frames AgentOfficeTerminal…`); delete that key to see a side's first showing.
