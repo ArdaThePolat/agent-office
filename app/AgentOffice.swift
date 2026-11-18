@@ -401,6 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         if let id = body["focus"], id.range(of: "^[A-Za-z0-9-]{1,80}$", options: .regularExpression) != nil { focusSession(id) }
         if let t = body["say"] { roomClient?.say(t) }
+        if let mid = body["edit"], let t = body["text"] { roomClient?.edit(mid, t) }   // your own message only
+        if let mid = body["unsay"] { roomClient?.unsay(mid) }
         if let sp = body["spot"] { roomClient?.setSpot(sp) }
         if let a = body["act"] {                                  // "kind|member id"
             let parts = a.split(separator: "|", maxSplits: 1).map(String.init)

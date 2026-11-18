@@ -63,6 +63,15 @@
   #msgs .m .at { color: var(--muted); font-size: 10px; margin-left: 6px; white-space: nowrap; display: inline-block; }
   #msgs .m.mine { align-self: flex-end; background: #2d3b33; border-radius: 8px 8px 2px 8px; padding: 5px 9px; max-width: 85%; }
   #msgs .m.theirs { background: #2a2430; border-radius: 8px 8px 8px 2px; padding: 5px 9px; max-width: 85%; align-self: flex-start; }
+  #msgs .m .ed { color: var(--muted); font-size: 10px; margin-left: 4px; }
+  #msgs .m.deleted { color: var(--muted); font-style: italic; }
+  #msgs .m .acts { display: none; margin-left: 6px; font-size: 10px; }
+  #msgs .m:hover .acts, #msgs .m .acts.sure { display: inline; }
+  #msgs .m .acts a { color: var(--muted); cursor: pointer; margin-left: 5px; text-decoration: underline; }
+  #msgs .m .acts a:hover { color: var(--text); }
+  #msgs .m .acts a.sure { color: #e06c6c; }
+  #editing { display: none; align-items: center; gap: 8px; padding: 5px 10px 0; font-size: 11px; color: #8fd6b4; }
+  #editing a { color: var(--muted); cursor: pointer; text-decoration: underline; }
   #msgs .empty { color: var(--muted); text-align: center; margin-top: 20px; }
   #say { display: flex; gap: 6px; padding: 9px 10px; border-top: 1px solid #3a302c; }
   #say input { flex: 1; min-width: 0; font: 12px Menlo, monospace; color: var(--text); background: #15121a; border: 1px solid #4a3d36;
@@ -119,6 +128,7 @@
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
   <div id="msgs"></div>
+  <div id="editing">✎ editing your message <a id="editCancel">cancel</a> <span style="color:var(--muted)">(Esc)</span></div>
   <form id="say"><input id="sayIn" maxlength="500" placeholder="Message the room…" autocomplete="off"><button>Send</button></form></div>
 <div id="people"></div>
 <div id="stats"></div>
@@ -1406,7 +1416,12 @@ function renderChat() {
   if (!open) return;
   const html = room.messages.map(m => {
     const mine = m.id === room.you, col = SHIRTS[hash(m.id) % SHIRTS.length];
-    return `<div class="m ${mine ? "mine" : "theirs"}">${mine ? "" : `<span class="who" style="color:${col}">${esc(m.from)}</span>`}${esc(m.text)}<span class="at">${hhmm(m.at)}</span></div>`;
+    const who = mine ? "" : `<span class="who" style="color:${col}">${esc(m.from)}</span>`;
+    if (m.deleted) return `<div class="m ${mine ? "mine" : "theirs"} deleted">${who}message deleted<span class="at">${hhmm(m.at)}</span></div>`;
+    // your own messages, when the host gives them an id: edit, and delete after a second click
+    const sure = delSure === m.mid;
+    const acts = mine && m.mid && can ? `<span class="acts${sure ? " sure" : ""}"><a data-edit="${esc(m.mid)}">edit</a><a data-del="${esc(m.mid)}"${sure ? ' class="sure"' : ""}>${sure ? "delete?" : "delete"}</a></span>` : "";
+    return `<div class="m ${mine ? "mine" : "theirs"}">${who}${esc(m.text)}${m.edited ? '<span class="ed">(edited)</span>' : ""}<span class="at">${hhmm(m.at)}</span>${acts}</div>`;
   }).join("") || `<div class="empty">${can ? "No messages yet. Say hi 👋<br><br>Messages are kept only while the apps are open." : "Join the room to chat."}</div>`;
   if (msgsEl.dataset.html !== html) {
     const atBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 40;
@@ -1418,11 +1433,44 @@ chatBtn.addEventListener("click", () => toggleChat());
 chatTab.addEventListener("click", () => toggleChat(true));
 document.getElementById("chatHide").addEventListener("click", () => toggleChat(false));
 document.getElementById("roomJoin").addEventListener("click", () => { if (bridge) bridge.postMessage({ room: "join" }); });
+// Edit and delete your own messages. Edit puts the text in the box with a bar above it; Send
+// saves the change, Esc or cancel drops it. Delete asks once more, on the same spot, for 4 s.
+let editing = "", delSure = "", delTimer = 0;
+const editBar = document.getElementById("editing");
+function startEdit(mid) {
+  const m = room.messages.find(x => x.mid === mid && x.id === room.you && !x.deleted); if (!m) return;
+  editing = mid; editBar.style.display = "flex"; sayIn.value = m.text; sayIn.focus(); sayIn.select();
+}
+function stopEdit() { editing = ""; editBar.style.display = "none"; sayIn.value = ""; }
+document.getElementById("editCancel").addEventListener("click", stopEdit);
+sayIn.addEventListener("keydown", ev => { if (ev.key === "Escape" && editing) { ev.preventDefault(); ev.stopPropagation(); stopEdit(); } });
+msgsEl.addEventListener("click", ev => {
+  const a = ev.target.closest("a"); if (!a) return;
+  if (a.dataset.edit) startEdit(a.dataset.edit);
+  if (a.dataset.del) {
+    const mid = a.dataset.del;
+    clearTimeout(delTimer);
+    if (delSure !== mid) { delSure = mid; delTimer = setTimeout(() => { delSure = ""; renderChat(); }, 4000); return renderChat(); }
+    delSure = "";
+    if (editing === mid) stopEdit();
+    if (bridge) bridge.postMessage({ unsay: mid });
+    else { const m = room.messages.find(x => x.mid === mid); if (m) { m.deleted = true; m.text = ""; } }
+    renderChat();
+  }
+});
 sayForm.addEventListener("submit", ev => {
   ev.preventDefault();
   const t = sayIn.value.trim(); if (!t || room.status !== "joined") return;
+  if (editing) {
+    const m = room.messages.find(x => x.mid === editing);
+    if (m && m.text !== t) {
+      if (bridge) bridge.postMessage({ edit: editing, text: t });
+      else { m.text = t; m.edited = true; }
+    }
+    stopEdit(); renderChat(); return;
+  }
   if (bridge) bridge.postMessage({ say: t });
-  else { room.messages.push({ id: room.you, from: "you", text: t, at: Date.now() / 1000 }); renderChat(); }
+  else { room.messages.push({ id: room.you, mid: "demo-" + Date.now(), from: "you", text: t, at: Date.now() / 1000 }); renderChat(); }
   sayIn.value = "";
 });
 if (bridge) bridge.postMessage({ room: "ready" });
@@ -1751,9 +1799,9 @@ if (!bridge) {
   const t1 = Date.now() / 1000;
   updateRoom({ status: "joined", name: "team", you: "me", host: true, members: [
       { id: "me", name: "Alex", avatar: "" }, { id: "jk", name: "Jordan", avatar: "" }, { id: "rm", name: "Riley", avatar: "" }],
-    messages: [{ id: "jk", from: "Jordan", text: "anyone else waiting on the CI queue?", at: t1 - 300 },
-               { id: "me", from: "Alex", text: "yes, mine's 3rd in line", at: t1 - 240 },
-               { id: "rm", from: "Riley", text: "coffee while we wait ☕", at: t1 - 60 }] });
+    messages: [{ id: "jk", mid: "d-1", from: "Jordan", text: "anyone else waiting on the CI queue?", at: t1 - 300 },
+               { id: "me", mid: "d-2", from: "Alex", text: "yes, mine's 3rd in line", at: t1 - 240, edited: true },
+               { id: "rm", mid: "d-3", from: "Riley", text: "coffee while we wait ☕", at: t1 - 60 }] });
 }
 </script>
 </body>

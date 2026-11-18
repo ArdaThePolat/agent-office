@@ -154,6 +154,12 @@ button (or **C**). **Hide** (or **C**) folds it away and gives the desks the roo
 stays on the right edge and rings, with the number of unread messages, when someone writes. Click
 it (or **C**) to bring the chat back. Hidden or shown is remembered.
 
+Hover one of your own messages for **edit** and **delete**. Edit puts its text back in the box
+(Send saves it, Esc drops it) and marks it *(edited)* for everyone; delete asks once more and
+leaves *message deleted* in its place. Only the person who sent a message can change it, and only
+from the same connection: after you rejoin, the messages from before are no longer yours to edit.
+A teammate whose app predates this keeps seeing the first text.
+
 You are in the lounge too, as your own character, next to your teammates (two teammates in the
 room is three people in your lounge). Click a piece of the lounge (the coffee machine, the
 kitchen table, the high table, the sofa) and your character walks there and stays, in your
