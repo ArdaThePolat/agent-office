@@ -242,6 +242,34 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         if importEnv(ask: false) { defaults.set(true, forKey: "envImported") }
     }
 
+    /// Replace the env file's lines with `lines`, keeping the old file as env.bak; both mode 0600.
+    func rewriteEnv(_ lines: [String]) throws {
+        let path = home + "/.config/agent-office/env", bak = path + ".bak"
+        try? FileManager.default.removeItem(atPath: bak)
+        try FileManager.default.copyItem(atPath: path, toPath: bak)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bak)
+        try lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+    }
+
+    /// Take `keys` out of the env file (comments and every other line stay; a copy is kept in
+    /// env.bak), so config.json decides them. False when the file could not be rewritten.
+    func dropEnvKeys(_ keys: Set<String>) -> Bool {
+        let path = home + "/.config/agent-office/env"
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return true }
+        var dropped = false
+        let kept = text.components(separatedBy: "\n").filter { line in
+            let l = line.trimmingCharacters(in: .whitespaces)
+            guard !l.hasPrefix("#"), let eq = l.firstIndex(of: "=") else { return true }
+            var k = String(l[..<eq]).trimmingCharacters(in: .whitespaces)
+            if k.hasPrefix("export ") { k = String(k.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
+            if keys.contains(k) { dropped = true; return false }
+            return true
+        }
+        guard dropped else { return true }
+        return (try? rewriteEnv(kept)) != nil
+    }
+
     /// True when there was nothing to import or config.json now holds it.
     @discardableResult
     func importEnv(ask: Bool) -> Bool {
@@ -303,14 +331,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             if !room.isEmpty { var r = j["room"] as? [String: Any] ?? [:]; r.merge(room) { _, b in b }; j["room"] = r }
             if !manager.isEmpty { var m = j["manager"] as? [String: Any] ?? [:]; m.merge(manager) { _, b in b }; j["manager"] = m }
         }) else { return false }
-        do {
-            let bak = path + ".bak"
-            try? FileManager.default.removeItem(atPath: bak)
-            try FileManager.default.copyItem(atPath: path, toPath: bak)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: bak)
-            try kept.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
-        } catch {
+        do { try rewriteEnv(kept) } catch {
             // left in place the lines still win, exactly as before the import: nothing breaks
             guard ask else { return true }
             let e = NSAlert(); e.messageText = "Imported, but the env file was not changed"
