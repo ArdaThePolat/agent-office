@@ -1,0 +1,63 @@
+<!doctype html>
+<!-- The terminal under the office: xterm.js draws it, Terminal.swift runs the shell on a
+     pseudo-terminal. Bytes cross as base64 (termWrite) one way and as text messages the other. -->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1c1a26; }
+  #term { position: absolute; top: 4px; right: 0; bottom: 0; left: 6px; }
+  .xterm .xterm-viewport { background-color: #1c1a26 !important; }
+  .xterm .xterm-viewport::-webkit-scrollbar { width: 8px; }
+  .xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: #4a4366; border-radius: 4px; }
+</style>
+</head><body>
+<div id="term"></div>
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
+<script>
+const post = m => window.webkit.messageHandlers.term.postMessage(m);
+const term = new Terminal({
+  // MesloLGS NF first: the font Powerlevel10k and other Nerd Font prompts draw their icons with
+  fontFamily: '"MesloLGS NF", "SF Mono", Menlo, Monaco, monospace',
+  fontSize: 13,
+  cursorBlink: true,
+  scrollback: 10000,
+  // Option types the layout's own characters (@, [, { on many keyboards) instead of Meta
+  macOptionIsMeta: false,
+  theme: {
+    background: '#1c1a26', foreground: '#e6e1f0', cursor: '#f2c14e', cursorAccent: '#1c1a26',
+    selectionBackground: '#4a4366',
+  },
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+fit.fit();
+
+// After the shell exits, Return starts a new one; other keys are ignored until then.
+let exited = false;
+term.onData(d => {
+  if (!exited) { post({ t: 'in', d }); return; }
+  if (d === '\r') { exited = false; term.reset(); post({ t: 'restart', cols: term.cols, rows: term.rows }); }
+});
+// mouse reports in some modes arrive as raw bytes: each char is one byte (0-255)
+term.onBinary(d => { if (!exited) post({ t: 'bin', d }); });
+term.onResize(({ cols, rows }) => post({ t: 'resize', cols, rows }));
+new ResizeObserver(() => { try { fit.fit(); } catch (e) {} }).observe(document.getElementById('term'));
+
+window.termWrite = b64 => {
+  const s = atob(b64), u = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  term.write(u);
+};
+window.termExited = status => {
+  exited = true;
+  term.write(`\r\n\x1b[2m[shell exited (${status}). Press Return for a new one.]\x1b[0m\r\n`);
+};
+window.termFocus = () => term.focus();
+
+post({ t: 'ready', cols: term.cols, rows: term.rows });
+term.focus();
+</script>
+</body></html>
