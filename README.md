@@ -525,7 +525,8 @@ file, not in the repository. Every key is optional.
     author, title). With it there are two shelves: a reviewed PR that is still open stands on
     **in review** (off it while a desk re-reviews it), coloured by its last result (blocking red,
     major orange, else green), and moves to **recent** once it is no longer open. The reviewer logs
-    `merged` or `declined` when a PR leaves the list, and the recent shelf shows that with when.
+    `merged` or `declined` when a PR leaves the list, and the recent shelf shows that with when;
+    one that left without such a line (before the reviewer logged them) just says `closed`.
     No file: one shelf of the latest finished reviews;
   - `<state>/requests/` (written by the app): drag a binder from **in review** to a review desk
     and the app leaves an empty file named `<repo>#<pr>` there, asking the reviewer to review that

@@ -443,7 +443,9 @@ function build(raw) {
   for (const r of finished.values()) {
     if (!openSet) done.push(r);
     else if (openSet.has(r.pr)) { if (!atDesk.has(r.pr)) inReview.push(r); }
-    else { const c = closed.get(r.pr); done.push(c && c.t >= r.t ? { ...r, closed: c.event, closedAt: c.t } : r); }
+    // no longer open: merged / declined when the reviewer logged how, else just "closed" (it left
+    // before the reviewer logged that), with no time
+    else { const c = closed.get(r.pr); done.push(c && c.t >= r.t ? { ...r, closed: c.event, closedAt: c.t } : { ...r, closed: "closed" }); }
   }
   const shelf = done.sort(byNew).slice(0, SHELF_MAX);
   inReview.sort(byNew);
@@ -802,7 +804,8 @@ const NAME_COLOR = { background: "#9fe3e8", waiting: "#ffc370", working: "#f1ebe
 const SHELF_COLOR = { posted: { binder: "#5fbf7f", text: "#9fe8b6" }, asked: { binder: "#ffb347", text: "#ffc370" },
                       rejected: { binder: "#8a8096", text: "#bdb3a8" }, failed: { binder: "#e06c6c", text: "#ff9a94" } };
 const SHELF_WORD = { posted: "review posted", asked: "asked you on Slack", rejected: "rejected on Slack" };
-const CLOSED_COLOR = { merged: { binder: "#9b7fd4", text: "#c9b6f0" }, declined: { binder: "#8a8096", text: "#bdb3a8" }, superseded: { binder: "#8a8096", text: "#bdb3a8" } };
+const CLOSED_COLOR = { merged: { binder: "#9b7fd4", text: "#c9b6f0" }, declined: { binder: "#8a8096", text: "#bdb3a8" }, superseded: { binder: "#8a8096", text: "#bdb3a8" },
+                       closed: { binder: "#8a8096", text: "#bdb3a8" } };
 // an open PR's binder says how its last review went: blocking red, major orange, else green
 const resultColor = r => r.kind !== "posted" ? SHELF_COLOR[r.kind]
   : /Blocking/.test(r.fields.result || "") ? SHELF_COLOR.failed : /Major/.test(r.fields.result || "") ? SHELF_COLOR.asked : SHELF_COLOR.posted;
@@ -824,8 +827,8 @@ function drawShelf(S, items, title) {
     const c = r.closed ? CLOSED_COLOR[r.closed] : resultColor(r), age = snap.now - (r.closedAt || r.t);
     const ex = S.x + head + j * ew, ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago";
     const asked = open && requested[r.pr] && snap.now - requested[r.pr] < 180;
-    const tail = `#${r.id} · ${asked ? "to a desk…" : (r.closed ? r.closed + " " : "") + ago}`;
-    const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
+    const tail = `#${r.id} · ${asked ? "to a desk…" : r.closed && !r.closedAt ? r.closed : (r.closed ? r.closed + " " : "") + ago}`;
+    const word = r.closed === "closed" ? "PR closed" : r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
     px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
     label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
     // a re-review says what became of the earlier findings: fixed, still open, and new ones
@@ -838,7 +841,7 @@ function drawShelf(S, items, title) {
     const who = [...new Set(r.replies.map(e => e.event.replace(/^feedback\s*(from\s*)?/, "") || "someone"))];
     const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
     hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url, drag: open && bridge && !asked ? r.pr : null,
-      tip: `${r.pr} · ${r.closed ? r.closed + " at " + hhmm(r.closedAt) + " · " : ""}${word}\n${hhmm(r.t)}, ${mins(snap.now - r.t)} ago · ${r.event}` +
+      tip: `${r.pr} · ${r.closedAt ? r.closed + " at " + hhmm(r.closedAt) + " · " : r.closed ? "closed (merged or declined before the reviewer logged which) · " : ""}${word}\n${hhmm(r.t)}, ${mins(snap.now - r.t)} ago · ${r.event}` +
         (prog.length ? `\nsince the last review: ${[f.fixed && f.fixed + " fixed", f.open && f.open + " still open", f.new && f.new + " new"].filter(Boolean).join(", ")}` : "") +
         Object.entries(f).filter(([k]) => !["fixed", "open", "new"].includes(k)).map(([k, v]) => `\n${k}: ${v}`).join("") +
         (r.replies.length ? `\n💬 ${r.replies.length} feedback since, from ${who.join(", ")} (last ${hhmm(r.replies[r.replies.length - 1].t)})` : "") +
