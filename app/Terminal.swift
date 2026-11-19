@@ -10,6 +10,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var shells: [Int: Shell] = [:]
     /// How many tabs the page shows: ⌘W closes a tab only while there is more than one.
     private(set) var tabCount = 0
+    var onHide: (() -> Void)?                                     // ✕ in the tab bar
     var onDrag: (() -> Void)?                                     // the grip was pressed (AgentOffice.swift follows the drag)
 
     override init() {
@@ -63,6 +64,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
         guard let m = msg.body as? [String: Any], let t = m["t"] as? String else { return }
         if t == "tabs" { tabCount = m["n"] as? Int ?? 0; return }
         if t == "drag" { onDrag?(); return }                     // the grip: the app tracks the drag
+        if t == "hide" { onHide?(); return }                     // ✕: hide the pane, the shells keep running
         guard let id = m["id"] as? Int else { return }
         switch t {
         case "open", "restart":
@@ -416,4 +418,7 @@ final class OfficeSplit: NSSplitView, NSSplitViewDelegate {
         min(p, length - (side.terminalFirst ? officeMin : terminalMin) - dividerThickness)
     }
     func splitView(_ s: NSSplitView, canCollapseSubview v: NSView) -> Bool { false }
+    // With the terminal hidden the divider goes too: a split view still lays out and draws a hidden
+    // pane's divider, which left a 1-pt line along the window's edge and the office 1 pt short.
+    func splitView(_ s: NSSplitView, shouldHideDividerAt i: Int) -> Bool { terminal.isHidden }
 }

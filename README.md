@@ -343,7 +343,9 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ### Terminal (optional): a shell next to the office
 
 **⌨ Terminal** at the top right of the office (or **View → Terminal**, ⌃`) opens a terminal under
-the office, and closes it again; the button is lit while it is open. Drag the divider to set its size,
+the office, and closes it again; the button is lit while it is open. **✕** at the right of the
+terminal's tab bar hides it too. Hiding never ends anything: every tab and its shell keep running,
+so opening it again (by accident or not) carries on where you were. Drag the divider to set its size,
 and the app remembers it and whether the terminal was open. It runs your own login shell (the one
 in your user account, as Terminal and iTerm start it), so your `.zshrc`, Oh My Zsh, prompt
 themes and aliases load as usual. Hiding the terminal keeps its shells running; quitting the app
