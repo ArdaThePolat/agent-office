@@ -295,9 +295,10 @@ function reviewLine(line) {
   for (const f of rest) { const k = f.indexOf(":"); if (k > 0) fields[f.slice(0, k).trim().toLowerCase()] = f.slice(k + 1).trim(); }
   return { t: Date.parse(m[1].replace(" ", "T")) / 1000, repo: m[2], id: m[3], pr: m[2] + "#" + m[3], event, fields };
 }
-// a finished review: posted, handed to you on Slack, rejected on Slack, or failed
+// a finished review: posted, handed to you on Slack, rejected on Slack, or failed (a temporary
+// failure is not: the reviewer tries that commit again at its next look)
 function finishedKind(event) {
-  return /^FAILED/.test(event) ? "failed" : /posted comment/.test(event) ? "posted"
+  return /^FAILED, temporary/.test(event) ? "" : /^FAILED/.test(event) ? "failed" : /posted comment/.test(event) ? "posted"
     : /asked you on Slack/.test(event) ? "asked" : /rejected on Slack/.test(event) ? "rejected" : "";
 }
 // The whiteboard: today's reviews (since local midnight). A review is counted once, at the first
@@ -311,7 +312,7 @@ function reviewDay(log, now) {
   for (const l of log) {
     const r = reviewLine(l); if (!r) continue;
     if (/review started/.test(r.event)) { open.set(r.pr, r.t); continue; }
-    if (/^discussion follow-up\b/.test(r.event)) {        // not a review, but what it cost counts
+    if (/^discussion follow-up\b|^FAILED, temporary/.test(r.event)) {   // not a review, but what it cost counts
       const c = parseFloat((r.fields.cost || "").replace(/[^\d.]/g, ""));
       if (r.t >= t0 && isFinite(c)) { d.cost += c; d.followCost += c; d.follows++; }
       continue;
@@ -351,7 +352,7 @@ function boardTip() {
   return [`Today, since midnight: ${d.n} review${d.n === 1 ? "" : "s"} finished` + (kinds ? ` (${kinds})` : ""),
     d.failed ? `${d.failed} failed` : "",
     d.costs || d.follows ? `cost $${d.cost.toFixed(2)}` + of(d.costs, d.n + d.failed, "logged one")
-      + (d.follows ? `, $${d.followCost.toFixed(2)} of it for ${d.follows} discussion follow-up${d.follows === 1 ? "" : "s"}` : "") : "",
+      + (d.follows ? `, $${d.followCost.toFixed(2)} of it outside finished reviews (discussion follow-ups, runs to be retried)` : "") : "",
     d.timed ? `${mins(d.time / d.timed)} from start to finish on average` + of(d.timed, d.n, "have their start in the log") : "",
     d.results ? `${d.blocking} blocking, ${d.major} major found` + of(d.results, d.n, "logged a result") : ""].filter(Boolean).join("\n");
 }

@@ -541,7 +541,9 @@ file, not in the repository. Every key is optional.
     A `discussion follow-up` line is not a review either, but when it posted an updated review
     its `result` (and `fixed` / `open` / `new`) replace that PR's on the shelf, and any `cost` it
     has is added to the PR's and to the whiteboard's total. The reviewer may write the commit
-    after the PR (`infra#230 @ 1a2b3c4d: posted comment`); it is skipped.
+    after the PR (`infra#230 @ 1a2b3c4d: posted comment`); it is skipped. A `FAILED, temporary`
+    line is not a finished review either (the reviewer tries that commit again): only its cost
+    counts, on the whiteboard.
     A line whose event starts with `feedback` (`feedback from <name>`) is not a review: when it is
     newer than the PR's entry on the shelf, the entry gets a 💬 and its tooltip says from whom.
     Feedback lines and `👍 on Slack → review requested` also show in the log strip.
