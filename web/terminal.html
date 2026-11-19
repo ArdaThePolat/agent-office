@@ -11,6 +11,9 @@
          background: #15131d; border-bottom: 1px solid #2c2838; font: 11px -apple-system, system-ui, sans-serif;
          color: #9a93b0; user-select: none; -webkit-user-select: none; }
   #tabs { display: flex; flex: 1; min-width: 0; overflow: hidden; }
+  #grip { width: 22px; display: flex; align-items: center; justify-content: center; cursor: grab;
+          border-right: 1px solid #2c2838; color: #6f6888; }
+  #grip:hover { color: #e6e1f0; background: #221f2c; }
   .tab { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 10px; flex: 0 1 180px; min-width: 56px;
          border-right: 1px solid #2c2838; cursor: default; }
   .tab .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -29,7 +32,7 @@
   .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: #4a4366; border-radius: 4px; }
 </style>
 </head><body>
-<div id="bar"><div id="tabs"></div><div id="add" title="New tab (⌘T)">+</div></div>
+<div id="bar"><div id="grip" title="Drag to move the terminal to another side of the window">⠿</div><div id="tabs"></div><div id="add" title="New tab (⌘T)">+</div></div>
 <div id="panes"></div>
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm/addon-fit.js"></script>
@@ -115,6 +118,8 @@ function closeTab(t, quiet) {
 }
 
 document.getElementById('add').onmousedown = e => { e.preventDefault(); newTab(); };
+// the grip: pressing it hands the drag to the app, which shows where the terminal would go
+document.getElementById('grip').onmousedown = e => { e.preventDefault(); post({ t: 'drag' }); };
 document.getElementById('bar').ondblclick = e => { if (e.target.id === 'tabs') newTab(); };
 // ⌘1…⌘9 picks a tab (⌘9 the last), as in iTerm and the browsers
 window.addEventListener('keydown', e => {

@@ -342,7 +342,8 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 
 ### Terminal (optional): a shell next to the office
 
-**View → Terminal** (⌃`) opens a terminal under the office; drag the divider to set its size,
+**⌨ Terminal** at the top right of the office (or **View → Terminal**, ⌃`) opens a terminal under
+the office, and closes it again; the button is lit while it is open. Drag the divider to set its size,
 and the app remembers it and whether the terminal was open. It runs your own login shell (the one
 in your user account, as Terminal and iTerm start it), so your `.zshrc`, Oh My Zsh, prompt
 themes and aliases load as usual. Hiding the terminal keeps its shells running; quitting the app
@@ -353,8 +354,10 @@ ends them.
   while you type in the terminal and more than one is open (otherwise it closes the window, as
   before); so do the tab's **×** and a middle click. A tab shows the title your prompt sets.
   `exit` closes its tab; in the last tab, Return starts a new shell.
-- **Where:** **View → Terminal Position** puts it below, above, left or right of the office. Each
-  side remembers its own size.
+- **Where:** drag the **⠿** grip at the left of its tab bar towards a side of the window: the side
+  it would take lights up, and letting go moves it there (Esc, or letting go outside the window,
+  leaves it where it was). **View → Terminal Position** does the same: below, above, left or right
+  of the office. Each side remembers its own size.
 - It is drawn by [xterm.js](https://xtermjs.org) (`web/vendor/xterm/`, MIT), bundled with the app:
   nothing is fetched at run time.
 - Font: MesloLGS NF when it is installed (the Nerd Font Powerlevel10k and similar prompts draw
