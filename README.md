@@ -593,10 +593,11 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
   leaderboard (leaving mid-flight keeps what you scored so far).
-- **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
-  everyone in the room on the same day (in the same time zone), with their own boards (the best lap
-  on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
-  score only for its yesterday, today or tomorrow, so teammates in other time zones still count.
+- **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
+  everyone in the room wherever they are, with their own boards (the best lap on today's track, the
+  biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
+  daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
+  still counts.
 - **🏅 Achievements:** twenty-four of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
   one end, a gunship…), kept on your Mac and listed
@@ -606,7 +607,10 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   in its config folder (`~/.config/agent-office`, or `~/.config/agent-office-dev` for the dev app),
   taking only scores within each board's bounds, a few a minute per person, and each name's best,
   top 10. Entries go by display name: the room trusts its members, so two people with the same name
-  share a line. Without a room, your own bests on this Mac.
+  share a line. Without a room, your own bests on this Mac. **Every board starts empty each day at
+  00:00 UTC** (the Scores tab says when that is in your time): the host keeps only the day's scores,
+  so a new day is a new race for the top. Your best of all time stays on your Mac, as **YOUR BEST**
+  in each game. A host on an older version keeps its boards across days.
 - **While you play,** an agent that starts waiting for you shows at the top of the game (click it
   to go to that session) and as a macOS notification.
 

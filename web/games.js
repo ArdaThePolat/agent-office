@@ -6,7 +6,8 @@
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
 // …}). Scores go to the room's leaderboard, which the host keeps on its own Mac; without a room,
-// your own bests are kept in this page's storage. Achievements are this Mac's; their count rides on
+// your own bests are kept in this page's storage. Either way the boards are a UTC day's: they start
+// empty at 00:00 UTC. Achievements are this Mac's; their count rides on
 // your character in the lounge (the profile's badge). While a game is open, an agent that starts
 // waiting for you shows in the game, and the app sends a notification.
 "use strict";
@@ -92,8 +93,11 @@ const newSeed = () => Math.floor(Math.random() * 2 ** 31);
 function store(key, fallback) { try { return JSON.parse(localStorage.getItem("agentOffice." + key) || "null") ?? fallback; } catch (e) { return fallback; } }
 function keep(key, v) { try { localStorage.setItem("agentOffice." + key, JSON.stringify(v)); } catch (e) {} }
 
-// today, by this Mac's calendar: the daily challenge's track and fish, the same for everyone that day
-function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+// today's date in UTC: the daily challenge's track and fish, and the day the leaderboards keep, change
+// at 00:00 UTC, the same moment for everyone in the room wherever they are
+function today() { return new Date().toISOString().slice(0, 10); }
+// when the leaderboards next start empty, in this Mac's time ("03:00")
+function resetLocal() { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.toTimeString().slice(0, 5); }
 function daily() { const h = hash("daily " + today()); return { day: today(), track: h % 5, fish: (h >>> 4) % 8 }; }
 function boardName(b) {
   if (BOARD_NAMES[b]) return BOARD_NAMES[b];
@@ -102,20 +106,25 @@ function boardName(b) {
   return m[1] === "race" ? `📅 Daily race · best lap (${m[2]})` : `📅 Daily fish · biggest (${m[2]})`;
 }
 
-/// A score: your own best on this Mac, and the room's board (the host keeps each name's best).
-/// True when it beats your own best.
+/// A score: your own best on this Mac (of all time, and of today for the leaderboard without a room),
+/// and the room's board (the host keeps each name's best of the UTC day). True when it beats your best
+/// of all time.
 function scoreBoard(board, value) {
-  const bests = store("bests", {});
-  const old = bests[board], better = old === undefined || (LOW_WINS(board) ? value < old : value > old);
+  const bests = store("bests", {}), beats = old => old === undefined || (LOW_WINS(board) ? value < old : value > old);
+  const better = beats(bests[board]);
   if (better) { bests[board] = value; keep("bests", bests); }
+  const day = todaysBests();
+  if (beats(day[board])) { day[board] = value; keep("dayBests", { day: today(), boards: day }); }
   if (bridge && inRoom()) bridge.postMessage({ score: `${board}|${value}` });
   peopleKey = "";
   return better;
 }
+/// Your bests of the UTC day: empty again after 00:00 UTC, like the room's boards.
+function todaysBests() { const d = store("dayBests", null); return d && d.day === today() ? d.boards : {}; }
 function boardsNow() {
   if (inRoom() && room.scores && Object.keys(room.scores).length) return { room: true, boards: room.scores };
   const boards = {};
-  for (const [b, v] of Object.entries(store("bests", {}))) boards[b] = [{ name: myName(), value: v }];
+  for (const [b, v] of Object.entries(todaysBests())) boards[b] = [{ name: myName(), value: v }];
   return { room: false, boards };
 }
 function boardsHTML(compact) {
@@ -124,8 +133,9 @@ function boardsHTML(compact) {
   const names = dailies.concat(Object.keys(BOARD_NAMES).filter(b => boards[b] && boards[b].length));
   const list = names.length ? names.map(b => `<div class="sc"><b>${esc(boardName(b))}</b>` + boards[b].slice(0, compact ? 3 : 10).map((e, i) =>
       `<div><span>${i + 1}. ${esc(e.name)}</span><span>${fmtScore(b, e.value)}</span></div>`).join("") + `</div>`).join("")
-    : `<div class="empty">No scores yet. Play something!</div>`;
-  return (isRoom || !names.length ? "" : `<div class="empty">Your bests on this Mac (join a room for the room's leaderboard).</div>`) + list;
+    : `<div class="empty">No scores yet today. Play something!</div>`;
+  const when = `<div class="empty">Today's scores: the boards start empty every day at 00:00 UTC (${resetLocal()} your time).</div>`;
+  return when + (isRoom || !names.length ? "" : `<div class="empty">Your bests on this Mac today (join a room for the room's leaderboard).</div>`) + list;
 }
 function toast(html, onClick, ms) {
   gtoast.innerHTML = html; gtoast.style.display = "block"; gtoast.onclick = () => { gtoast.style.display = "none"; if (onClick) onClick(); };
