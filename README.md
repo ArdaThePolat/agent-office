@@ -113,7 +113,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   default) gets a red frame and a ⚠ by its time: it may be stuck. A shelf along the front holds the
   last finished reviews, newest first (up to 5, fewer on a narrow window): PR, how long ago, and
   the result and cost when the reviewer logs them; green posted, amber asked you on Slack, grey
-  rejected on Slack, red failed. Hover one for the details; a click opens its PR. The whiteboard
+  rejected on Slack, red failed. When the reviewer lists its open PRs, the shelf splits in two:
+  **in review** for reviewed PRs still open, **recent** for merged or declined ones (purple:
+  merged). Hover one for the details; a click opens its PR. The whiteboard
   sums up today, since midnight: reviews finished, what they cost, how long they took on average
   from `review started` to the finished line, and the blocking and major findings in their
   results; a number the log does not give (no `cost` fields, say) is left off. A review counts
@@ -506,6 +508,12 @@ file, not in the repository. Every key is optional.
     slug, number, `approve` or `request`, since when in unix seconds, author, title). `approve` is a
     finished review that is posted after your 👍, `request` a small PR that is reviewed if you 👍
     it. No file, nothing waiting;
+  - `<state>/open` (optional): one line per open PR the reviewer watches (repo name, slug, number,
+    author, title). With it there are two shelves: a reviewed PR that is still open stands on
+    **in review** (off it while a desk re-reviews it), coloured by its last result (blocking red,
+    major orange, else green), and moves to **recent** once it is no longer open. The reviewer logs
+    `merged` or `declined` when a PR leaves the list, and the recent shelf shows that with when.
+    No file: one shelf of the latest finished reviews;
   - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`. A line whose
     event is `posted comment`, `asked you on Slack`, `rejected on Slack` or starts with `FAILED`
     is a finished review and goes on the shelf. After the event, optional ` | key: value` fields

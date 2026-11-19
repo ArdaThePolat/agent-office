@@ -204,6 +204,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         }
     }
     var reviews: [String] = [], queue: [String] = [], waiting: [String] = [], reviewLog: [String] = []
+    var openPRs: [String]? = nil                          // nil: the reviewer does not write one (one shelf, as before)
     if let rs = cfg.reviewState {
         for name in (try? fm.contentsOfDirectory(atPath: rs + "/running")) ?? [] {
             guard let l = lines(rs + "/running/" + name).first else { continue }
@@ -212,6 +213,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         }
         queue = lines(rs + "/queue")
         waiting = lines(rs + "/waiting")                  // waiting for your 👍/👎 on Slack; no file: none
+        if fm.fileExists(atPath: rs + "/open") { openPRs = lines(rs + "/open") }   // the reviewer's open PRs
     }
     if let rl = cfg.reviewLog {
         // the last 120 lines, or more when today has more (as far as the tail goes): the whiteboard counts the day
@@ -223,6 +225,7 @@ func snapshot(_ cfg: Config) -> [String: Any] {
     return [
         "now": now, "slots": cfg.slots, "overdueMinutes": cfg.overdueMinutes, "workspace": cfg.workspace,
         "sessions": sessions, "reviews": reviews, "queue": queue, "waiting": waiting,
+        "openPRs": openPRs.map { $0 as Any } ?? NSNull(),
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "planLowPercent": cfg.planLowPercent,
         "reviewLog": reviewLog,

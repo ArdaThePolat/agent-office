@@ -413,7 +413,24 @@ function build(raw) {
   (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event), e = r && finished.get(r.pr);
     if (kind) finished.set(r.pr, { ...r, kind, n, replies: [] });
     else if (e && /^feedback\b/.test(r.event) && r.t >= e.t) e.replies.push(r); });
-  const shelf = [...finished.values()].sort((a, b) => b.t - a.t || b.n - a.n).slice(0, SHELF_MAX);
+  // With the reviewer's list of open PRs ("open" in its state folder), a reviewed PR that is still open
+  // stands on the "in review" shelf (off it while a desk re-reviews it), and moves to "recent" once it is
+  // merged or declined -- the reviewer logs "merged" / "declined" when it leaves the open list. Without
+  // that list there is one shelf: the latest finished reviews.
+  const closed = new Map();
+  (raw.reviewLog || []).forEach(l => { const r = reviewLine(l); if (r && /^(merged|declined|superseded)$/.test(r.event)) closed.set(r.pr, r); });
+  const openSet = Array.isArray(raw.openPRs)
+    ? new Set(raw.openPRs.map(l => l.split("\t")).filter(f => f.length >= 3).map(f => f[0] + "#" + f[2])) : null;
+  const atDesk = new Set(reviews.map(r => r.name + "#" + r.id));
+  const when = r => r.closedAt || r.t, byNew = (a, b) => when(b) - when(a) || b.n - a.n;
+  const inReview = [], done = [];
+  for (const r of finished.values()) {
+    if (!openSet) done.push(r);
+    else if (openSet.has(r.pr)) { if (!atDesk.has(r.pr)) inReview.push(r); }
+    else { const c = closed.get(r.pr); done.push(c && c.t >= r.t ? { ...r, closed: c.event, closedAt: c.t } : r); }
+  }
+  const shelf = done.sort(byNew).slice(0, SHELF_MAX);
+  inReview.sort(byNew);
   const today = raw.reviewLog && raw.reviewLog.length ? reviewDay(raw.reviewLog, now) : null;
   energy = !!(raw.settings && raw.settings.energySaver);
   // the Terminal button: in the app only, lit while the terminal is open
@@ -422,7 +439,7 @@ function build(raw) {
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, waiting, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, finished: shelf, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
+           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null,
            roomLabels: raw.roomLabels && typeof raw.roomLabels === "object" ? raw.roomLabels : {} };
 }
@@ -660,6 +677,7 @@ function paintRooms(L) {
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
   if (L.shelf) lowShelf(L.shelf.x, L.shelf.y + 9, L.shelf.w);
+  if (L.shelfOpen) lowShelf(L.shelfOpen.x, L.shelfOpen.y + 9, L.shelfOpen.w);
   { const nW = Math.max(1, Math.floor(deskSpan / 46)), firstWin = Math.round(from + 0.5 * deskSpan / nW - winW / 2);
     sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3, firstWin - 2 - (rx + 13), "REVIEW ROOM"); }
   // the others room: warm walls, wood floor
@@ -768,12 +786,49 @@ const NAME_COLOR = { background: "#9fe3e8", waiting: "#ffc370", working: "#f1ebe
 const SHELF_COLOR = { posted: { binder: "#5fbf7f", text: "#9fe8b6" }, asked: { binder: "#ffb347", text: "#ffc370" },
                       rejected: { binder: "#8a8096", text: "#bdb3a8" }, failed: { binder: "#e06c6c", text: "#ff9a94" } };
 const SHELF_WORD = { posted: "review posted", asked: "asked you on Slack", rejected: "rejected on Slack" };
+const CLOSED_COLOR = { merged: { binder: "#9b7fd4", text: "#c9b6f0" }, declined: { binder: "#8a8096", text: "#bdb3a8" }, superseded: { binder: "#8a8096", text: "#bdb3a8" } };
+// an open PR's binder says how its last review went: blocking red, major orange, else green
+const resultColor = r => r.kind !== "posted" ? SHELF_COLOR[r.kind]
+  : /Blocking/.test(r.fields.result || "") ? SHELF_COLOR.failed : /Major/.test(r.fields.result || "") ? SHELF_COLOR.asked : SHELF_COLOR.posted;
 const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting for you", working: "working", done: "done, your turn", crashed: "stopped with an error", compacting: "compacting", stalled: "quiet", idle: "idle" };
+
+// One shelf of binders, as many as fit side by side (fewer on a narrow window). A merged or declined PR
+// says so and when; an open one is coloured by how its last review went.
+function drawShelf(S, items, title) {
+  const head = S.w >= 120 ? Math.ceil((9 * 5.45 + 9) / P) : 0,   // as wide as "IN REVIEW", so the two shelves line up
+    k = Math.min(items.length, Math.floor((S.w - head) / 46));
+  const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
+  if (head && k) label(title, S.x * P, (S.y + 2) * P, "#bdb3a8", 9);
+  items.slice(0, k).forEach((r, j) => {
+    const c = r.closed ? CLOSED_COLOR[r.closed] : resultColor(r), age = snap.now - (r.closedAt || r.t);
+    const ex = S.x + head + j * ew, ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago";
+    const tail = `#${r.id} · ${r.closed ? r.closed + " " : ""}${ago}`;
+    const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
+    px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
+    label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
+    // a re-review says what became of the earlier findings: fixed, still open, and new ones
+    const f = r.fields, prog = [["✅", f.fixed], ["⏳", f.open], ["🆕", f.new]].filter(p => p[1] !== undefined);
+    label(clipW([prog.map(p => p[0] + p[1]).join(" "), f.result, f.cost].filter(Boolean).join(" · ") || word, (ew - 8) * P - 6, 9), (ex + 7) * P, (S.y + 4.5) * P, c.text, 9);
+    if (r.replies.length) {    // feedback on it since: a speech bubble over the binder
+      px(ex - 1, S.y - 4, 7, 4, "#f4efe4"); px(ex + 1, S.y, 2, 1, "#f4efe4"); px(ex + 2, S.y + 1, 1, 1, "#f4efe4");
+      for (const d of [0, 2, 4]) px(ex + d, S.y - 3, 1, 1, "#5b8def");
+    }
+    const who = [...new Set(r.replies.map(e => e.event.replace(/^feedback\s*(from\s*)?/, "") || "someone"))];
+    const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
+    hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url,
+      tip: `${r.pr} · ${r.closed ? r.closed + " at " + hhmm(r.closedAt) + " · " : ""}${word}\n${hhmm(r.t)}, ${mins(snap.now - r.t)} ago · ${r.event}` +
+        (prog.length ? `\nsince the last review: ${[f.fixed && f.fixed + " fixed", f.open && f.open + " still open", f.new && f.new + " new"].filter(Boolean).join(", ")}` : "") +
+        Object.entries(f).filter(([k]) => !["fixed", "open", "new"].includes(k)).map(([k, v]) => `\n${k}: ${v}`).join("") +
+        (r.replies.length ? `\n💬 ${r.replies.length} feedback since, from ${who.join(", ")} (last ${hhmm(r.replies[r.replies.length - 1].t)})` : "") +
+        (url ? "\nclick: open the PR" : "") });
+  });
+}
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
   // the review room grows a little for the shelf of finished reviews (the manager's room is tall enough)
-  const reviewH = snap.manager ? 108 : snap.finished.length ? 92 : 82, teamW = 64, loungeH = 70;
+  const shelves = (snap.finished.length ? 1 : 0) + (snap.inReview.length ? 1 : 0);
+  const reviewH = (snap.manager ? 108 : shelves ? 92 : 82) + (shelves > 1 ? 15 : 0), teamW = 64, loungeH = 70;
   // with a room set up (joined or not), the chat is docked on the others room's right side
   const chatWide = room.status !== "off" && cols >= 240;
   const chatW = chatWide && !chatHidden ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
@@ -788,13 +843,15 @@ function layout() {
   const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   // the shelf runs along the front of the review room, under the desks, as wide as they are
+  // ("in review" above "recent" when there are both)
   const shelf = snap.finished.length ? { x: rx + 6, y: reviewH - 17, w: bx - 8 - rx - 6 } : null;
+  const shelfOpen = snap.inReview.length ? { x: rx + 6, y: reviewH - 17 - (shelf ? 15 : 0), w: bx - 8 - rx - 6 } : null;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
   // the people in the shared room (or Create / Join when there is none) on the lounge's right side
   const peopleW = cols >= 240 ? Math.min(84, Math.max(66, Math.floor(cols * 0.2))) : 0;
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, chatW, chatWide, cells, endY: ry,
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, shelfOpen, chatW, chatWide, cells, endY: ry,
            peopleW, lw: cols - peopleW };
 }
 
@@ -807,7 +864,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.shelf ? [L.shelf.x, L.shelf.y, L.shelf.w].join(",") : "", JSON.stringify(snap.roomLabels || {}), JSON.stringify(boardNotes()), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.shelf ? [L.shelf.x, L.shelf.y, L.shelf.w].join(",") : "", L.shelfOpen ? [L.shelfOpen.x, L.shelfOpen.y].join(",") : "", JSON.stringify(snap.roomLabels || {}), JSON.stringify(boardNotes()), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -885,34 +942,9 @@ function draw() {
       (snap.waiting.some(w => w.kind === "request") ? "\nrequest: a small PR, reviewed if you 👍 it" : "") +
       (wurl(snap.waiting[0]) ? `\nclick: open ${snap.waiting[0].name}#${snap.waiting[0].id}` + (wn > 1 ? " · right-click: open another" : "") : "")
       : "Nothing waiting for your 👍/👎 on Slack" });
-  // the shelf: finished reviews, newest first, as many as fit side by side (fewer on a narrow window)
-  if (L.shelf) {
-    const S = L.shelf, head = S.w >= 120 ? 15 : 0, k = Math.min(snap.finished.length, Math.floor((S.w - head) / 46));
-    const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
-    if (head && k) label("RECENT", S.x * P, (S.y + 2) * P, "#bdb3a8", 9);
-    snap.finished.slice(0, k).forEach((r, j) => {
-      const ex = S.x + head + j * ew, c = SHELF_COLOR[r.kind], age = snap.now - r.t;
-      const ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago", tail = `#${r.id} · ${ago}`;
-      const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
-      px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
-      label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
-      // a re-review says what became of the earlier findings: fixed, still open, and new ones
-      const f = r.fields, prog = [["✅", f.fixed], ["⏳", f.open], ["🆕", f.new]].filter(p => p[1] !== undefined);
-      label(clipW([prog.map(p => p[0] + p[1]).join(" "), f.result, f.cost].filter(Boolean).join(" · ") || word, (ew - 8) * P - 6, 9), (ex + 7) * P, (S.y + 4.5) * P, c.text, 9);
-      if (r.replies.length) {    // feedback on it since: a speech bubble over the binder
-        px(ex - 1, S.y - 4, 7, 4, "#f4efe4"); px(ex + 1, S.y, 2, 1, "#f4efe4"); px(ex + 2, S.y + 1, 1, 1, "#f4efe4");
-        for (const d of [0, 2, 4]) px(ex + d, S.y - 3, 1, 1, "#5b8def");
-      }
-      const who = [...new Set(r.replies.map(e => e.event.replace(/^feedback\s*(from\s*)?/, "") || "someone"))];
-      const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
-      hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url,
-        tip: `${r.pr} · ${word}\n${hhmm(r.t)}, ${ago} · ${r.event}` +
-          (prog.length ? `\nsince the last review: ${[f.fixed && f.fixed + " fixed", f.open && f.open + " still open", f.new && f.new + " new"].filter(Boolean).join(", ")}` : "") +
-          Object.entries(f).filter(([k]) => !["fixed", "open", "new"].includes(k)).map(([k, v]) => `\n${k}: ${v}`).join("") +
-          (r.replies.length ? `\n💬 ${r.replies.length} feedback since, from ${who.join(", ")} (last ${hhmm(r.replies[r.replies.length - 1].t)})` : "") +
-          (url ? "\nclick: open the PR" : "") });
-    });
-  }
+  // the shelves: reviewed PRs still open ("in review") and finished ones ("recent"), newest first
+  if (L.shelfOpen) drawShelf(L.shelfOpen, snap.inReview, "IN REVIEW");
+  if (L.shelf) drawShelf(L.shelf, snap.finished, "RECENT");
 
   // ----- others room -----
   const oy = L.oy, states = snap.others.map(shown);
@@ -2157,6 +2189,9 @@ if (!bridge) {
     queue: [["infra", "infra", "109", "x", "Jordan K.", "auto", "Notifications table index"],
             ["web-app", "web-app", "464", "x", "Jordan K.", "manual", "Expire old generation rows"],
             ["deploy-scripts", "deploy-scripts", "217", "x", "Riley M.", "auto", "Rollout surge settings"]].map(f => f.join("\t")),
+    // the open PRs the reviewer watches: reviewed ones stand on the "in review" shelf
+    openPRs: [["engine", "engine", "90"], ["engine", "engine", "88"], ["infra", "infra", "118"], ["infra", "infra", "123"],
+              ["deploy-scripts", "deploy-scripts", "211"], ["docs", "docs", "41"]].map(f => f.join("\t")),
     waiting: [["infra", "infra", "118", "approve", Math.floor(t0 - 27 * 60), "Sam R.", "Retry policy for the webhook worker"],
               ["docs", "docs", "43", "request", Math.floor(t0 - 50 * 60), "Riley M.", "Fix broken links in the setup guide"],
               ["web-app", "web-app", "469", "request", Math.floor(t0 - 130 * 60), "Jordan K.", "Bump the date library"]].map(f => f.join("\t")),
@@ -2187,7 +2222,8 @@ if (!bridge) {
                 [20, "web-app#466: feedback from Casey L."],
                 [14, "web-app#466: posted comment | result: No blockers | cost: $0.71 | fixed: 3 | open: 1 | new: 2"], [13, "web-app#466: Slack notified (safe)"],
                 [9, "deploy-scripts#211: feedback from Casey L."], [6, "web-app#470: review started"], [4, "deploy-scripts#211: feedback from Sam R."],
-                [2, "docs#45: 👍 on Slack → review requested"], [0, "deploy-scripts#214: review started"]].map(([m, msg]) => {
+                [2, "docs#45: 👍 on Slack → review requested"], [0, "deploy-scripts#214: review started"],
+                [150, "web-app#455: merged"], [20, "infra#120: merged"]].sort((a, b) => b[0] - a[0]).map(([m, msg]) => {
       const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
   }; };
