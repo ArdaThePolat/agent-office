@@ -268,6 +268,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         set { defaults.set(newValue.rawValue, forKey: "terminalSide") }
     }
     var terminalItem: NSMenuItem!
+    var sidesMenu: NSMenu?                                  // View → Terminal Position, ticked on the current side
+    var sideDrag: SideDrag?                                 // while the terminal's grip is dragged
     var manualCheck = false
     var checkUpdates: Bool {
         get { defaults.bool(forKey: "checkUpdates") }        // false until turned on in Settings
@@ -291,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.minSize = NSSize(width: 380, height: 300)
         terminal.view.isHidden = !terminalShown
         split = OfficeSplit(office: web, terminal: terminal.view, side: terminalSide)
+        terminal.onDrag = { [weak self] in self?.dragTerminal() }
         window.contentView = split
         window.delegate = self
         if terminalShown { terminal.load() }
@@ -343,6 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             split.adjustSubviews()
             window.makeFirstResponder(web)
         }
+        push()                                                   // the page's Terminal button follows
     }
 
     /// ⌘T: a new tab, showing the terminal first if it is hidden (a first showing opens one tab).
@@ -361,10 +365,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func setTerminalSide(_ sender: NSMenuItem) {
         guard let side = sender.representedObject as? String, let s = TerminalSide(rawValue: side) else { return }
+        moveTerminal(to: s)
+    }
+    /// Put the terminal on side `s` (the View menu, or a drag of its grip), and tick it in the menu.
+    func moveTerminal(to s: TerminalSide) {
         terminalSide = s
-        sender.menu?.items.forEach { $0.state = $0 === sender ? .on : .off }
-        split.place(s)
+        sidesMenu?.items.forEach { $0.state = ($0.representedObject as? String) == s.rawValue ? .on : .off }
+        if split.side != s { split.place(s) }
         if terminalShown { split.fitTerminal(); terminal.focus() }
+    }
+    /// The terminal's grip was pressed: follow the drag, and move the terminal where it is let go.
+    func dragTerminal() {
+        guard terminalShown else { return }
+        let d = SideDrag(window: window) { [weak self] s in
+            self?.sideDrag = nil
+            if let s { self?.moveTerminal(to: s) }
+        }
+        sideDrag = d
+        d.begin()
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -378,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         // Nothing on screen (minimised, hidden, or covered by other windows): skip the work.
         guard window.isVisible, !window.isMiniaturized, window.occlusionState.contains(.visible) else { return }
         var snap = snapshot(Config.load())
-        snap["settings"] = ["energySaver": energySaver, "welcome": !defaults.bool(forKey: "welcomed")]
+        snap["settings"] = ["energySaver": energySaver, "welcome": !defaults.bool(forKey: "welcomed"), "terminal": terminalShown]
         snap["jukebox"] = jukebox.snapshot
         snap["hidden"] = defaults.string(forKey: "hidden") ?? "{}"
         // the manager's picture only when it changed: it is most of a snapshot otherwise
@@ -497,6 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             if parts.count == 2 { roomClient?.act(parts[0], to: parts[1]) }
         }
         gameMessage(body)                                                   // Games.swift
+        if body["terminal"] == "toggle" { DispatchQueue.main.async { self.showTerminal(!self.terminalShown) } }   // the Terminal button
         if body["update"] == "go" { DispatchQueue.main.async { self.offerSigning { self.updater.update() } } }   // Signing.swift
         if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
@@ -742,6 +761,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             it.state = s == terminalSide ? .on : .off
         }
         sideItem.submenu = sides
+        sidesMenu = sides
         viewItem.submenu = view
         let roomItem = NSMenuItem(); main.addItem(roomItem)
         let rm = NSMenu(title: "Room")

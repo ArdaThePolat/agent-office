@@ -10,6 +10,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     private var shells: [Int: Shell] = [:]
     /// How many tabs the page shows: ⌘W closes a tab only while there is more than one.
     private(set) var tabCount = 0
+    var onDrag: (() -> Void)?                                     // the grip was pressed (AgentOffice.swift follows the drag)
 
     override init() {
         super.init()
@@ -61,6 +62,7 @@ final class TerminalPane: NSObject, WKScriptMessageHandler, WKNavigationDelegate
     func userContentController(_ c: WKUserContentController, didReceive msg: WKScriptMessage) {
         guard let m = msg.body as? [String: Any], let t = m["t"] as? String else { return }
         if t == "tabs" { tabCount = m["n"] as? Int ?? 0; return }
+        if t == "drag" { onDrag?(); return }                     // the grip: the app tracks the drag
         guard let id = m["id"] as? Int else { return }
         switch t {
         case "open", "restart":
@@ -265,12 +267,93 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Moving the terminal by dragging its grip: while the button is down, a see-through layer over the
+/// window lights the part the terminal would take (the side nearest the mouse); letting go moves it
+/// there, Esc or letting go outside the window leaves it where it was.
+final class SideDrag {
+    private let window: NSWindow
+    private var monitor: Any?
+    private let overlay: NSWindow, shade = SideShade()
+    private var side: TerminalSide?
+    private let done: (TerminalSide?) -> Void
+
+    init(window: NSWindow, done: @escaping (TerminalSide?) -> Void) {
+        self.window = window; self.done = done
+        overlay = NSWindow(contentRect: window.contentLayoutRect, styleMask: .borderless, backing: .buffered, defer: false)
+        overlay.isOpaque = false; overlay.backgroundColor = .clear; overlay.ignoresMouseEvents = true; overlay.hasShadow = false
+        overlay.contentView = shade
+    }
+    func begin() {
+        overlay.setFrame(window.convertToScreen(window.contentLayoutRect), display: false)
+        window.addChildWindow(overlay, ordered: .above)
+        update(NSEvent.mouseLocation)
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp, .keyDown]) { [weak self] e in
+            guard let self else { return e }
+            switch e.type {
+            case .leftMouseDragged: self.update(NSEvent.mouseLocation); return nil
+            case .leftMouseUp: self.update(NSEvent.mouseLocation); self.end(self.side); return nil
+            case .keyDown where e.keyCode == 53: self.end(nil); return nil          // Esc
+            default: return e
+            }
+        }
+    }
+    /// The side nearest the mouse, or none outside the window.
+    private func update(_ screenPoint: NSPoint) {
+        let r = overlay.frame
+        guard r.contains(screenPoint) else { side = nil; shade.show(nil); return }
+        side = TerminalSide.nearest(x: (screenPoint.x - r.minX) / r.width, y: (screenPoint.y - r.minY) / r.height)
+        shade.show(side)
+    }
+    private func end(_ s: TerminalSide?) {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        window.removeChildWindow(overlay); overlay.orderOut(nil)
+        done(s)
+    }
+}
+
+/// The lit part of the window while dragging: a third of it on the side the terminal would take.
+final class SideShade: NSView {
+    private var side: TerminalSide?
+    func show(_ s: TerminalSide?) { side = s; needsDisplay = true }
+    override func draw(_ dirty: NSRect) {
+        guard let side else { return }
+        let b = bounds, t: CGFloat = 1 / 3
+        let r: NSRect
+        switch side {
+        case .bottom: r = NSRect(x: 0, y: 0, width: b.width, height: b.height * t)
+        case .top: r = NSRect(x: 0, y: b.height * (1 - t), width: b.width, height: b.height * t)
+        case .left: r = NSRect(x: 0, y: 0, width: b.width * t, height: b.height)
+        case .right: r = NSRect(x: b.width * (1 - t), y: 0, width: b.width * t, height: b.height)
+        }
+        NSColor(red: 0.56, green: 0.84, blue: 0.71, alpha: 0.22).setFill(); r.fill()
+        let edge = NSBezierPath(rect: r.insetBy(dx: 1, dy: 1)); edge.lineWidth = 2
+        NSColor(red: 0.56, green: 0.84, blue: 0.71, alpha: 0.9).setStroke(); edge.stroke()
+        // "Terminal" over the side's name, as large as fits the lit part (a side strip is narrow)
+        let lines = ["Terminal", side.title] as [NSString]
+        var font = NSFont.boldSystemFont(ofSize: 15)
+        while font.pointSize > 9, lines.contains(where: { $0.size(withAttributes: [.font: font]).width > r.width - 16 }) {
+            font = NSFont.boldSystemFont(ofSize: font.pointSize - 1)
+        }
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
+        let h = lines[0].size(withAttributes: attrs).height
+        for (i, l) in lines.enumerated() {
+            let w = l.size(withAttributes: attrs).width
+            l.draw(at: NSPoint(x: r.midX - w / 2, y: r.midY + (i == 0 ? 0 : -h)), withAttributes: attrs)
+        }
+    }
+}
+
 /// Which side of the office the terminal sits on.
 enum TerminalSide: String, CaseIterable {
     case bottom, top, left, right
     var title: String { rawValue.capitalized }
     var vertical: Bool { self == .left || self == .right }        // side by side
     var terminalFirst: Bool { self == .top || self == .left }
+    /// The side whose edge is nearest a point in the window (0…1 across, 0…1 up from the bottom).
+    static func nearest(x: CGFloat, y: CGFloat) -> TerminalSide {
+        [(x, TerminalSide.left), (1 - x, .right), (y, .bottom), (1 - y, .top)].min { $0.0 < $1.0 }!.1
+    }
 }
 
 /// The office and the terminal side by side or one above the other; the divider drags, and its

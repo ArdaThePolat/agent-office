@@ -29,7 +29,10 @@
   #demo { position: fixed; bottom: calc(var(--log-h, 92px) + 4px); right: 8px; color: var(--muted); font-size: 10px; }
   #statsBtn { position: fixed; top: 6px; right: 10px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-  #statsBtn:hover, #chatBtn:hover { background: #3a302c; }
+  #statsBtn:hover, #chatBtn:hover, #termBtn:hover { background: #3a302c; }
+  #termBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
+    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
+  #termBtn.on { border-color: #8fd6b4; color: #8fd6b4; }
   #chatBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
   #chatBtn.unread { border-color: #ffb347; color: #ffc370; }
@@ -147,6 +150,7 @@
 <div id="demo"></div>
 <button id="statsBtn" title="Usage and session details (S)">Stats</button>
 <button id="chatBtn" title="The shared room's chat (C)">Chat</button>
+<button id="termBtn" title="The terminal under the office (⌃\`). Drag its ⠿ grip to move it to another side.">⌨ Terminal</button>
 <button id="updBtn"></button>
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
@@ -326,6 +330,8 @@ function build(raw) {
   (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event); if (kind) finished.set(r.pr, { ...r, kind, n }); });
   const shelf = [...finished.values()].sort((a, b) => b.t - a.t || b.n - a.n).slice(0, SHELF_MAX);
   energy = !!(raw.settings && raw.settings.energySaver);
+  // the Terminal button: in the app only, lit while the terminal is open
+  if (bridge && raw.settings) { termBtn.style.display = "block"; termBtn.classList.toggle("on", !!raw.settings.terminal); if (typeof placeUpdate === "function") placeUpdate(); }
   if (raw.settings && raw.settings.welcome && !welcomeSeen) showWelcome();
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
@@ -1714,7 +1720,18 @@ peopleEl.addEventListener("click", ev => {
 const updBtn = document.getElementById("updBtn");
 let upd = { status: "idle" };
 window.updateUpdate = u => { upd = u; placeUpdate(); };
+// The buttons along the top right, from the right: Stats, Chat (when it shows), Terminal (in the
+// app), then Update. Returns where the next one would go.
+function placeTopButtons() {
+  let right = 10 + statsBtn.offsetWidth + 6;
+  if (chatBtn.style.display === "block") { chatBtn.style.right = right + "px"; right += chatBtn.offsetWidth + 6; }
+  if (termBtn.style.display === "block") { termBtn.style.right = right + "px"; right += termBtn.offsetWidth + 6; }
+  return right;
+}
+const termBtn = document.getElementById("termBtn");
+termBtn.addEventListener("click", () => { if (bridge) bridge.postMessage({ terminal: "toggle" }); });
 function placeUpdate() {
+  placeTopButtons();
   const show = ["available", "updating", "failed"].includes(upd.status) && upd.latest;
   updBtn.style.display = show ? "block" : "none";
   if (!show) return;
@@ -1724,9 +1741,7 @@ function placeUpdate() {
   updBtn.title = upd.status === "failed" ? upd.detail
     : upd.canBuild ? `You have v${upd.current}. Rebuilds Agent Office from v${upd.latest} and reopens it.`
     : `You have v${upd.current}. Opens the release page.`;
-  // left of the Stats button, and of the Chat button when that shows
-  const chatShown = chatBtn.style.display === "block";
-  updBtn.style.right = (10 + statsBtn.offsetWidth + 6 + (chatShown ? chatBtn.offsetWidth + 6 : 0)) + "px";
+  updBtn.style.right = placeTopButtons() + "px";
 }
 updBtn.addEventListener("click", () => { if (upd.status !== "updating" && bridge) bridge.postMessage({ update: "go" }); });
 
