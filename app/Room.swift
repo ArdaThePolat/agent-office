@@ -65,6 +65,12 @@ func roomBoardRule(_ board: String) -> (lowWins: Bool, min: Double, max: Double)
     guard [-86400.0, 0, 86400].contains(where: { f.string(from: now.addingTimeInterval($0)) == day }) else { return nil }
     return board.hasPrefix("daily-race") ? (true, 3, 600) : (false, 0.01, 100)
 }
+/// Out of the room (it was lost, or not there when the app started): looks this many seconds apart,
+/// then one a minute for ROOM_RETRY_MINUTE_FOR seconds, then one every ROOM_RETRY_SLOW. A host's
+/// update takes a minute or two, a Mac's restart a few: the early looks find it the moment it is back.
+let ROOM_RETRY_QUICK: [TimeInterval] = [3, 5, 10, 15, 20, 30, 45, 60]
+let ROOM_RETRY_MINUTE_FOR: TimeInterval = 30 * 60
+let ROOM_RETRY_SLOW: TimeInterval = 5 * 60
 let ROOM_GAME_RATE = 40               // game messages per member in 2 s (a car's position, 10 a second)
 let ROOM_GAME_BYTES = 1500            // bytes of one game message
 let ROOM_SCORE_RATE = 5               // scores per member in 10 s
@@ -115,11 +121,16 @@ func open(_ msg: [String: Any], _ key: SymmetricKey) -> [String: Any]? {
           let box = try? AES.GCM.SealedBox(combined: d), let plain = try? AES.GCM.open(box, using: key) else { return nil }
     return try? JSONSerialization.jsonObject(with: plain) as? [String: Any]
 }
+/// The room's connections. TCP keepalive: a peer that vanished without closing (a Mac asleep or off
+/// the network) is noticed within about half a minute, on both sides. Without it a member keeps a
+/// dead connection and believes it is still in the room, and the host lists a member who is gone.
 func wsParameters() -> NWParameters {
     let ws = NWProtocolWebSocket.Options()
     ws.autoReplyPing = true
     ws.maximumMessageSize = ROOM_MAX_FRAME
-    let p = NWParameters.tcp
+    let tcp = NWProtocolTCP.Options()
+    tcp.enableKeepalive = true; tcp.keepaliveIdle = 15; tcp.keepaliveInterval = 5; tcp.keepaliveCount = 3
+    let p = NWParameters(tls: nil, tcp: tcp)
     p.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
     return p
 }
@@ -405,19 +416,34 @@ final class RoomClient {
     func start() {
         join()
         if cfg.alwaysJoin {
+            // a backstop for the schedule in local(): a wrong password is tried again only this often
             retry = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
                 if self?.status != "joined" { self?.join() }
             }
+            // back on a network (Wi-Fi again, a wake from sleep, a VPN coming up): look at once
+            let m = NWPathMonitor()
+            m.pathUpdateHandler = { [weak self] path in
+                guard path.status == .satisfied else { return }
+                DispatchQueue.main.async {
+                    guard let s = self, !s.stopped, s.status == "local", !s.detail.contains("did not let us in") else { return }
+                    s.outSince = Date(); s.quick = ROOM_RETRY_QUICK
+                    s.join()
+                }
+            }
+            m.start(queue: q)
+            pathMonitor = m
         }
     }
+    private var pathMonitor: NWPathMonitor?
     var discover = true                                   // look for the room by name (off: by address only)
     private var stopped = false
-    func stop() { stopped = true; retry?.invalidate(); onChange = nil; onPoked = nil
-        q.async { self.browser?.cancel(); self.watcher?.cancel(); self.watcher = nil; self.conn?.cancel() } }
+    func stop() { stopped = true; retry?.invalidate(); retryGen += 1; onChange = nil; onPoked = nil
+        q.async { self.pathMonitor?.cancel(); self.browser?.cancel(); self.watcher?.cancel(); self.watcher = nil; self.conn?.cancel() } }
 
     /// Look for the room on the network and join it; if it is not there within 8 seconds, stay local.
     func join() {
         guard status != "joined", !stopped else { return }
+        retryGen += 1                                     // a look scheduled earlier is this one
         attempt += 1
         let mine = attempt
         set { $0.status = "looking"; $0.detail = "looking for \($0.cfg.name)…" }
@@ -530,7 +556,7 @@ final class RoomClient {
             welcomed = true
             let list = (m["members"] as? [[String: Any]]) ?? []
             set {
-                $0.status = "joined"; $0.detail = ""; $0.quick = []; $0.nextTry = nil; $0.you = m["you"] as? String ?? ""
+                $0.status = "joined"; $0.detail = ""; $0.quick = []; $0.outSince = nil; $0.nextTry = nil; $0.you = m["you"] as? String ?? ""
                 $0.members = Dictionary(list.compactMap { x in (x["id"] as? String).map { ($0, x) } }, uniquingKeysWith: { a, _ in a })
                 $0.membersVersion += 1
                 if let sc = m["scores"] as? [String: Any] { $0.scores = sc }
@@ -583,55 +609,59 @@ final class RoomClient {
         local(wasIn ? "lost the room" : answered ? "the room did not let us in (wrong password?)"
               : "could not reach the room" + (cfg.address.isEmpty ? "" : " at \(cfg.address)"), lost: wasIn)
     }
-    /// Out of the room. Losing a room we were in is usually the host restarting its app (an update
-    /// rebuilds it, which takes a minute or two) or its Mac, so the next looks come quickly, for
-    /// about 15 minutes, before falling back to the 15-minute timer. And while out, the room's
-    /// Bonjour announcement is watched: a host that comes back announces the room again, and that
-    /// is the "join me again" a host could not otherwise send (it does not know where its members
-    /// are, and members take no incoming connections). Without the watch, a room behind a hidden
-    /// network (joined by address) still has the quick looks.
+    /// Out of the room: lost (usually the host restarting its app for an update, which takes a minute
+    /// or two, or its Mac) or not there when this app started (the host may be updating at the same
+    /// moment). Either way the next looks come quickly, then once a minute, then every few minutes,
+    /// for as long as the app runs (ROOM_RETRY_*). And while out, the room's Bonjour announcement is
+    /// watched: a host that comes back announces the room again, and that is the "join me again" a
+    /// host could not otherwise send (it does not know where its members are, and members take no
+    /// incoming connections). A wrong password stays wrong: no quick looks and no watch for it.
     private func local(_ why: String, lost: Bool = false) {
         set {
             $0.status = "local"; $0.detail = why; $0.members = [:]; $0.membersVersion += 1
-            if lost { $0.quick = [10, 20, 30, 45, 60, 90, 120, 180, 300] }
-            guard $0.cfg.alwaysJoin else { $0.nextTry = nil; return }
-            if !$0.quick.isEmpty {
-                let d = $0.quick.removeFirst()
-                $0.nextTry = Date().addingTimeInterval(d)
-                DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
-                    if let s = self, s.status == "local" { s.join() }
-                }
-            } else {
-                $0.nextTry = Date().addingTimeInterval(15 * 60)
+            if lost || $0.outSince == nil { $0.outSince = Date(); $0.quick = ROOM_RETRY_QUICK }
+            guard $0.cfg.alwaysJoin, !$0.stopped else { $0.nextTry = nil; return }
+            if why.contains("did not let us in") { $0.nextTry = Date().addingTimeInterval(15 * 60); return }
+            let out = Date().timeIntervalSince($0.outSince ?? Date())
+            let d = !$0.quick.isEmpty ? $0.quick.removeFirst() : out < ROOM_RETRY_MINUTE_FOR ? 60 : ROOM_RETRY_SLOW
+            $0.nextTry = Date().addingTimeInterval(d)
+            let gen = $0.retryGen
+            DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+                if let s = self, s.retryGen == gen, s.status == "local" { s.join() }
             }
-            // a wrong password stays wrong: no watching, or every announcement would try it again
-            if !why.contains("did not let us in") { $0.watch() }
+            $0.watch()
         }
     }
-    /// Join the moment the room is announced on this network again. The first answer lists what is
-    /// there already (the room we just failed to reach, perhaps): only a later appearance counts.
+    /// Join the moment the room is announced on this network. Bonjour can still list a room that just
+    /// went away (or never call at all while nothing is announced), so any sight of it counts, added
+    /// or changed, at most one join every few seconds; a stale record only costs one failed look.
     private func watch() {
         guard cfg.alwaysJoin, discover, !stopped else { return }
         q.async {
             guard self.watcher == nil else { return }
             let b = NWBrowser(for: .bonjour(type: ROOM_SERVICE, domain: nil), using: .tcp)
-            var first = true
             b.browseResultsChangedHandler = { [weak self] _, changes in
                 guard let self else { return }
-                defer { first = false }
-                guard !first else { return }
                 for c in changes {
-                    if case .added(let r) = c, case .service(let name, _, _, _) = r.endpoint, name == self.cfg.name {
-                        self.watcher?.cancel(); self.watcher = nil
-                        DispatchQueue.main.async { if self.status == "local" { self.join() } }
-                        return
+                    var r: NWBrowser.Result?
+                    if case .added(let x) = c { r = x }
+                    if case .changed(_, let x, _) = c { r = x }
+                    guard let r, case .service(let name, _, _, _) = r.endpoint, name == self.cfg.name else { continue }
+                    DispatchQueue.main.async {
+                        guard self.status == "local", Date().timeIntervalSince(self.watchJoined) > 4 else { return }
+                        self.watchJoined = Date()
+                        self.join()
                     }
+                    return
                 }
             }
             b.start(queue: self.q)
             self.watcher = b
         }
     }
+    private var watchJoined = Date.distantPast            // main queue: the last join the watch started
+    private var outSince: Date?                           // main queue: out of the room since (nil: in it)
+    private var retryGen = 0                              // main queue: a scheduled look is for this join
     private var quick: [TimeInterval] = []                // main queue: the quick looks still to come
     private func set(_ f: @escaping (RoomClient) -> Void) {
         DispatchQueue.main.async { f(self); self.onChange?() }
