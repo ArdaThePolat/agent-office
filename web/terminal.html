@@ -10,11 +10,17 @@
   #bar { position: absolute; top: 0; left: 0; right: 0; height: 24px; display: flex; align-items: stretch;
          background: #15131d; border-bottom: 1px solid #2c2838; font: 11px -apple-system, system-ui, sans-serif;
          color: #9a93b0; user-select: none; -webkit-user-select: none; }
-  #tabs { display: flex; flex: 1; min-width: 0; overflow: hidden; }
+  /* more tabs than fit: the row scrolls sideways (wheel, trackpad, or the ‹ › that show only then) */
+  #tabs { display: flex; flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+  #tabs::-webkit-scrollbar { display: none; }
+  #grip, #add, #hide { flex: 0 0 auto; }
+  .more { width: 18px; flex: 0 0 auto; text-align: center; line-height: 23px; font-size: 13px; cursor: default; }
+  .more:hover { color: #e6e1f0; background: #2c2838; }
+  .more.off { color: #3a3550; background: none; }
   #grip { width: 22px; display: flex; align-items: center; justify-content: center; cursor: grab;
           border-right: 1px solid #2c2838; color: #6f6888; }
   #grip:hover { color: #e6e1f0; background: #221f2c; }
-  .tab { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 10px; flex: 0 1 180px; min-width: 56px;
+  .tab { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 10px; flex: 0 1 180px; min-width: 96px;
          border-right: 1px solid #2c2838; cursor: default; }
   .tab .name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .tab .x { width: 16px; height: 16px; line-height: 15px; text-align: center; border-radius: 3px; visibility: hidden; }
@@ -34,7 +40,7 @@
   .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: #4a4366; border-radius: 4px; }
 </style>
 </head><body>
-<div id="bar"><div id="grip" title="Drag to move the terminal to another side of the window">⠿</div><div id="tabs"></div><div id="add" title="New tab (⌘T)">+</div><div id="hide" title="Hide the terminal (⌃\`): its tabs and shells keep running, open it again to carry on">✕</div></div>
+<div id="bar"><div id="grip" title="Drag to move the terminal to another side of the window">⠿</div><div id="left" class="more" title="Scroll the tabs left" hidden>‹</div><div id="tabs"></div><div id="right" class="more" title="Scroll the tabs right" hidden>›</div><div id="add" title="New tab (⌘T)">+</div><div id="hide" title="Hide the terminal (⌃\`): its tabs and shells keep running, open it again to carry on">✕</div></div>
 <div id="panes"></div>
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm/addon-fit.js"></script>
@@ -58,9 +64,11 @@ const tabs = [];
 let cur = null, nextId = 1;
 const byId = id => tabs.find(t => t.id === id);
 
-function render() {
+// reveal: scroll the current tab into view (a new or picked tab); a title change leaves the row where it is
+function render(reveal) {
   tabsEl.replaceChildren(...tabs.map((t, i) => {
     const el = document.createElement('div');
+    t.tabEl = el;
     el.className = 'tab' + (t === cur ? ' on' : '');
     el.title = (t.title || 'Shell') + (i < 9 ? `  (⌘${i + 1})` : '');
     const name = document.createElement('span'); name.className = 'name';
@@ -73,8 +81,29 @@ function render() {
     el.append(name, x);
     return el;
   }));
+  if (reveal && cur && cur.tabEl) cur.tabEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  arrows();
   post({ t: 'tabs', n: tabs.length });
 }
+
+// the ‹ › show only while the tabs overflow, and fade at the end they cannot scroll past
+const leftEl = document.getElementById('left'), rightEl = document.getElementById('right');
+function arrows() {
+  const over = tabsEl.scrollWidth > tabsEl.clientWidth + 1;
+  leftEl.hidden = rightEl.hidden = !over;
+  leftEl.classList.toggle('off', tabsEl.scrollLeft <= 0);
+  rightEl.classList.toggle('off', tabsEl.scrollLeft + tabsEl.clientWidth >= tabsEl.scrollWidth - 1);
+}
+const slide = dir => { tabsEl.scrollBy({ left: dir * Math.max(96, tabsEl.clientWidth * 0.6) }); arrows(); };
+leftEl.onmousedown = e => { e.preventDefault(); slide(-1); };
+rightEl.onmousedown = e => { e.preventDefault(); slide(1); };
+tabsEl.addEventListener('scroll', arrows);
+// a plain mouse wheel scrolls up and down: over the tabs it slides them sideways
+tabsEl.addEventListener('wheel', e => {
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); tabsEl.scrollLeft += e.deltaY; arrows(); }
+}, { passive: false });
+// a narrower bar (a smaller window, the terminal moved to a side) keeps the current tab in view
+new ResizeObserver(() => { if (cur && cur.tabEl) cur.tabEl.scrollIntoView({ block: 'nearest', inline: 'nearest' }); arrows(); }).observe(tabsEl);
 
 function select(t) {
   if (!t) return;
@@ -82,7 +111,7 @@ function select(t) {
   for (const o of tabs) o.el.style.visibility = o === t ? 'visible' : 'hidden';
   try { t.fit.fit(); } catch (e) {}
   t.term.focus();
-  render();
+  render(true);
 }
 
 function newTab() {

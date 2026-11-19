@@ -1,12 +1,13 @@
 // Agent Office — the lounge's mini-games: the shell they share. Loaded by office.html after its own
 // script (it uses its globals: room, bridge, esc, snap, SHIRTS, hash, roomMates, openSession,
 // peopleKey), then each game registers itself: games-race.js, games-fish.js, games-bugs.js,
-// games-pong.js.
+// games-pong.js, games-archery.js, games-sky.js.
 //
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
 // …}). Scores go to the room's leaderboard, which the host keeps on its own Mac; without a room,
-// your own bests are kept in this page's storage. Achievements are this Mac's; their count rides on
+// your own bests are kept in this page's storage. Either way the boards are a UTC day's: they start
+// empty at 00:00 UTC. Achievements are this Mac's; their count rides on
 // your character in the lounge (the profile's badge). While a game is open, an agent that starts
 // waiting for you shows in the game, and the app sends a notification.
 "use strict";
@@ -17,6 +18,7 @@ const BOARD_NAMES = {
   "race-4": "Race · Chicane · best lap", "race-5": "Race · Grand Loop · best lap",
   "fish-big": "Fishing · biggest fish", "fish-haul": "Fishing · 2-minute catch",
   "bugs": "Bug Whack · best round", "pong-wins": "Ping-pong · games won",
+  "archery": "Archery · best round", "sky": "Sky Patrol · best flight",
 };
 const LOW_WINS = b => b.startsWith("race-") || b.startsWith("daily-race");
 const gameEl = document.createElement("div");
@@ -71,7 +73,7 @@ document.head.appendChild(gstyle);
 
 // ---------- shared ----------
 const GAME = { open: false, view: "home", keys: new Set(), last: 0, raf: 0 };
-const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, click, msg, tab, tabClick, leave }
+const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave }
 function registerGame(id, g) { GAMES[id] = g; }
 const myName = () => (snap && snap.manager && snap.manager.name) || "You";
 const inRoom = () => room.status === "joined";
@@ -91,9 +93,12 @@ const newSeed = () => Math.floor(Math.random() * 2 ** 31);
 function store(key, fallback) { try { return JSON.parse(localStorage.getItem("agentOffice." + key) || "null") ?? fallback; } catch (e) { return fallback; } }
 function keep(key, v) { try { localStorage.setItem("agentOffice." + key, JSON.stringify(v)); } catch (e) {} }
 
-// today, by this Mac's calendar: the daily challenge's track and fish, the same for everyone that day
-function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function daily() { const h = hash("daily " + today()); return { day: today(), track: h % 5, fish: (h >> 4) % 8 }; }
+// today's date in UTC: the daily challenge's track and fish, and the day the leaderboards keep, change
+// at 00:00 UTC, the same moment for everyone in the room wherever they are
+function today() { return new Date().toISOString().slice(0, 10); }
+// when the leaderboards next start empty, in this Mac's time ("03:00")
+function resetLocal() { const d = new Date(); d.setUTCHours(24, 0, 0, 0); return d.toTimeString().slice(0, 5); }
+function daily() { const h = hash("daily " + today()); return { day: today(), track: h % 5, fish: (h >>> 4) % 8 }; }
 function boardName(b) {
   if (BOARD_NAMES[b]) return BOARD_NAMES[b];
   const m = /^daily-(race|fish)-(.+)$/.exec(b);
@@ -101,20 +106,25 @@ function boardName(b) {
   return m[1] === "race" ? `📅 Daily race · best lap (${m[2]})` : `📅 Daily fish · biggest (${m[2]})`;
 }
 
-/// A score: your own best on this Mac, and the room's board (the host keeps each name's best).
-/// True when it beats your own best.
+/// A score: your own best on this Mac (of all time, and of today for the leaderboard without a room),
+/// and the room's board (the host keeps each name's best of the UTC day). True when it beats your best
+/// of all time.
 function scoreBoard(board, value) {
-  const bests = store("bests", {});
-  const old = bests[board], better = old === undefined || (LOW_WINS(board) ? value < old : value > old);
+  const bests = store("bests", {}), beats = old => old === undefined || (LOW_WINS(board) ? value < old : value > old);
+  const better = beats(bests[board]);
   if (better) { bests[board] = value; keep("bests", bests); }
+  const day = todaysBests();
+  if (beats(day[board])) { day[board] = value; keep("dayBests", { day: today(), boards: day }); }
   if (bridge && inRoom()) bridge.postMessage({ score: `${board}|${value}` });
   peopleKey = "";
   return better;
 }
+/// Your bests of the UTC day: empty again after 00:00 UTC, like the room's boards.
+function todaysBests() { const d = store("dayBests", null); return d && d.day === today() ? d.boards : {}; }
 function boardsNow() {
   if (inRoom() && room.scores && Object.keys(room.scores).length) return { room: true, boards: room.scores };
   const boards = {};
-  for (const [b, v] of Object.entries(store("bests", {}))) boards[b] = [{ name: myName(), value: v }];
+  for (const [b, v] of Object.entries(todaysBests())) boards[b] = [{ name: myName(), value: v }];
   return { room: false, boards };
 }
 function boardsHTML(compact) {
@@ -123,8 +133,9 @@ function boardsHTML(compact) {
   const names = dailies.concat(Object.keys(BOARD_NAMES).filter(b => boards[b] && boards[b].length));
   const list = names.length ? names.map(b => `<div class="sc"><b>${esc(boardName(b))}</b>` + boards[b].slice(0, compact ? 3 : 10).map((e, i) =>
       `<div><span>${i + 1}. ${esc(e.name)}</span><span>${fmtScore(b, e.value)}</span></div>`).join("") + `</div>`).join("")
-    : `<div class="empty">No scores yet. Play something!</div>`;
-  return (isRoom || !names.length ? "" : `<div class="empty">Your bests on this Mac (join a room for the room's leaderboard).</div>`) + list;
+    : `<div class="empty">No scores yet today. Play something!</div>`;
+  const when = `<div class="empty">Today's scores: the boards start empty every day at 00:00 UTC (${resetLocal()} your time).</div>`;
+  return when + (isRoom || !names.length ? "" : `<div class="empty">Your bests on this Mac today (join a room for the room's leaderboard).</div>`) + list;
 }
 function toast(html, onClick, ms) {
   gtoast.innerHTML = html; gtoast.style.display = "block"; gtoast.onclick = () => { gtoast.style.display = "none"; if (onClick) onClick(); };
@@ -152,6 +163,14 @@ const ACHIEVEMENTS = [
   ["pong-cpu", "🤖", "Beat the machine", "beat the computer at ping-pong"],
   ["pong-win", "🏓", "Table champion", "win ping-pong against a teammate"],
   ["daily", "📅", "Daily player", "finish a daily challenge"],
+  ["perfect", "💎", "Perfect catch", "land a fish without it ever leaving the green bar"],
+  ["archer", "🏹", "Archer", "finish a round of archery"],
+  ["bullseye", "🎯", "Bullseye", "hit a 10"],
+  ["hat-trick", "🎩", "Hat trick", "three 10s in one end"],
+  ["sharpshooter", "🦅", "Sharpshooter", "score 120 or more in an archery round"],
+  ["ace", "✈", "Ace", "shoot down 100 planes in all"],
+  ["gunship", "💣", "Gunship down", "shoot down a gunship"],
+  ["sky-10k", "🌤", "High flyer", "score 10,000 in one flight"],
 ];
 function achieved() { return store("achievements", {}); }
 function achieve(id) {
@@ -192,6 +211,19 @@ function gamePoint(ev) {
 }
 for (const type of ["mousedown", "mouseup", "mousemove"]) gcv.addEventListener(type, ev => {
   const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), type);
+});
+// A release outside the canvas (past its edge, over the side panel, outside the window) still lets go:
+// a game held with the mouse (the fishing bar, the bow) would otherwise stay held until the next click.
+window.addEventListener("mouseup", ev => {
+  if (!GAME.open || ev.target === gcv) return;
+  const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), "mouseup");
+}, true);
+// The window loses focus: the key-ups and the mouse-up will not come, so nothing stays held. A game's
+// cancel() drops what was held without acting on it (no arrow or cast goes off as you switch apps).
+window.addEventListener("blur", () => {
+  if (!GAME.open) return;
+  GAME.keys.clear();
+  const g = GAMES[GAME.view]; if (g && g.cancel) g.cancel();
 });
 
 function openGames(view) {
@@ -262,7 +294,8 @@ function homeSide() {
   const d = daily(), extra = Object.values(GAMES).map(g => g.homeHTML ? g.homeHTML() : "").join("");
   gside.innerHTML = `<h3>PLAY</h3><div class="grid">
       <button class="go" data-play="race">🏎 Race</button><button class="go" data-play="fish">🎣 Fishing</button>
-      <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button></div>
+      <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button>
+      <button class="go" data-play="archery">🏹 Archery</button><button class="go" data-play="sky">✈ Sky Patrol</button></div>
     <h3>📅 TODAY'S CHALLENGE</h3><div class="hint">${esc(GAMES.race.trackName(d.track))} (best lap) and the biggest ${esc(GAMES.fish.speciesName(d.fish))}: the same for everyone today.</div>
     <div class="grid" style="margin-top:5px"><button data-play="race" data-arg="daily">Race today's track</button><button data-play="fish" data-arg="daily">Fish for today's</button></div>
     ${extra}
@@ -273,7 +306,11 @@ function drawHome(t) {
   gpx(0, 0, GW, GH, "#1b1820");
   gtext("MINI-GAMES", GW / 2, 30, "#8fd6b4", 16, "center");
   gtext("pick one on the right · Esc goes back", GW / 2, 52, "#a79d93", 8, "center");
-  for (const g of Object.values(GAMES)) if (g.drawIcon) g.drawIcon(t);
+  // the games' icons, three to a row: each game draws its own around its iconCenter
+  Object.values(GAMES).filter(g => g.drawIcon).forEach((g, i) => {
+    const [cx, cy] = g.iconCenter || [0, 0], x = 60 + (i % 3) * 100, y = 92 + Math.floor(i / 3) * 64;
+    gx.save(); gx.translate(x - cx, y - cy); g.drawIcon(t); gx.restore();
+  });
 }
 
 // ---------- from the room ----------
@@ -292,6 +329,8 @@ window.gamesTabHTML = () => {
     <div class="g"><span class="gn">🎣 Fishing</span><button data-gplay="fish">Play</button></div>
     <div class="g"><span class="gn">🪲 Bug Whack</span><button data-gplay="bugs">Play</button></div>
     <div class="g"><span class="gn">🏓 Ping-pong</span><button data-gplay="pong">Play</button></div>
+    <div class="g"><span class="gn">🏹 Archery</span><button data-gplay="archery">Play</button></div>
+    <div class="g"><span class="gn">✈ Sky Patrol</span><button data-gplay="sky">Play</button></div>
     <div class="empty">${inRoom() ? "Races, rounds and challenges you start are open to the room. G opens the games." : "On your own for now: join a room to play together. G opens the games."}</div></div>`;
 };
 window.scoresTabHTML = () => `<div class="list">${boardsHTML(true)}<div class="gh">ACHIEVEMENTS</div><div class="sc">${
@@ -303,7 +342,7 @@ window.gamesPanelClick = b => {
 };
 window.gamesKey = () => Object.values(GAMES).map(g => g.tabKey ? g.tabKey() : "").join("|") + JSON.stringify(boardsNow()) + Object.keys(achieved()).length;
 
-// the demo (office.html opened without the app): ?game=race, fish, bugs or pong opens one
+// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery or sky opens one
 if (!bridge) {
   const want = new URLSearchParams(location.search).get("game") || "";
   if (want) setTimeout(() => { openGames("home"); if (GAMES[want]) GAMES[want].start("demo"); }, 300);

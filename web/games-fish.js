@@ -1,10 +1,12 @@
 // 🎣 Fishing (games.js is the shell): one pond for everyone in the room.
 //
 // Hold Space (or the mouse) to charge a cast and let go to throw. When a fish swims by your bobber
-// it may bite: the bobber dives and "!" shows; press Space within a second to hook it. Then reel:
-// holding pulls the fish in and raises the line's tension; the fish surges and rests. Letting go
-// always lowers the tension, but the fish swims off a little; in the red the line snaps, and with
-// no tension for two seconds the fish gets away.
+// it may bite: the bobber dives and "!" shows; press Space within a second to hook it. Then the
+// catch: a fish darts up and down a tall meter, and holding Space (or the mouse) lifts a green bar
+// that falls when you let go. While the fish is inside the bar the catch fills up; outside it drains.
+// Full: the fish is yours (a catch that never left the bar is perfect); empty: it gets away. Bigger
+// fighters get a shorter bar and swim harder, each kind in its own way: steady, mixed, sinking to
+// the bottom, or darting.
 //
 // The pond is shared: its fish come from a seed and a start time, so every Mac sees the same fish
 // in the same places. Whoever opened the pond keeps it: it decides who hooks a fish when two try
@@ -26,7 +28,11 @@ const FISH = [
   ["Catfish", "#8a7f74", 3, 25, 3, 1.9], ["Golden Koi", "#f0c040", 1, 6, 1, 1.5],
 ];
 const WATER = 90, POND_X0 = 85, POND_X1 = 312, FISH_EVERY = 3.2, FISH_LIFE = 34, POND_BEAT = 8, POND_GONE = 25;
-const FISHING = { phase: "idle", power: 0, dist: 0, wait: 0, bite: 0, cand: -1, fish: null, reel: 0, tension: 0, slack: 0, caught: [], feed: [], cup: null, daily: false };
+// the catch meter: where it stands, how tall its channel is (in the games' pixels)
+const METER = { x: GW - 44, top: 26, h: 132 };
+// how each kind swims on the meter, by FISH index: smooth, mixed, sinker or dart
+const FISH_STYLE = ["smooth", "smooth", "mixed", "mixed", "sinker", "dart", "sinker", "mixed"];
+const FISHING = { phase: "idle", mouseDown: false, power: 0, dist: 0, wait: 0, bite: 0, cand: -1, fish: null, reel: 0, tension: 0, caught: [], feed: [], cup: null, daily: false };
 const POND = { id: "", owner: "", ownerName: "", seed: 0, epoch: 0, dailyFish: 0, claims: {}, people: {}, beat: 0, sent: 0, meSent: "" };
 const pondOwner = () => POND.owner === myId();
 const pondT = () => Date.now() / 1000 - POND.epoch;
@@ -83,7 +89,7 @@ function fishSide() {
   const F = FISHING, mine = F.caught.slice(-6).reverse(), cup = F.cup, now = Date.now() / 1000, d = daily();
   const standing = cup ? Object.entries(cup.totals).map(([id, kg]) => [id === myId() ? myName() + " (you)" : cup.names[id] || "?", kg]).sort((a, b) => b[1] - a[1]) : [];
   const here = Object.values(POND.people).filter(p => now - p.at < 20);
-  gside.innerHTML = `<h3>HOW</h3><div class="hint">Hold Space to charge a cast, let go to throw. When a fish bites (!), press Space. Then hold Space to reel; let go when the line climbs into the red.</div>
+  gside.innerHTML = `<h3>HOW</h3><div class="hint">Hold Space to charge a cast, let go to throw. When a fish bites (!), press Space. Then keep the fish inside the green bar: hold Space (or the mouse) to lift it, let go to let it fall. Fill the meter to land it.</div>
     ${inRoom() ? `<h3>THE POND</h3><div class="hint">${here.length ? `fishing with you: ${here.map(p => esc(p.name)).join(", ")}` : "the room's pond: whoever fishes joins you here"}. A fish someone hooks is theirs.</div>` : ""}
     <h3>📅 TODAY'S FISH</h3><div class="hint">${esc(FISH[d.fish][0])}: the biggest one caught today has its own board.</div>
     <h3>2-MINUTE CATCH</h3>${cup && cup.end > now
@@ -122,9 +128,27 @@ function hook(n) {
   gsend({ g: "fish", k: "hook", id: POND.id, n });
 }
 function startReel(n) {
-  const f = fishAt(n);
-  Object.assign(FISHING, { phase: "reel", fish: { n, name: f.name, color: f.color, kg: f.kg, fight: f.fight, kind: f.kind }, reel: FISHING.dist, tension: 0.3, slack: 0, pull: 0, surge: 0, target: 0 });
+  const f = fishAt(n), barH = Math.max(30, Math.min(46, Math.round(52 - f.fight * 10)));
+  Object.assign(FISHING, { phase: "reel", fish: { n, name: f.name, color: f.color, kg: f.kg, fight: f.fight, kind: f.kind }, reel: FISHING.dist, tension: 0.3,
+    // the meter, measured from its bottom: the bar (where, how fast, how tall), the fish, the catch
+    barY: 0, barV: 0, barH, fishY: METER.h * 0.6, fishTo: METER.h * 0.6, fishIn: 0.8, prog: 0.4, perfect: null });   // the fish starts up the meter: doing nothing drains it
   sayMe();
+}
+/// The fish on the meter: it picks somewhere to go, now and then, and swims there in its own way.
+function swimOnMeter(F, dt) {
+  const f = F.fish, style = FISH_STYLE[f.kind] || "mixed", top = METER.h - 8;
+  F.fishIn -= dt;
+  if (F.fishIn <= 0) {
+    const r = Math.random();
+    if (style === "smooth") { F.fishTo = r * top; F.fishIn = 1.2 + Math.random() * 0.9; }
+    else if (style === "sinker") { F.fishTo = 14 + Math.pow(r, 1.6) * top * 0.6; F.fishIn = 0.8 + Math.random() * 0.8; }   // low, but off the floor where a resting bar lies
+    else if (style === "dart") { F.fishTo = Math.random() < 0.6 ? Math.max(0, Math.min(top, F.fishY + (r - 0.5) * top * 1.2)) : F.fishY; F.fishIn = 0.4 + Math.random() * 0.8; }
+    else { F.fishTo = r * top; F.fishIn = 0.6 + Math.random() * 0.8; }
+    F.fishIn /= 0.7 + f.fight * 0.3;                                    // fighters change their mind sooner
+  }
+  const pace = (style === "dart" ? 5 : style === "smooth" ? 1.1 : 1.7) * (0.6 + f.fight * 0.35);
+  F.fishY += (F.fishTo - F.fishY) * Math.min(1, dt * pace) + (Math.random() - 0.5) * f.fight * 0.3;
+  F.fishY = Math.max(0, Math.min(top, F.fishY));
 }
 function loseFish(text) {
   const F = FISHING, n = F.fish ? F.fish.n : -1;
@@ -162,28 +186,34 @@ function fishStep(dt) {
   if (F.phase === "hooking" && now - F.hookAt > 2) { F.phase = "wait"; toast("The fish slipped off", null, 2000); }
   if (F.phase === "reel") {
     const f = F.fish;
-    F.surge = (F.surge || 0) - dt;
-    if (F.surge <= 0) { F.surge = 0.6 + Math.random() * 0.9; F.target = Math.random() < 0.35 ? f.fight * (0.5 + Math.random() * 0.5) : Math.random() * 0.3; }
-    F.pull += ((F.target || 0) - F.pull) * Math.min(1, dt * 4);
-    F.tension += (holding ? 0.6 : -1.2) * dt + F.pull * dt * 0.45;
-    if (holding) F.reel -= dt * (30 - f.fight * 6) * (1.25 - F.tension * 0.5);
-    else F.reel = Math.min(F.dist + 40, F.reel + F.pull * dt * 6);
-    F.tension = Math.max(0, F.tension);
-    F.slack = F.tension < 0.06 ? F.slack + dt : 0;
-    if (F.tension >= 1) loseFish("💥 The line snapped");
-    else if (F.slack > 2) loseFish("The fish got away");
-    else if (F.reel <= 0) landFish();
+    swimOnMeter(F, dt);
+    // the bar: held, it climbs; let go, it falls and bounces a little off the bottom
+    F.barV += (holding || F.mouseDown ? 470 : -320) * dt;
+    F.barV = Math.max(-180, Math.min(180, F.barV));
+    F.barY += F.barV * dt;
+    if (F.barY < 0) { F.barY = 0; F.barV = -F.barV * 0.35; }
+    if (F.barY > METER.h - F.barH) { F.barY = METER.h - F.barH; F.barV = 0; }
+    const inside = F.fishY + 4 >= F.barY && F.fishY + 4 <= F.barY + F.barH;
+    F.prog += inside ? (0.3 - f.fight * 0.02) * dt : -(0.2 + f.fight * 0.04) * dt;   // about as fast as it fills: the fish has to be in the bar half the time
+    // perfect: once the bar has the fish, it never lets it go
+    if (inside && F.perfect === null) F.perfect = true;
+    if (!inside && F.perfect === true) F.perfect = false;
+    F.tension = inside ? 0.3 : 0.9;                                     // the rod bends while the fish runs
+    F.reel = Math.max(0, F.dist * (1 - Math.min(1, F.prog)));           // reeled in as the catch fills
+    if (F.prog >= 1) landFish();
+    else if (F.prog <= 0) loseFish("The fish got away");
     else sayMe();
   }
   const cup = F.cup && !F.cup.over ? ` · round: ${Math.max(0, Math.ceil(F.cup.end - now))} s` : "";
-  ginfo.textContent = ({ idle: "hold Space to cast", charge: "let go to cast", wait: "waiting for a bite…", bite: "!! press Space !!", hooking: "hooking…", reel: "hold Space to reel" })[F.phase] + cup;
+  ginfo.textContent = ({ idle: "hold Space to cast", charge: "let go to cast", wait: "waiting for a bite…", bite: "!! press Space !!", hooking: "hooking…", reel: "keep the fish in the green bar: hold Space to lift it" })[F.phase] + cup;
 }
 function landFish() {
   const F = FISHING, f = F.fish;
-  F.phase = "idle"; F.fish = null;
+  F.wasPerfect = F.perfect === true; F.phase = "idle"; F.fish = null;
   if (pondOwner()) { POND.claims[f.n] = { by: myId(), st: "land" }; if (inRoom()) gsend({ g: "fish", k: "claim", id: POND.id, n: f.n, by: myId(), st: "land", kg: f.kg, name: f.name }); }
   else gsend({ g: "fish", k: "land", id: POND.id, n: f.n });
   caught(myId(), myName(), f);
+  F.wasPerfect = false;
   sayMe();
 }
 /// Someone (maybe you) landed fish f: the feed, the round's totals, and for you the boards.
@@ -198,7 +228,8 @@ function caught(by, name, f) {
   if (f.name === "Golden Koi") achieve("koi");
   if (f.kg > 15) achieve("whopper");
   if (tally("fish") >= 50) achieve("angler");
-  toast(`🐟 ${f.name}, ${f.kg.toFixed(2)} kg${f.kind === d.fish ? " · today's fish!" : ""}${pb ? " · your biggest yet!" : ""}`, null, 4000);
+  if (F.wasPerfect) achieve("perfect");
+  toast(`🐟 ${f.name}, ${f.kg.toFixed(2)} kg${F.wasPerfect ? " · ✨ perfect catch" : ""}${f.kind === d.fish ? " · today's fish!" : ""}${pb ? " · your biggest yet!" : ""}`, null, 4000);
   side();
 }
 /// The keeper went quiet: the next person by id keeps the same pond (same seed, time and claims).
@@ -253,12 +284,27 @@ function drawFishing(t) {
   gx.strokeStyle = "#6d5233"; gx.lineWidth = 1.5; gx.beginPath(); gx.moveTo(px0 + 5, py0 - 10); gx.quadraticCurveTo(px0 + 16, py0 - 26, tipX, tipY); gx.stroke();
   if (F.phase === "charge") { gpx(px0 - 2, py0 - 40, 34, 5, "#1b1820"); gpx(px0 - 1, py0 - 39, 32 * F.power, 3, F.power > 0.85 ? "#e06c6c" : "#8fd6b4"); }
   if (["wait", "bite", "hooking", "reel"].includes(F.phase)) drawLine(tipX, tipY, tipX + (F.phase === "reel" ? F.reel : F.dist), F.tension, F.phase === "bite", t, F.phase === "reel" ? F.fish : null);
-  if (F.phase === "reel") {
-    gpx(GW - 22, 20, 10, 120, "#1b1820"); gpx(GW - 21, 21, 8, 30, "#5a1e1e"); gpx(GW - 21, 51, 8, 89, "#1e3a2a");
-    const h = Math.min(1, F.tension) * 118; gpx(GW - 21, 139 - h, 8, 2, F.tension > 0.75 ? "#e06c6c" : "#8fd6b4");
-    gtext("line", GW - 17, 142, "#a79d93", 6, "center");
-  }
+  if (F.phase === "reel") drawMeter(F, t);
   if (F.cup && !F.cup.over && now < F.cup.start) gtext(`round starts in ${Math.ceil(F.cup.start - now)}`, GW / 2, 10, "#1b1820", 9, "center");
+}
+
+/// The catch meter: a wooden frame with the water channel, the green bar, the fish, and the catch's
+/// fill beside it (red to green).
+function drawMeter(F, t) {
+  const x = METER.x, top = METER.top, h = METER.h, bottom = top + h;
+  gpx(x - 4, top - 6, 34, h + 12, "#5e4232"); gpx(x - 3, top - 5, 32, h + 10, "#8c6446"); gpx(x - 3, top - 5, 32, 1, "#a37a58");
+  gpx(x, top, 14, h, "#1e3a5c");
+  for (let i = 0; i < 6; i++) gpx(x + 2 + (i % 3) * 4, top + ((hash("bub" + i) % h) + t * 14 * (1 + i % 2)) % h, 1, 1, "#4f8fc9");
+  const inside = F.fishY + 4 >= F.barY && F.fishY + 4 <= F.barY + F.barH;
+  const by = bottom - F.barY - F.barH;
+  gpx(x + 1, by, 12, F.barH, inside ? "#5fbf7f" : "#4a9a64"); gpx(x + 1, by, 12, 1, "#a8e6b8"); gpx(x + 1, by + F.barH - 1, 12, 1, "#2f6a40");
+  gx.globalAlpha = 0.85; gpx(x + 1, by + 1, 12, F.barH - 2, inside ? "#5fbf7f55" : "#4a9a6433"); gx.globalAlpha = 1;
+  drawFishSprite(x + 7, bottom - F.fishY - 4, F.fish.color, 0.9, Math.sin(t * 9) * 0.25);
+  // the catch's fill
+  const p = Math.max(0, Math.min(1, F.prog)), ph = Math.round(h * p);
+  gpx(x + 18, top, 6, h, "#1b1820");
+  gpx(x + 18, bottom - ph, 6, ph, p < 0.3 ? "#e06c6c" : p < 0.65 ? "#f0c040" : "#5fbf7f");
+  if (F.perfect === true && p > 0.5) gtext("✨", x + 21, top - 14, "#ffe7a8", 8, "center");
 }
 
 function fishMsg(from, name, d) {
@@ -326,13 +372,18 @@ registerGame("fish", {
   title: "🎣 Fishing",
   start: fishStart, step: fishStep, draw: drawFishing, side: fishSide, msg: fishMsg,
   key: fishKey,
-  leave: () => { if (FISHING.phase === "reel") loseFish("You left"); FISHING.phase = "idle"; gsend({ g: "fish", k: "bye", id: POND.id }); if (pondOwner()) POND.beat = 0; },
-  mouse: (p, type) => { if (type === "mousedown") fishKey(" ", true); if (type === "mouseup") fishKey(" ", false); },
+  leave: () => { if (FISHING.phase === "reel") loseFish("You left"); FISHING.phase = "idle"; FISHING.mouseDown = false; gsend({ g: "fish", k: "bye", id: POND.id }); if (pondOwner()) POND.beat = 0; },
+  mouse: (p, type) => {
+    if (type === "mousedown") { FISHING.mouseDown = true; fishKey(" ", true); }
+    if (type === "mouseup") { FISHING.mouseDown = false; fishKey(" ", false); }
+  },
+  cancel: () => { FISHING.mouseDown = false; if (FISHING.phase === "charge") FISHING.phase = "idle"; },
   click: b => { if (b.dataset.cup) startCup(true); },
   speciesName: i => FISH[i][0],
   tab: () => { const now = Date.now() / 1000, n = Object.values(POND.people).filter(p => now - p.at < 20).length;
     return n && POND.id && now - POND.beat < POND_GONE ? `<div class="gh">FISHING</div><div class="g"><span class="gn">🎣 ${n} fishing in the pond</span><button data-gplay="fish">Join</button></div>` : ""; },
   tabKey: () => Object.values(POND.people).filter(p => Date.now() / 1000 - p.at < 20).length,
+  iconCenter: [150, 132],
   drawIcon: t => {
     gpx(115, 128, 70, 24, "#2a5a8a"); gpx(115, 128, 70, 2, "#4f8fc9");
     const j = (t % 2.4) / 2.4, fy = 128 - Math.sin(j * Math.PI) * 22;

@@ -21,7 +21,7 @@
 //   mini-games, host → member:    {t:"g", from, name, d}  {t:"scores", boards}   (welcome carries scores too)
 // d is a game's own small message (web/games.js), relayed as it is to everyone. The host keeps the
 // room's leaderboard: it takes a score only for a known board and within that board's bounds, keeps
-// each name's best and the top ROOM_BOARD_SIZE, and saves it on its own Mac (scoresFile).
+// each name's best of the UTC day and the top ROOM_BOARD_SIZE, and saves it on its own Mac (scoresFile).
 // mid names one message; the host gives it out and accepts an edit or an unsay of a message only
 // from the connection that said it. A member whose app predates edit and unsay ignores those two,
 // so it keeps showing the first text.
@@ -44,25 +44,39 @@ let ROOM_AWAY: Double = 15 * 60       // seconds someone who left is listed as r
 let ROOM_BOARD_SIZE = 10
 // the leaderboards: (lowest is best?, smallest and largest score taken). Race: the best lap on track n,
 // in seconds (a lap, so races of any length compare); fishing: the biggest fish and a two-minute
-// round's catch, in kg; Bug Whack: a round's points; ping-pong: games won.
+// round's catch, in kg; Bug Whack: a round's points; ping-pong: games won; archery: a round's points
+// (15 arrows, at most 150); Sky Patrol: a flight's points.
 let ROOM_BOARDS: [String: (lowWins: Bool, min: Double, max: Double)] = [
     "race-1": (true, 3, 600), "race-2": (true, 3, 600), "race-3": (true, 3, 600),
     "race-4": (true, 3, 600), "race-5": (true, 3, 600),
     "fish-big": (false, 0.01, 100), "fish-haul": (false, 0.01, 2000),
     "bugs": (false, 1, 2000), "pong-wins": (false, 1, 100_000),
+    "archery": (false, 1, 150), "sky": (false, 1, 1_000_000),
 ]
 let ROOM_DAILY_KEPT = 7               // days of daily-challenge boards the host keeps
+/// The start of the current UTC day. The room's boards (ROOM_BOARDS) start empty every day at 00:00
+/// UTC, the same moment for every member wherever they are: the host keeps only scores made since.
+/// The daily challenge's boards are a UTC day's already ("daily-race-<UTC date>").
+func utcMidnight(_ d: Date = Date()) -> Double { (d.timeIntervalSince1970 / 86400).rounded(.down) * 86400 }
 /// A board's rule: one of ROOM_BOARDS, or a daily challenge's ("daily-race-2026-11-18" or
-/// "daily-fish-…") for the host's today, yesterday or tomorrow (the members' clocks and time zones
-/// differ); any other day is refused, so old days cannot be filled in later.
+/// "daily-fish-…") for today, yesterday or tomorrow in UTC (a member's clock may be off, or on a
+/// version that still names the day by its own time zone); any other day is refused, so old days
+/// cannot be filled in later.
 func roomBoardRule(_ board: String) -> (lowWins: Bool, min: Double, max: Double)? {
     if let r = ROOM_BOARDS[board] { return r }
     guard let m = board.range(of: "^daily-(race|fish)-[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression), m.lowerBound == board.startIndex else { return nil }
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = TimeZone(identifier: "UTC")
     let day = String(board.suffix(10)), now = Date()
     guard [-86400.0, 0, 86400].contains(where: { f.string(from: now.addingTimeInterval($0)) == day }) else { return nil }
     return board.hasPrefix("daily-race") ? (true, 3, 600) : (false, 0.01, 100)
 }
+/// Out of the room (it was lost, or not there when the app started): looks this many seconds apart,
+/// then one a minute for ROOM_RETRY_MINUTE_FOR seconds, then one every ROOM_RETRY_SLOW. A host's
+/// update takes a minute or two, a Mac's restart a few: the early looks find it the moment it is back.
+let ROOM_RETRY_QUICK: [TimeInterval] = [3, 5, 10, 15, 20, 30, 45, 60]
+let ROOM_RETRY_MINUTE_FOR: TimeInterval = 30 * 60
+let ROOM_RETRY_SLOW: TimeInterval = 5 * 60
 let ROOM_GAME_RATE = 40               // game messages per member in 2 s (a car's position, 10 a second)
 let ROOM_GAME_BYTES = 1500            // bytes of one game message
 let ROOM_SCORE_RATE = 5               // scores per member in 10 s
@@ -113,11 +127,16 @@ func open(_ msg: [String: Any], _ key: SymmetricKey) -> [String: Any]? {
           let box = try? AES.GCM.SealedBox(combined: d), let plain = try? AES.GCM.open(box, using: key) else { return nil }
     return try? JSONSerialization.jsonObject(with: plain) as? [String: Any]
 }
+/// The room's connections. TCP keepalive: a peer that vanished without closing (a Mac asleep or off
+/// the network) is noticed within about half a minute, on both sides. Without it a member keeps a
+/// dead connection and believes it is still in the room, and the host lists a member who is gone.
 func wsParameters() -> NWParameters {
     let ws = NWProtocolWebSocket.Options()
     ws.autoReplyPing = true
     ws.maximumMessageSize = ROOM_MAX_FRAME
-    let p = NWParameters.tcp
+    let tcp = NWProtocolTCP.Options()
+    tcp.enableKeepalive = true; tcp.keepaliveIdle = 15; tcp.keepaliveInterval = 5; tcp.keepaliveCount = 3
+    let p = NWParameters(tls: nil, tcp: tcp)
     p.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
     return p
 }
@@ -182,10 +201,12 @@ final class RoomHost {
         }
         l.start(queue: q)
         listener = l
+        if !watching { watching = true; watchMidnight() }
     }
     func stop() {
         listener?.cancel(); peers.values.forEach { $0.conn.cancel() }; peers = [:]
-        q.async { if self.saving { self.saving = false; self.writeScores() } }   // a score from the last 2 s is not lost
+        q.async { self.listener = nil   // ends watchMidnight
+            if self.saving { self.saving = false; self.writeScores() } }   // a score from the last 2 s is not lost
     }
 
     private func accept(_ c: NWConnection) {
@@ -227,6 +248,7 @@ final class RoomHost {
             failures[p.ip] = nil
             p.key = k
             let others = peers.values.filter { $0 !== p && $0.key != nil && !$0.name.isEmpty }.map { $0.member }
+            _ = rollOver()
             if let box = seal(["t": "welcome", "you": p.id, "members": others, "scores": boards], k) { wsSend(p.conn, box) }
             return
         }
@@ -295,6 +317,7 @@ final class RoomHost {
     }
     /// Keep `name`'s best on `board` and the board's top ROOM_BOARD_SIZE; true when it changed.
     private func addScore(_ board: String, _ name: String, _ value: Double, _ lowWins: Bool) -> Bool {
+        let rolled = rollOver()                            // yesterday's best does not stand in today's way
         var list = boards[board] ?? []
         let better = { (a: Double, b: Double) in lowWins ? a < b : a > b }
         if let i = list.firstIndex(where: { $0["name"] as? String == name }) {
@@ -304,7 +327,7 @@ final class RoomHost {
         list.append(["name": name, "value": (value * 1000).rounded() / 1000, "at": Date().timeIntervalSince1970])
         list.sort { better($0["value"] as? Double ?? 0, $1["value"] as? Double ?? 0) }
         let kept = Array(list.prefix(ROOM_BOARD_SIZE))
-        guard kept.contains(where: { $0["name"] as? String == name }) else { return false }
+        guard kept.contains(where: { $0["name"] as? String == name }) else { return rolled }
         boards[board] = kept
         // daily boards: only the last ROOM_DAILY_KEPT days
         let dailies = boards.keys.filter { $0.hasPrefix("daily-") }.sorted { $0.suffix(10) > $1.suffix(10) }
@@ -318,6 +341,30 @@ final class RoomHost {
               let all = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let mine = all[cfg.name] as? [String: [[String: Any]]] else { return }
         boards = mine.filter { ROOM_BOARDS[$0.key] != nil || $0.key.hasPrefix("daily-") }
+        _ = rollOver()
+    }
+    /// Drop the room's boards' scores from before today's 00:00 UTC; true when anything went.
+    private func rollOver() -> Bool {
+        let from = utcMidnight()
+        var changed = false
+        for key in Array(boards.keys) where ROOM_BOARDS[key] != nil {
+            let list = boards[key] ?? [], kept = list.filter { ($0["at"] as? Double ?? 0) >= from }
+            guard kept.count != list.count else { continue }
+            boards[key] = kept.isEmpty ? nil : kept
+            changed = true
+        }
+        if changed { saveScores() }
+        return changed
+    }
+    /// At 00:00 UTC the members' Scores tabs empty too, without waiting for the day's first score:
+    /// a check a minute while the room is up.
+    private var watching = false
+    private func watchMidnight() {
+        q.asyncAfter(deadline: .now() + 60) { [weak self] in
+            guard let self, self.listener != nil else { self?.watching = false; return }
+            if self.rollOver() { self.broadcast(["t": "scores", "boards": self.boards]) }
+            self.watchMidnight()
+        }
     }
     /// Written at most every 2 s, the last state wins: a burst of scores is one write.
     private var saving = false
@@ -403,19 +450,34 @@ final class RoomClient {
     func start() {
         join()
         if cfg.alwaysJoin {
+            // a backstop for the schedule in local(): a wrong password is tried again only this often
             retry = Timer.scheduledTimer(withTimeInterval: 15 * 60, repeats: true) { [weak self] _ in
                 if self?.status != "joined" { self?.join() }
             }
+            // back on a network (Wi-Fi again, a wake from sleep, a VPN coming up): look at once
+            let m = NWPathMonitor()
+            m.pathUpdateHandler = { [weak self] path in
+                guard path.status == .satisfied else { return }
+                DispatchQueue.main.async {
+                    guard let s = self, !s.stopped, s.status == "local", !s.detail.contains("did not let us in") else { return }
+                    s.outSince = Date(); s.quick = ROOM_RETRY_QUICK
+                    s.join()
+                }
+            }
+            m.start(queue: q)
+            pathMonitor = m
         }
     }
+    private var pathMonitor: NWPathMonitor?
     var discover = true                                   // look for the room by name (off: by address only)
     private var stopped = false
-    func stop() { stopped = true; retry?.invalidate(); onChange = nil; onPoked = nil
-        q.async { self.browser?.cancel(); self.watcher?.cancel(); self.watcher = nil; self.conn?.cancel() } }
+    func stop() { stopped = true; retry?.invalidate(); retryGen += 1; onChange = nil; onPoked = nil
+        q.async { self.pathMonitor?.cancel(); self.browser?.cancel(); self.watcher?.cancel(); self.watcher = nil; self.conn?.cancel() } }
 
     /// Look for the room on the network and join it; if it is not there within 8 seconds, stay local.
     func join() {
         guard status != "joined", !stopped else { return }
+        retryGen += 1                                     // a look scheduled earlier is this one
         attempt += 1
         let mine = attempt
         set { $0.status = "looking"; $0.detail = "looking for \($0.cfg.name)…" }
@@ -528,7 +590,7 @@ final class RoomClient {
             welcomed = true
             let list = (m["members"] as? [[String: Any]]) ?? []
             set {
-                $0.status = "joined"; $0.detail = ""; $0.quick = []; $0.nextTry = nil; $0.you = m["you"] as? String ?? ""
+                $0.status = "joined"; $0.detail = ""; $0.quick = []; $0.outSince = nil; $0.nextTry = nil; $0.you = m["you"] as? String ?? ""
                 $0.members = Dictionary(list.compactMap { x in (x["id"] as? String).map { ($0, x) } }, uniquingKeysWith: { a, _ in a })
                 $0.membersVersion += 1
                 if let sc = m["scores"] as? [String: Any] { $0.scores = sc }
@@ -581,55 +643,59 @@ final class RoomClient {
         local(wasIn ? "lost the room" : answered ? "the room did not let us in (wrong password?)"
               : "could not reach the room" + (cfg.address.isEmpty ? "" : " at \(cfg.address)"), lost: wasIn)
     }
-    /// Out of the room. Losing a room we were in is usually the host restarting its app (an update
-    /// rebuilds it, which takes a minute or two) or its Mac, so the next looks come quickly, for
-    /// about 15 minutes, before falling back to the 15-minute timer. And while out, the room's
-    /// Bonjour announcement is watched: a host that comes back announces the room again, and that
-    /// is the "join me again" a host could not otherwise send (it does not know where its members
-    /// are, and members take no incoming connections). Without the watch, a room behind a hidden
-    /// network (joined by address) still has the quick looks.
+    /// Out of the room: lost (usually the host restarting its app for an update, which takes a minute
+    /// or two, or its Mac) or not there when this app started (the host may be updating at the same
+    /// moment). Either way the next looks come quickly, then once a minute, then every few minutes,
+    /// for as long as the app runs (ROOM_RETRY_*). And while out, the room's Bonjour announcement is
+    /// watched: a host that comes back announces the room again, and that is the "join me again" a
+    /// host could not otherwise send (it does not know where its members are, and members take no
+    /// incoming connections). A wrong password stays wrong: no quick looks and no watch for it.
     private func local(_ why: String, lost: Bool = false) {
         set {
             $0.status = "local"; $0.detail = why; $0.members = [:]; $0.membersVersion += 1
-            if lost { $0.quick = [10, 20, 30, 45, 60, 90, 120, 180, 300] }
-            guard $0.cfg.alwaysJoin else { $0.nextTry = nil; return }
-            if !$0.quick.isEmpty {
-                let d = $0.quick.removeFirst()
-                $0.nextTry = Date().addingTimeInterval(d)
-                DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
-                    if let s = self, s.status == "local" { s.join() }
-                }
-            } else {
-                $0.nextTry = Date().addingTimeInterval(15 * 60)
+            if lost || $0.outSince == nil { $0.outSince = Date(); $0.quick = ROOM_RETRY_QUICK }
+            guard $0.cfg.alwaysJoin, !$0.stopped else { $0.nextTry = nil; return }
+            if why.contains("did not let us in") { $0.nextTry = Date().addingTimeInterval(15 * 60); return }
+            let out = Date().timeIntervalSince($0.outSince ?? Date())
+            let d = !$0.quick.isEmpty ? $0.quick.removeFirst() : out < ROOM_RETRY_MINUTE_FOR ? 60 : ROOM_RETRY_SLOW
+            $0.nextTry = Date().addingTimeInterval(d)
+            let gen = $0.retryGen
+            DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak self] in
+                if let s = self, s.retryGen == gen, s.status == "local" { s.join() }
             }
-            // a wrong password stays wrong: no watching, or every announcement would try it again
-            if !why.contains("did not let us in") { $0.watch() }
+            $0.watch()
         }
     }
-    /// Join the moment the room is announced on this network again. The first answer lists what is
-    /// there already (the room we just failed to reach, perhaps): only a later appearance counts.
+    /// Join the moment the room is announced on this network. Bonjour can still list a room that just
+    /// went away (or never call at all while nothing is announced), so any sight of it counts, added
+    /// or changed, at most one join every few seconds; a stale record only costs one failed look.
     private func watch() {
         guard cfg.alwaysJoin, discover, !stopped else { return }
         q.async {
             guard self.watcher == nil else { return }
             let b = NWBrowser(for: .bonjour(type: ROOM_SERVICE, domain: nil), using: .tcp)
-            var first = true
             b.browseResultsChangedHandler = { [weak self] _, changes in
                 guard let self else { return }
-                defer { first = false }
-                guard !first else { return }
                 for c in changes {
-                    if case .added(let r) = c, case .service(let name, _, _, _) = r.endpoint, name == self.cfg.name {
-                        self.watcher?.cancel(); self.watcher = nil
-                        DispatchQueue.main.async { if self.status == "local" { self.join() } }
-                        return
+                    var r: NWBrowser.Result?
+                    if case .added(let x) = c { r = x }
+                    if case .changed(_, let x, _) = c { r = x }
+                    guard let r, case .service(let name, _, _, _) = r.endpoint, name == self.cfg.name else { continue }
+                    DispatchQueue.main.async {
+                        guard self.status == "local", Date().timeIntervalSince(self.watchJoined) > 4 else { return }
+                        self.watchJoined = Date()
+                        self.join()
                     }
+                    return
                 }
             }
             b.start(queue: self.q)
             self.watcher = b
         }
     }
+    private var watchJoined = Date.distantPast            // main queue: the last join the watch started
+    private var outSince: Date?                           // main queue: out of the room since (nil: in it)
+    private var retryGen = 0                              // main queue: a scheduled look is for this join
     private var quick: [TimeInterval] = []                // main queue: the quick looks still to come
     private func set(_ f: @escaping (RoomClient) -> Void) {
         DispatchQueue.main.async { f(self); self.onChange?() }

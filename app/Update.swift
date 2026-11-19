@@ -8,7 +8,9 @@
 // checkout's path. Without a checkout to update, the button opens the release page instead.
 //
 // The update only fast-forwards (`git merge --ff-only <tag>`): local commits or uncommitted
-// changes in the way stop it with the reason and the manual command, and nothing is lost.
+// changes in the way stop it with the reason and the manual command, and nothing is lost. It also
+// builds only a checkout whose tracked files are exactly the release's: an uncommitted edit or a local
+// commit that the fast-forward let through stops it too, instead of being built into the app.
 
 import Cocoa
 
@@ -84,6 +86,10 @@ final class Updater {
                 ("fetching \(self.tag)…", ["/usr/bin/git", "-C", self.source, "fetch", "--tags", "origin"], "could not fetch from GitHub"),
                 ("moving to \(self.tag)…", ["/usr/bin/git", "-C", self.source, "merge", "--ff-only", "refs/tags/\(self.tag)"],
                  "the checkout has local changes or commits in the way"),
+                // what gets built must be the release: an edit nobody committed, or a local commit on
+                // top, would be built and run as if it were the release, with nothing to show it
+                ("checking the checkout…", ["/usr/bin/git", "-C", self.source, "diff", "--quiet", "refs/tags/\(self.tag)", "--"],
+                 "the checkout's files differ from \(self.tag) (uncommitted edits or local commits; see git -C \(self.source) status)"),
                 ("building…", ["/bin/bash", self.source + "/scripts/build-app.sh", dest], "the build failed"),
             ]
             FileManager.default.createFile(atPath: log, contents: Data("update to \(self.tag) at \(Date())\n".utf8))

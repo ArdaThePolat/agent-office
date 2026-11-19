@@ -299,8 +299,9 @@ that the dialogs and Settings change them.
 
 </details>
 
-Not in the office, or the host's app closed? Your office is simply local, and it looks for the
-room again every 15 minutes (or click **Try now** in the panel).
+Not in the office, or the host's app closed? Your office is simply local, and it keeps looking
+for the room: within seconds at first, then every minute, then every 5 minutes (or click **Try
+now** in the panel).
 
 **The chat says "the room is not on this network"?** Some networks hide devices from each other's
 discovery (company Wi-Fi often does, and so does a VPN exit node, such as Tailscale's: turn on
@@ -336,16 +337,17 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ```
 
 - **Your character** is your `manager` picture and name. Without a picture you get a drawn one.
-- **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts,
-  and again every 15 minutes while it is not in (`"alwaysJoin": false` looks only once; **Try
-  now** in the chat panel looks at once). When the room goes away while you are in it (the host
-  updated or restarted its app, or its Mac), every member's app watches for the room to be
-  announced again and joins within a second or two of the host coming back; it also looks again
-  on its own, quickly at first (10 seconds, then gradually up to 5 minutes, for about 15 minutes),
-  for a room joined by address on a network that hides announcements. Meanwhile the people panel
-  keeps the people who were there, greyed with how long they have been away, until they are back
-  (for up to 15 minutes; this also works on the host, across its own restart). If the room is not
-  there, the office is simply local.
+- **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts
+  (`"alwaysJoin": false` looks only once; **Try now** in the chat panel looks at once). Out of the
+  room, because the host updated or restarted its app or its Mac, or because the room was not there
+  when your app started, it keeps looking: after 3, 5, 10 … 60 seconds, then every minute for half
+  an hour, then every 5 minutes, for as long as the app runs. It also watches for the room to be
+  announced again and joins within a second or two of the host coming back, and looks at once when
+  your Mac is back on a network (Wi-Fi again, a wake from sleep). A connection whose other end
+  vanished without closing (a Mac asleep or off the network) is noticed within about half a minute,
+  by the members and by the host. Meanwhile the people panel keeps the people who were there,
+  greyed with how long they have been away, until they are back (for up to 15 minutes; this also
+  works on the host, across its own restart). If the room is not there, the office is simply local.
   The first time, macOS asks to let Agent Office find devices on the local network: allow it.
   On the host it also asks to accept incoming connections.
 - **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
@@ -463,6 +465,8 @@ appears at the top right. Clicking it:
 1. fetches the release into the checkout the app was built from and moves it there with
    `git merge --ff-only <tag>`, so it never overwrites anything: local commits or uncommitted
    changes in the way stop the update with the reason and the manual command;
+   it also stops when the checkout's tracked files are not exactly the release's (an uncommitted
+   edit, or a local commit on top), so what it builds is always the release;
 2. runs `scripts/build-app.sh` into the folder the app is in;
 3. reopens the new app.
 
@@ -616,8 +620,12 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   starts the same countdown from its own spot on the grid. The leaderboard keeps the **best lap**
   on each track, so races of any length compare.
 - **🎣 Fishing:** one pond for the whole room. Hold **Space** to charge a cast and let go to throw;
-  when a fish swims by your bobber it may bite (**!**): press Space to hook it, then hold Space to
-  reel and let go when the line's tension climbs into the red, or it snaps. Everyone sees the same
+  when a fish swims by your bobber it may bite (**!**): press Space to hook it. Then the catch: the
+  fish darts up and down a tall meter, and holding Space (or the mouse) lifts a green bar that falls
+  when you let go. While the fish is inside the bar the catch fills; outside it drains. Full, the
+  fish is yours (one that never left the bar is a ✨ perfect catch); empty, it gets away. Bigger
+  fighters get a shorter bar and swim harder, each kind its own way: steady, mixed, sinking to the
+  bottom or darting. Everyone sees the same
   fish and each other's lines on the dock; a fish someone hooks is theirs (when two try, the first
   to reach the pond's keeper gets it), and once caught it is gone for everyone. Eight kinds, up to a
   rare golden koi. Start a **2-minute round** alone or with the room: everyone's catch adds up live.
@@ -629,19 +637,35 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   and now and then a **🔥 fire pad** burns in the middle for a few seconds: a ball through it is
   much faster, and stays on fire until the point is over. Play the computer, or **Challenge** a
   teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
-- **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
-  everyone in the room on the same day (in the same time zone), with their own boards (the best lap
-  on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
-  score only for its yesterday, today or tomorrow, so teammates in other time zones still count.
-- **🏅 Achievements:** sixteen of them (finish on all five tracks, a 10-lap race, win against a
-  teammate, a golden koi, 50 in a Bug Whack round, beat the computer…), kept on your Mac and listed
+- **🏹 Archery:** five ends of three arrows, on your own. Aim with the mouse (or **↑↓/WS**), hold
+  **Space** or the mouse button to draw and let go to shoot. Arrows fall, the wind (the flag; it
+  changes every end) carries them on or holds them back, and the target moves further away each
+  end; in the last one it rides up and down. Rings score 10, 8, 6, 4 and 2. Held at full draw too
+  long, the aim starts to shake. The best round (out of 150) goes on the leaderboard.
+- **✈ Sky Patrol:** a vertical shoot-'em-up over the sea, on your own. Fly with the arrows / **WASD**
+  or the mouse; the guns fire by themselves, and **Space** (or **B**) drops a bomb (two per life)
+  that clears the enemies' bullets. Waves of scouts, weaving fighters, bombers that shoot back and V
+  formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
+  **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
+  leaderboard (leaving mid-flight keeps what you scored so far).
+- **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
+  everyone in the room wherever they are, with their own boards (the best lap on today's track, the
+  biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
+  daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
+  still counts.
+- **🏅 Achievements:** twenty-four of them (finish on all five tracks, a 10-lap race, win against a
+  teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
+  one end, a gunship…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
   in its config folder (`~/.config/agent-office`, or `~/.config/agent-office-dev` for the dev app),
   taking only scores within each board's bounds, a few a minute per person, and each name's best,
   top 10. Entries go by display name: the room trusts its members, so two people with the same name
-  share a line. Without a room, your own bests on this Mac.
+  share a line. Without a room, your own bests on this Mac. **Every board starts empty each day at
+  00:00 UTC** (the Scores tab says when that is in your time): the host keeps only the day's scores,
+  so a new day is a new race for the top. Your best of all time stays on your Mac, as **YOUR BEST**
+  in each game. A host on an older version keeps its boards across days.
 - **While you play,** an agent that starts waiting for you shows at the top of the game (click it
   to go to that session) and as a macOS notification.
 
@@ -649,6 +673,10 @@ How the shared games stay in step: a round's bugs and the pond's fish come from 
 whoever opened it sends once, so every Mac shows the same ones without sending them; whoever opened
 it is also the referee for who got a bug or hooked a fish first (in the pond, when its keeper
 leaves, the next person keeps it, with the same fish).
+
+Archery and Sky Patrol are played on your own: only their scores go to the room's board (the
+host's app needs a version that knows those boards; an older one leaves them out, and your bests stay
+on your Mac).
 
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
