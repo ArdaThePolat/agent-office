@@ -400,7 +400,7 @@ ends them.
 
 ## Settings
 
-Agent Office → Settings… (⌘,):
+Agent Office → Settings… (⌘,), or the **⚙ Settings** button at the top right, next to Stats:
 - **Your name and picture**: **Change…** opens the same editor as **✎ edit** in the manager's room.
 - **Saved room** and **Delete Saved Room…**: a room you create or join is saved in
   `~/.config/agent-office/config.json` and joined (or hosted) again at every launch, until you
@@ -417,9 +417,15 @@ Agent Office → Settings… (⌘,):
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Jukebox in the lounge** (on by default): off hides it and stops its helper.
-- **Remind me to drink water** (off by default): every 30 minutes, hour or 2 hours, a small card
-  in the office asks you to drink some water. **Done** starts the next interval, **In 10 min** asks
-  again in 10 minutes. With the window off screen a notification says it too, and with **Play a
+- **Remind me to drink water** (off by default): every N minutes (type any number from 1 to 480,
+  or step it by 5; 60 until you change it), a small card in the office asks you to drink some
+  water. **Done** starts the next interval, **In 10 min** asks again in 10 minutes. It reminds
+  only between **From** and **to** (09:00 to 18:00 until you change them), read on this Mac's own
+  clock and time zone; a start later than the end runs overnight, and equal times mean all day.
+  The first reminder of the day comes one interval after the start. The glass on the manager's
+  desk shows it too: full right after a reminder, emptying until the next one, empty while it is
+  off; click it to turn the reminder on or off, and hover it for the interval, the hours and the
+  next reminder. With the window off screen a notification says it too, and with **Play a
   sound** on it purrs.
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
   that hosts a room, so the room is back after a restart. macOS may ask you to approve it in
