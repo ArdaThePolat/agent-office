@@ -278,8 +278,9 @@ that the dialogs and Settings change them.
 
 </details>
 
-Not in the office, or the host's app closed? Your office is simply local, and it looks for the
-room again every 15 minutes (or click **Try now** in the panel).
+Not in the office, or the host's app closed? Your office is simply local, and it keeps looking
+for the room: within seconds at first, then every minute, then every 5 minutes (or click **Try
+now** in the panel).
 
 **The chat says "the room is not on this network"?** Some networks hide devices from each other's
 discovery (company Wi-Fi often does, and so does a VPN exit node, such as Tailscale's: turn on
@@ -315,16 +316,17 @@ AGENT_OFFICE_ROOM_PASSWORD=<the room's password>
 ```
 
 - **Your character** is your `manager` picture and name. Without a picture you get a drawn one.
-- **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts,
-  and again every 15 minutes while it is not in (`"alwaysJoin": false` looks only once; **Try
-  now** in the chat panel looks at once). When the room goes away while you are in it (the host
-  updated or restarted its app, or its Mac), every member's app watches for the room to be
-  announced again and joins within a second or two of the host coming back; it also looks again
-  on its own, quickly at first (10 seconds, then gradually up to 5 minutes, for about 15 minutes),
-  for a room joined by address on a network that hides announcements. Meanwhile the people panel
-  keeps the people who were there, greyed with how long they have been away, until they are back
-  (for up to 15 minutes; this also works on the host, across its own restart). If the room is not
-  there, the office is simply local.
+- **Joining:** the app looks for the room by name on the local network (Bonjour) when it starts
+  (`"alwaysJoin": false` looks only once; **Try now** in the chat panel looks at once). Out of the
+  room, because the host updated or restarted its app or its Mac, or because the room was not there
+  when your app started, it keeps looking: after 3, 5, 10 … 60 seconds, then every minute for half
+  an hour, then every 5 minutes, for as long as the app runs. It also watches for the room to be
+  announced again and joins within a second or two of the host coming back, and looks at once when
+  your Mac is back on a network (Wi-Fi again, a wake from sleep). A connection whose other end
+  vanished without closing (a Mac asleep or off the network) is noticed within about half a minute,
+  by the members and by the host. Meanwhile the people panel keeps the people who were there,
+  greyed with how long they have been away, until they are back (for up to 15 minutes; this also
+  works on the host, across its own restart). If the room is not there, the office is simply local.
   The first time, macOS asks to let Agent Office find devices on the local network: allow it.
   On the host it also asks to accept incoming connections.
 - **Turning it off:** Settings → **Join the shared room**, or `"enabled": false` in the `room`
