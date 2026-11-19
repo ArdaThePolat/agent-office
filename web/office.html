@@ -27,16 +27,11 @@
   #menu .head { color: var(--muted); padding: 3px 8px 5px; font-size: 11px; border-bottom: 1px solid #3a302c; margin-bottom: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   #demo { position: fixed; bottom: calc(var(--log-h, 92px) + 4px); right: 8px; color: var(--muted); font-size: 10px; }
-  #statsBtn { position: fixed; top: 6px; right: 10px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
-    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-  #statsBtn:hover, #chatBtn:hover, #termBtn:hover, #setBtn:hover { background: #3a302c; }
-  #setBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
+  .topBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
-  #termBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
-    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
+  .topBtn:hover { background: #3a302c; }
+  #statsBtn { right: 10px; display: block; }
   #termBtn.on { border-color: #8fd6b4; color: #8fd6b4; }
-  #chatBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
-    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
   #chatBtn.unread { border-color: #ffb347; color: #ffc370; }
   #updBtn { position: fixed; top: 6px; z-index: 4; font: 11px Menlo, monospace; color: #10241a; background: #8fd6b4;
     border: 1px solid #5fbf7f; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
@@ -163,10 +158,10 @@
 <div id="tip"></div>
 <div id="menu"></div>
 <div id="demo"></div>
-<button id="statsBtn" title="Usage and session details (S)">Stats</button>
-<button id="setBtn" title="Settings (⌘,)">⚙ Settings</button>
-<button id="chatBtn" title="The shared room's chat (C)">Chat</button>
-<button id="termBtn" title="The terminal under the office (⌃\`). Drag its ⠿ grip to move it to another side.">⌨ Terminal</button>
+<button id="statsBtn" class="topBtn" title="Usage and session details (S)">Stats</button>
+<button id="setBtn" class="topBtn" title="Settings (⌘,)">⚙ Settings</button>
+<button id="chatBtn" class="topBtn" title="The shared room's chat (C)">Chat</button>
+<button id="termBtn" class="topBtn" title="The terminal under the office (⌃\`). Drag its ⠿ grip to move it to another side.">⌨ Terminal</button>
 <button id="updBtn"></button>
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
@@ -445,7 +440,7 @@ function build(raw) {
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, waiting, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null, water: raw.water || null,
+           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null, water: heldWater(raw.water),
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null,
            roomLabels: raw.roomLabels && typeof raw.roomLabels === "object" ? raw.roomLabels : {} };
 }
@@ -1895,10 +1890,18 @@ waterEl.addEventListener("click", e => {
   if (bridge) bridge.postMessage({ water: a });
 });
 // the glass on the desk: the app turns it on or off; the next snapshot says so, the glass shows it now
+// A snapshot already on its way when the glass was clicked still has the old state: for a few
+// seconds the click wins, so the glass does not flip back.
+let waterHold = null;
+function heldWater(w) {
+  if (!w || !waterHold || Date.now() - waterHold.t > 4000 || w.on === waterHold.on) return w || null;
+  return { ...w, on: waterHold.on, due: waterHold.on ? Date.now() / 1000 + w.minutes * 60 : null };
+}
 function toggleWater() {
   if (!snap.water) return;
-  snap.water.on = !snap.water.on;
-  snap.water.due = snap.water.on ? Date.now() / 1000 + snap.water.minutes * 60 : null;
+  const on = !snap.water.on;   // a copy: the snapshot's object is the app's, not ours to change
+  snap.water = { ...snap.water, on, due: on ? Date.now() / 1000 + snap.water.minutes * 60 : null };
+  waterHold = { on: snap.water.on, t: Date.now() };
   if (bridge) bridge.postMessage({ water: "toggle" }); else demoWater = snap.water;
 }
 let demoWater = null;

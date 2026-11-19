@@ -839,7 +839,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 846),
+            // Taller than some screens: the controls sit on a page that scrolls when the window can't fit it.
+            let pageH: CGFloat = 846, fitH = min(pageH, (NSScreen.main?.visibleFrame.height ?? 900) - 40)
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: fitH),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -905,7 +907,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 516, width: 340, height: 30)
             for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in waterSettingsViews(top: 806) + [sigL, sig, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
+            let page = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: pageH))
+            for v in waterSettingsViews(top: 806) + [sigL, sig, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { page.addSubview(v) }
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 380, height: fitH))
+            scroll.autoresizingMask = [.width, .height]; scroll.hasVerticalScroller = pageH > fitH; scroll.drawsBackground = false
+            scroll.documentView = page
+            page.scroll(NSPoint(x: 0, y: pageH - fitH))   // the top first
+            w.contentView = scroll
             w.center()
             settings = w
         }

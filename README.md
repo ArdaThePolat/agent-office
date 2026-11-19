@@ -423,7 +423,7 @@ Agent Office → Settings… (⌘,), or the **⚙ Settings** button at the top r
   only between **From** and **to** (09:00 to 18:00 until you change them), read on this Mac's own
   clock and time zone; a start later than the end runs overnight, and equal times mean all day.
   The first reminder of the day comes one interval after the start. The glass on the manager's
-  desk shows it too: full right after a reminder, emptying until the next one, empty while it is
+  desk (in your room, which shows once you have a name and the window is wide enough) shows it too: full right after a reminder, emptying until the next one, empty while it is
   off; click it to turn the reminder on or off, and hover it for the interval, the hours and the
   next reminder. With the window off screen a notification says it too, and with **Play a
   sound** on it purrs.

@@ -13,6 +13,7 @@ let WATER_LATER: TimeInterval = 10 * 60
 let WATER_RANGE = 1...480                         // minutes the interval may be set to
 var waterDue: Date? = nil                         // the next reminder, while one is set
 private var waterBox: NSButton?                   // Settings' tick, kept in step with the desk's glass
+private var waterNum: NSTextField?, waterStep: NSStepper?   // Settings' minutes field and stepper, kept in step
 
 extension AppDelegate {
     /// On or off. Before this setting existed, a non-zero `waterMinutes` meant on.
@@ -25,17 +26,19 @@ extension AppDelegate {
         get { let m = defaults.integer(forKey: "waterMinutes"); return WATER_RANGE.contains(m) ? m : 60 }
         set {
             if defaults.object(forKey: "waterOn") == nil { defaults.set(waterOn, forKey: "waterOn") }   // before the old meaning changes
-            defaults.set(min(max(newValue, WATER_RANGE.lowerBound), WATER_RANGE.upperBound), forKey: "waterMinutes"); scheduleWater()
+            let m = min(max(newValue, WATER_RANGE.lowerBound), WATER_RANGE.upperBound), was = waterMinutes
+            defaults.set(m, forKey: "waterMinutes")
+            if m != was { scheduleWater() }   // the field reports every end of editing: only a change restarts the countdown
         }
     }
     /// The hours, as minutes after local midnight: 09:00 to 18:00 until set.
     var waterStart: Int {
         get { defaults.object(forKey: "waterStart") as? Int ?? 9 * 60 }
-        set { defaults.set(newValue, forKey: "waterStart"); scheduleWater() }
+        set { let was = waterStart; defaults.set(newValue, forKey: "waterStart"); if newValue != was { scheduleWater() } }
     }
     var waterEnd: Int {
         get { defaults.object(forKey: "waterEnd") as? Int ?? 18 * 60 }
-        set { defaults.set(newValue, forKey: "waterEnd"); scheduleWater() }
+        set { let was = waterEnd; defaults.set(newValue, forKey: "waterEnd"); if newValue != was { scheduleWater() } }
     }
 
     /// Is `d` inside the hours, on this Mac's clock and time zone?
@@ -64,6 +67,13 @@ extension AppDelegate {
     func checkWater() {
         guard let due = waterDue, Date() >= due else { return }
         guard inWaterHours(Date()) else { scheduleWater(); return }   // e.g. the Mac slept past the end
+        // Due before today's hours began (asleep overnight): the day starts over, one interval after the start.
+        if waterStart != waterEnd,
+           let start = Calendar.current.nextDate(after: Date(), matching: DateComponents(hour: waterStart / 60, minute: waterStart % 60),
+                                                 matchingPolicy: .nextTime, direction: .backward), due < start {
+            waterDue = start.addingTimeInterval(TimeInterval(waterMinutes * 60))
+            if Date() < waterDue! { return }
+        }
         let mins = waterMinutes
         scheduleWater()                                             // unanswered: again after the next interval
         web.evaluateJavaScript("window.showWater && showWater(\(mins))", completionHandler: nil)
@@ -114,7 +124,7 @@ extension AppDelegate {
         let step = NSStepper(frame: NSRect(x: 134, y: top - 33, width: 19, height: 24))
         step.minValue = Double(WATER_RANGE.lowerBound); step.maxValue = Double(WATER_RANGE.upperBound); step.increment = 5
         step.integerValue = waterMinutes; step.target = self; step.action = #selector(steppedWaterMinutes(_:))
-        num.tag = 1; step.tag = 2   // found again by tag to keep the two in step
+        waterNum = num; waterStep = step
         let minutes = NSTextField(labelWithString: "minutes"); minutes.frame = NSRect(x: 158, y: top - 30, width: 80, height: 20)
 
         let from = NSTextField(labelWithString: "From"); from.frame = NSRect(x: 38, y: top - 62, width: 44, height: 20)
@@ -122,7 +132,7 @@ extension AppDelegate {
         let to = NSTextField(labelWithString: "to"); to.frame = NSRect(x: 186, y: top - 62, width: 20, height: 20)
         let endP = timePicker(waterEnd, x: 208, y: top - 64, action: #selector(pickWaterEnd(_:)))
 
-        let hint = NSTextField(wrappingLabelWithString: "Off by default. Only between these times on this Mac's clock (overnight when the start is later). The glass on your desk turns it on and off. Done starts the next interval, In 10 min asks again in 10 minutes.")
+        let hint = NSTextField(wrappingLabelWithString: "Off by default. Only between these times on this Mac's clock (overnight when the start is later). The glass on the manager's desk (shown with your room) turns it on and off. Done starts the next interval, In 10 min asks again in 10 minutes.")
         hint.frame = NSRect(x: 38, y: top - 112, width: 320, height: 44)
         hint.textColor = .secondaryLabelColor; hint.font = .systemFont(ofSize: 11)
         return [box, every, num, step, minutes, from, startP, to, endP, hint]
@@ -144,11 +154,11 @@ extension AppDelegate {
     @objc func typedWaterMinutes(_ sender: NSTextField) {
         waterMinutes = sender.integerValue
         sender.integerValue = waterMinutes
-        (sender.superview?.viewWithTag(2) as? NSStepper)?.integerValue = waterMinutes
+        waterStep?.integerValue = waterMinutes
     }
     @objc func steppedWaterMinutes(_ sender: NSStepper) {
         waterMinutes = sender.integerValue
-        (sender.superview?.viewWithTag(1) as? NSTextField)?.integerValue = waterMinutes
+        waterNum?.integerValue = waterMinutes
     }
     @objc func pickWaterStart(_ sender: NSDatePicker) { waterStart = minutesOf(sender) }
     @objc func pickWaterEnd(_ sender: NSDatePicker) { waterEnd = minutesOf(sender) }
