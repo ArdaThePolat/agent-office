@@ -1755,12 +1755,12 @@ function toggleChat(on) {
 }
 function renderChat() {
   chatBtn.style.display = room.status === "off" || chatWideNow ? "none" : "block";
-  if (typeof placeUpdate === "function") placeUpdate();
   if (room.status === "off" && chatOpen) toggleChat(false);
   const open = chatOpen || docked;
   const unread = open ? 0 : room.messages.slice(seenMsgs).filter(m => m.id !== room.you).length;
   if (open) seenMsgs = room.messages.length;
   chatBtn.textContent = unread ? `Chat · ${unread}` : "Chat";
+  if (typeof placeUpdate === "function") placeUpdate();   // after the label: its width moves the buttons left of it
   chatBtn.classList.toggle("unread", unread > 0);
   chatTab.classList.toggle("unread", unread > 0);
   chatTab.querySelector(".n").textContent = unread ? String(unread) : "";
