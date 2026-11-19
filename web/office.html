@@ -290,7 +290,7 @@ function unhideAll() { for (const id of Object.keys(hidden)) if (!hidden[id].rel
 // pr-watch's log line → { t, repo, id, pr, event, fields }, or null. After the event, optional
 // " | key: value" fields say how a finished review went: "… posted comment | result: No blockers | cost: $0.62"
 function reviewLine(line) {
-  const m = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \[pr-watch\] ([\w.-]+)#(\d+):? ?(.*)$/); if (!m) return null;
+  const m = line.match(/^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) \[pr-watch\] ([\w.-]+)#(\d+)(?: @ [0-9a-f]+)?:? ?(.*)$/); if (!m) return null;
   const [event, ...rest] = m[4].split(" | "), fields = {};
   for (const f of rest) { const k = f.indexOf(":"); if (k > 0) fields[f.slice(0, k).trim().toLowerCase()] = f.slice(k + 1).trim(); }
   return { t: Date.parse(m[1].replace(" ", "T")) / 1000, repo: m[2], id: m[3], pr: m[2] + "#" + m[3], event, fields };
@@ -307,10 +307,15 @@ function finishedKind(event) {
 function reviewDay(log, now) {
   const mid = new Date(now * 1000); mid.setHours(0, 0, 0, 0);
   const t0 = mid / 1000, open = new Map();
-  const d = { n: 0, posted: 0, asked: 0, failed: 0, cost: 0, costs: 0, time: 0, timed: 0, blocking: 0, major: 0, results: 0 };
+  const d = { n: 0, posted: 0, asked: 0, failed: 0, cost: 0, costs: 0, time: 0, timed: 0, blocking: 0, major: 0, results: 0, follows: 0, followCost: 0 };
   for (const l of log) {
     const r = reviewLine(l); if (!r) continue;
     if (/review started/.test(r.event)) { open.set(r.pr, r.t); continue; }
+    if (/^discussion follow-up\b/.test(r.event)) {        // not a review, but what it cost counts
+      const c = parseFloat((r.fields.cost || "").replace(/[^\d.]/g, ""));
+      if (r.t >= t0 && isFinite(c)) { d.cost += c; d.followCost += c; d.follows++; }
+      continue;
+    }
     const kind = finishedKind(r.event), start = open.get(r.pr);
     if (!kind || kind === "rejected" || start === null) continue;
     open.set(r.pr, null);
@@ -332,7 +337,7 @@ function reviewDay(log, now) {
 function boardNotes() {
   const d = snap.today; if (!d) return null;
   const notes = [{ s: `${d.n} today`, c: "#2f4f9e", b: true }];
-  if (d.costs) notes.push({ s: "$" + d.cost.toFixed(2), c: "#2e7d4f" });
+  if (d.costs || d.follows) notes.push({ s: "$" + d.cost.toFixed(2), c: "#2e7d4f" });
   if (d.timed) notes.push({ s: "⌀ " + mins(d.time / d.timed), c: "#5a5560" });
   if (d.blocking) notes.push({ s: `${d.blocking} blocking`, c: "#c0392b" });
   if (d.major) notes.push({ s: `${d.major} major`, c: "#c26a10" });
@@ -345,7 +350,8 @@ function boardTip() {
   const kinds = [d.posted && d.posted + " posted", d.asked && d.asked + " asked you on Slack"].filter(Boolean).join(", ");
   return [`Today, since midnight: ${d.n} review${d.n === 1 ? "" : "s"} finished` + (kinds ? ` (${kinds})` : ""),
     d.failed ? `${d.failed} failed` : "",
-    d.costs ? `cost $${d.cost.toFixed(2)}` + of(d.costs, d.n + d.failed, "logged one") : "",
+    d.costs || d.follows ? `cost $${d.cost.toFixed(2)}` + of(d.costs, d.n + d.failed, "logged one")
+      + (d.follows ? `, $${d.followCost.toFixed(2)} of it for ${d.follows} discussion follow-up${d.follows === 1 ? "" : "s"}` : "") : "",
     d.timed ? `${mins(d.time / d.timed)} from start to finish on average` + of(d.timed, d.n, "have their start in the log") : "",
     d.results ? `${d.blocking} blocking, ${d.major} major found` + of(d.results, d.n, "logged a result") : ""].filter(Boolean).join("\n");
 }
@@ -413,7 +419,15 @@ function build(raw) {
   // and the feedback on it since: "feedback from <name>" lines after its finished line
   (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event), e = r && finished.get(r.pr);
     if (kind) finished.set(r.pr, { ...r, kind, n, replies: [] });
-    else if (e && /^feedback\b/.test(r.event) && r.t >= e.t) e.replies.push(r); });
+    else if (e && /^feedback\b/.test(r.event) && r.t >= e.t) e.replies.push(r);
+    // a discussion follow-up that posted an updated review: its result (and fixed/open/new) replace
+    // the entry's, and what it cost is added to the entry's
+    else if (e && /^discussion follow-up\b/.test(r.event) && r.t >= e.t && (r.fields.result || r.fields.cost)) {
+      const f = { ...e.fields }, c = parseFloat((r.fields.cost || "").replace(/[^\d.]/g, ""));
+      if (r.fields.result) for (const k of ["result", "fixed", "open", "new"]) f[k] = r.fields[k];
+      if (isFinite(c)) f.cost = "$" + (c + (parseFloat((f.cost || "").replace(/[^\d.]/g, "")) || 0)).toFixed(2);
+      finished.set(r.pr, { ...e, fields: f });
+    } });
   // With the reviewer's list of open PRs ("open" in its state folder), a reviewed PR that is still open
   // stands on the "in review" shelf (off it while a desk re-reviews it), and moves to "recent" once it is
   // merged or declined -- the reviewer logs "merged" / "declined" when it leaves the open list. Without
@@ -622,8 +636,8 @@ function whiteboard(x, y, w, notes) {
     return;
   }
   // today's reviews in marker, a few short notes to a row, three rows at most (the rest is in its tooltip)
-  px(x, y - 1, w, 13, "#cfc8bb"); px(x + 1, y, w - 2, 11, "#f7f5f0"); px(x + 2, y + 12, w - 4, 1, "#9c9387");
-  g.font = "9px Menlo, monospace";
+  px(x, y - 1, w, 14, "#cfc8bb"); px(x + 1, y, w - 2, 12, "#f7f5f0"); px(x + 2, y + 13, w - 4, 1, "#9c9387");
+  g.font = "11px Menlo, monospace";
   const room = (w - 3) * P, sp = g.measureText(" ").width, rows = [];
   for (const n of notes) {
     const nw = g.measureText(n.s).width, row = rows[rows.length - 1];
@@ -631,7 +645,7 @@ function whiteboard(x, y, w, notes) {
     else if (rows.length < 3 && nw <= room) rows.push({ items: [n], w: nw });
   }
   rows.forEach((row, r) => { let tx = (x + 1.5) * P;
-    for (const n of row.items) { text(n.s, tx, (y + 0.3 + r * 3.7) * P, n.c, 9, "left", n.b ? "bold" : ""); tx += g.measureText(n.s + " ").width; } });
+    for (const n of row.items) { text(n.s, tx, (y + 0.1 + r * 4) * P, n.c, 11, "left", n.b ? "bold" : ""); tx += g.measureText(n.s + " ").width; } });
 }
 function coffee(x, y) {            // (x, y) = bottom-left
   px(x, y - 3, 8, 3, "#9b7350"); px(x, y - 3, 8, 1, "#c49a6c");
@@ -673,7 +687,7 @@ function paintRooms(L) {
   for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
     windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
   clock(L.bx - 10, 4);
-  whiteboard(L.wbX, 3, L.wbW, boardNotes());
+  whiteboard(L.wbX, 2, L.wbW, boardNotes());
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
@@ -851,7 +865,7 @@ function layout() {
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   // the whiteboard hangs on the left of the review room's back wall, after the door: the right of
   // the wall is under the buttons along the top (Stats, Settings, Terminal)
-  const wbW = Math.max(12, Math.min(26, benchW - 16)), wbX = rx + 13;
+  const wbW = Math.max(16, Math.min(36, benchW - 10)), wbX = rx + 13;
   // the shelf runs along the front of the review room, under the desks, as wide as they are
   // ("in review" above "recent" when there are both)
   const shelf = snap.finished.length ? { x: rx + 6, y: reviewH - 17, w: bx - 8 - rx - 6 } : null;
@@ -923,7 +937,7 @@ function draw() {
         tip: "A free desk: drag a PR here from the \"in review\" shelf to review it again now" });
     }
   }
-  if (snap.today) hits.push({ x: L.wbX * P, y: 2 * P, w: L.wbW * P, h: 13 * P, tip: boardTip() });
+  if (snap.today) hits.push({ x: L.wbX * P, y: 1 * P, w: L.wbW * P, h: 14 * P, tip: boardTip() });
   // waiting area: a sofa by the coffee machine
   const sx = L.bx + 3, sw = L.benchW - 16;
   label("WAITING", (sx + sw / 2) * P, (WALL + 4) * P, "#f1ebe2", 9, "center");

@@ -530,13 +530,18 @@ file, not in the repository. Every key is optional.
   - `<state>/requests/` (written by the app): drag a binder from **in review** to a review desk
     and the app leaves an empty file named `<repo>#<pr>` there, asking the reviewer to review that
     PR again now rather than at its next round. The binder says "to a desk…" until a desk takes it.
-    pr-watch looks for these every 2 seconds while idle, and removes each file once read;
+    pr-watch queues it first and removes the file: within seconds while a poll runs, and its
+    launchd agent starts a poll when a file arrives;
   - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`. A line whose
     event is `posted comment`, `asked you on Slack`, `rejected on Slack` or starts with `FAILED`
     is a finished review and goes on the shelf. After the event, optional ` | key: value` fields
     say how it went: `result` and `cost` are shown on the shelf, any others in its tooltip. A
     re-review that checked the earlier findings again can add `fixed`, `open` and `new` (how many
     were fixed, are still open, are new): the shelf shows them as ✅3 ⏳1 🆕2 before the result.
+    A `discussion follow-up` line is not a review either, but when it posted an updated review
+    its `result` (and `fixed` / `open` / `new`) replace that PR's on the shelf, and any `cost` it
+    has is added to the PR's and to the whiteboard's total. The reviewer may write the commit
+    after the PR (`infra#230 @ 1a2b3c4d: posted comment`); it is skipped.
     A line whose event starts with `feedback` (`feedback from <name>`) is not a review: when it is
     newer than the PR's entry on the shelf, the entry gets a 💬 and its tooltip says from whom.
     Feedback lines and `👍 on Slack → review requested` also show in the log strip.

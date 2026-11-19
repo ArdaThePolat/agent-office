@@ -534,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     // office.html asks to open a PR (https only), reveal a session's folder, chime, or keep the
     // list of agents hidden from view (a small JSON object it reads back in every snapshot).
     /// Ask the PR reviewer to review `repo#number` now: an empty file of that name in its state
-    /// folder's `requests/`. The reviewer takes it on its next look (pr-watch looks every 2 seconds).
+    /// folder's `requests/`. The reviewer queues it and removes the file (see README, `requests/`).
     func requestReview(_ pr: String) {
         guard let rs = Config.load().reviewState,
               pr.range(of: "^[A-Za-z0-9._-]{1,100}#[0-9]{1,9}$", options: .regularExpression) != nil else { return }
