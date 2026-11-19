@@ -27,14 +27,11 @@
   #menu .head { color: var(--muted); padding: 3px 8px 5px; font-size: 11px; border-bottom: 1px solid #3a302c; margin-bottom: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
   #demo { position: fixed; bottom: calc(var(--log-h, 92px) + 4px); right: 8px; color: var(--muted); font-size: 10px; }
-  #statsBtn { position: fixed; top: 6px; right: 10px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
-    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-  #statsBtn:hover, #chatBtn:hover, #termBtn:hover { background: #3a302c; }
-  #termBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
+  .topBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
     background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
+  .topBtn:hover { background: #3a302c; }
+  #statsBtn { right: 10px; display: block; }
   #termBtn.on { border-color: #8fd6b4; color: #8fd6b4; }
-  #chatBtn { position: fixed; top: 6px; right: 66px; z-index: 4; font: 11px Menlo, monospace; color: var(--text);
-    background: #2a2329e6; border: 1px solid #5a4a3e; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
   #chatBtn.unread { border-color: #ffb347; color: #ffc370; }
   #updBtn { position: fixed; top: 6px; z-index: 4; font: 11px Menlo, monospace; color: #10241a; background: #8fd6b4;
     border: 1px solid #5fbf7f; border-radius: 4px; padding: 3px 8px; cursor: pointer; display: none; }
@@ -161,9 +158,10 @@
 <div id="tip"></div>
 <div id="menu"></div>
 <div id="demo"></div>
-<button id="statsBtn" title="Usage and session details (S)">Stats</button>
-<button id="chatBtn" title="The shared room's chat (C)">Chat</button>
-<button id="termBtn" title="The terminal under the office (⌃\`). Drag its ⠿ grip to move it to another side.">⌨ Terminal</button>
+<button id="statsBtn" class="topBtn" title="Usage and session details (S)">Stats</button>
+<button id="setBtn" class="topBtn" title="Settings (⌘,)">⚙ Settings</button>
+<button id="chatBtn" class="topBtn" title="The shared room's chat (C)">Chat</button>
+<button id="termBtn" class="topBtn" title="The terminal under the office (⌃\`). Drag its ⠿ grip to move it to another side.">⌨ Terminal</button>
 <button id="updBtn"></button>
 <div id="chatTab" title="Show the chat (C)"><span class="bell">🔔</span><span>Chat</span><span class="n"></span></div>
 <div id="chat"><div class="head"><b id="roomName"></b><span id="roomState"></span><button id="roomJoin" title="Look for the room now">Try now</button><button id="chatHide" title="Hide the chat (C)">Hide</button></div>
@@ -437,12 +435,12 @@ function build(raw) {
   const today = raw.reviewLog && raw.reviewLog.length ? reviewDay(raw.reviewLog, now) : null;
   energy = !!(raw.settings && raw.settings.energySaver);
   // the Terminal button: in the app only, lit while the terminal is open
-  if (bridge && raw.settings) { termBtn.style.display = "block"; termBtn.classList.toggle("on", !!raw.settings.terminal); if (typeof placeUpdate === "function") placeUpdate(); }
+  if (bridge && raw.settings) { setBtn.style.display = "block"; termBtn.style.display = "block"; termBtn.classList.toggle("on", !!raw.settings.terminal); if (typeof placeUpdate === "function") placeUpdate(); }
   if (raw.settings && raw.settings.welcome && !welcomeSeen) showWelcome();
   if (raw.jukebox) loadJukeArt(raw.jukebox);
   return { now: raw.now || Date.now() / 1000, reviews, queue, waiting, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
+           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null, water: heldWater(raw.water),
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null,
            roomLabels: raw.roomLabels && typeof raw.roomLabels === "object" ? raw.roomLabels : {} };
 }
@@ -1513,6 +1511,25 @@ function paintManager(L, sky) {
   px(plx, deskY + 5, pw, 5, "#c9a45a"); px(plx, deskY + 5, pw, 1, "#e3c47a"); px(plx, deskY + 9, pw, 1, "#94753c");
   text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
 }
+// The water glass on the manager's desk, right of the lamp: full when a reminder was just set,
+// emptying until the next one; empty and dim while the reminder is off. A click turns it on or off
+// (Water.swift). Only when the app sends the setting (snap.water).
+const hhmmOf = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+function deskGlass(m) {
+  const w = snap.water;
+  if (!w) return;
+  const x = m.dx + 10, y = m.deskY - 6, now = Date.now() / 1000;
+  const level = w.on && w.due ? Math.max(0.1, Math.min(1, (w.due - now) / (w.minutes * 60))) : 0;
+  const rim = w.on ? "#cfe9f7" : "#7d8a91";
+  px(x, y, 1, 6, rim); px(x + 4, y, 1, 6, rim); px(x, y + 5, 5, 1, rim);       // the glass
+  px(x + 1, y, 3, 5, w.on ? "#cfe9f71f" : "#7d8a9114");
+  const h = Math.round(level * 4);
+  if (h) { px(x + 1, y + 5 - h, 3, h, "#4fa8de"); px(x + 1, y + 5 - h, 3, 1, "#9fdcff"); }
+  const hours = w.start === w.end ? "all day" : `${hhmmOf(w.start)}–${hhmmOf(w.end)}`;
+  const next = w.on && w.due ? `\nnext: ${new Date(w.due * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "";
+  hits.push({ x: (x - 2) * P, y: (y - 3) * P, w: 9 * P, h: 10 * P, water: true,
+    tip: `💧 Water reminder: ${w.on ? "on" : "off"}\nevery ${w.minutes} min, ${hours} (this Mac's clock)${next}\nclick: turn ${w.on ? "off" : "on"} · times and interval: Settings` });
+}
 // a small battery for one plan window, centred on cx: the charge is what is left and shrinks
 // smoothly, a hair per percent; it turns orange under 40% and red, blinking, under 15% (or low)
 function battery(cx, y, name, used, h, short, low) {
@@ -1576,6 +1593,7 @@ function drawManager(L) {
   if (lives.length) { label("$" + cost.toFixed(2) + " spent", m.cx * P, ly * P, "#e3c74f", 10, "center"); ly += 6; }
   label([`${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
     m.cx * P, ly * P, "#d9cfc3", 10, "center");
+  deskGlass(m);
   const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
     tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (lw ? `\nlongest wait: ${lw.title || "untitled"}, ${lwt} (since ${hhmm(lw.since)})` : "") + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
@@ -1862,7 +1880,8 @@ function waterGlass(level) {       // a pixel glass on the card's 14×18 canvas,
   f(0, 17, 14, 1, "#00000055");
 }
 function showWater(mins) {
-  waterEl.querySelector(".when").textContent = mins >= 120 ? mins / 60 + " hours" : mins >= 60 ? "an hour" : mins + " minutes";
+  const h = Math.floor(mins / 60), m = mins % 60, part = (n, one, many) => n === 1 ? one : n + " " + many;
+  waterEl.querySelector(".when").textContent = [h ? part(h, "an hour", "hours") : "", m ? part(m, "a minute", "minutes") : ""].filter(Boolean).join(" and ");
   waterGlass(0.8); waterEl.style.display = "flex";
 }
 waterEl.addEventListener("click", e => {
@@ -1871,6 +1890,22 @@ waterEl.addEventListener("click", e => {
   setTimeout(() => { waterEl.style.display = "none"; }, a === "done" ? 350 : 0);
   if (bridge) bridge.postMessage({ water: a });
 });
+// the glass on the desk: the app turns it on or off; the next snapshot says so, the glass shows it now
+// A snapshot already on its way when the glass was clicked still has the old state: for a few
+// seconds the click wins, so the glass does not flip back.
+let waterHold = null;
+function heldWater(w) {
+  if (!w || !waterHold || Date.now() - waterHold.t > 4000 || w.on === waterHold.on) return w || null;
+  return { ...w, on: waterHold.on, due: waterHold.on ? Date.now() / 1000 + w.minutes * 60 : null };
+}
+function toggleWater() {
+  if (!snap.water) return;
+  const on = !snap.water.on;   // a copy: the snapshot's object is the app's, not ours to change
+  snap.water = { ...snap.water, on, due: on ? Date.now() / 1000 + snap.water.minutes * 60 : null };
+  waterHold = { on: snap.water.on, t: Date.now() };
+  if (bridge) bridge.postMessage({ water: "toggle" }); else demoWater = snap.water;
+}
+let demoWater = null;
 if (!bridge && new URLSearchParams(location.search).has("water")) setTimeout(() => showWater(60), 0);   // the demo: ?water
 
 // ---------- the people panel ----------
@@ -1959,15 +1994,17 @@ peopleEl.addEventListener("click", ev => {
 const updBtn = document.getElementById("updBtn");
 let upd = { status: "idle" };
 window.updateUpdate = u => { upd = u; placeUpdate(); };
-// The buttons along the top right, from the right: Stats, Chat (when it shows), Terminal (in the
-// app), then Update. Returns where the next one would go.
+// The buttons along the top right, from the right: Stats, Settings (in the app), Chat (when it
+// shows), Terminal (in the app), then Update. Returns where the next one would go.
 function placeTopButtons() {
   let right = 10 + statsBtn.offsetWidth + 6;
+  if (setBtn.style.display === "block") { setBtn.style.right = right + "px"; right += setBtn.offsetWidth + 6; }
   if (chatBtn.style.display === "block") { chatBtn.style.right = right + "px"; right += chatBtn.offsetWidth + 6; }
   if (termBtn.style.display === "block") { termBtn.style.right = right + "px"; right += termBtn.offsetWidth + 6; }
   return right;
 }
-const termBtn = document.getElementById("termBtn");
+const termBtn = document.getElementById("termBtn"), setBtn = document.getElementById("setBtn");
+setBtn.addEventListener("click", () => { if (bridge) bridge.postMessage({ settings: "open" }); });
 termBtn.addEventListener("click", () => { if (bridge) bridge.postMessage({ terminal: "toggle" }); });
 function placeUpdate() {
   placeTopButtons();
@@ -2056,7 +2093,7 @@ cv.addEventListener("mousemove", ev => {
   if (!h) { tip.style.display = "none"; cv.style.cursor = "default"; return; }
   tip.textContent = h.tip; tip.style.display = "block";
   tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 330) + "px"; tip.style.top = (ev.clientY + 12) + "px";
-  cv.style.cursor = h.url || h.reveal || h.goto || h.juke || h.lights || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
+  cv.style.cursor = h.url || h.reveal || h.goto || h.juke || h.lights || h.session || h.chat || h.stats || h.water || h.profile || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
 const ghost = document.createElement("div");
@@ -2081,7 +2118,7 @@ window.addEventListener("mouseup", ev => {
     bridge.postMessage({ reviewNow: d.pr }); requested[d.pr] = Date.now() / 1000;
   }
 });
-cv.addEventListener("click", ev => { if (skipClick) { skipClick = false; return; } const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+cv.addEventListener("click", ev => { if (skipClick) { skipClick = false; return; } const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.water) toggleWater(); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -2221,6 +2258,7 @@ if (!bridge) {
     now: Date.now() / 1000, workspace: "example", slots: 5, overdueMinutes: 45,
     jukebox: { available: true, on: true, app: "Music", state: tick % 10 < 7 ? "playing" : "paused", track: "Neon Afternoon", artist: "The Pixel Band", album: "Lounge Tapes",
       key: "demo", art: demoCover(), duration: 214, elapsed: 61 + tick * 2, at: Date.now() / 1000 }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
+    water: demoWater || (demoWater = { on: true, minutes: 25, start: 540, end: 1080, due: Date.now() / 1000 + 15 * 60 }),
     reviews: [
       ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
       ["infra", "infra", "123", "abc", "Sam R.", hm(52), "1", "Split stacks into modules"],
