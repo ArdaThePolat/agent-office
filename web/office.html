@@ -124,8 +124,10 @@
   #welcome .dots { display: flex; gap: 5px; margin-bottom: 12px; }
   #welcome .dots i { width: 18px; height: 4px; background: #3d332e; border-radius: 2px; }
   #welcome .dots i.on { background: var(--accent); }
-  #water { position: fixed; inset: 0; z-index: 21; display: none; align-items: center; justify-content: center;
-    background: #0d0b1099; padding: 16px; }
+  /* a card in the corner, over the office but not in its way: everything else stays clickable */
+  #water { position: fixed; right: 16px; bottom: calc(var(--log-h, 92px) + 12px); z-index: 21; display: none;
+    width: min(340px, calc(100% - 32px)); pointer-events: none; }
+  #water .card { pointer-events: auto; width: 100% !important; box-sizing: border-box; }
   #water .card { background: var(--panel); border: 3px solid var(--line); border-radius: 8px; width: min(340px, 100%);
     padding: 16px 18px 14px; box-shadow: 0 10px 40px #000a; display: flex; gap: 14px; align-items: center; }
   #water canvas { flex: 0 0 auto; width: 56px; height: 72px; image-rendering: pixelated; }
@@ -373,7 +375,8 @@ function build(raw) {
   const queue = (raw.queue || []).map(l => l.split("\t")).filter(f => f.length >= 7)
     .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], manual: f[5] === "manual", title: f[6] }));
   // waiting for your 👍/👎 on Slack: a finished review before it is posted (approve), or a small PR (request)
-  const waiting = (raw.waiting || []).map(l => l.split("\t")).filter(f => f.length >= 7)
+  // null: the reviewer writes no "waiting" file, and the review room has no in-tray
+  const waiting = !Array.isArray(raw.waiting) ? null : raw.waiting.map(l => l.split("\t")).filter(f => f.length >= 7)
     .map(f => ({ name: f[0], slug: f[1], id: f[2], kind: f[3], since: +f[4] || 0, author: f[5], title: f[6] }));
   const sessions = (raw.sessions || []).filter(s => s && s.id);
   const reviewRepos = new Set(reviews.map(r => r.name));
@@ -935,24 +938,27 @@ function draw() {
   sofaFront(sx, 44, sw);
   if (snap.queue.length > fit) label(`+${snap.queue.length - fit}`, (sx + sw / 2) * P, 59 * P, "#bdb3a8", 9, "center");
   if (!snap.queue.length) label("nobody", (sx + sw / 2) * P, 59 * P, "#8ea3ad", 9, "center");
-  // the in-tray on a low table in front of the sofa: what waits for your 👍/👎 on Slack
-  const tx = sx + 2, ty = 70, wn = snap.waiting.length;
-  trayTable(tx, ty, wn);
-  if (wn) {
-    g.font = "9px Menlo, monospace";
-    const room = (L.cols - 10 - tx - 17) * P, say = g.measureText(`${wn} for you`).width + 6 <= room ? `${wn} for you` : String(wn);
-    label(say, (tx + 17) * P, (ty - 4) * P, "#ffc370", 9);
+  // the in-tray on a low table in front of the sofa: what waits for your 👍/👎 on Slack (only for a
+  // reviewer that writes its "waiting" file)
+  if (snap.waiting) {
+    const tx = sx + 2, ty = 70, wn = snap.waiting.length;
+    trayTable(tx, ty, wn);
+    if (wn) {
+      g.font = "9px Menlo, monospace";
+      const room = (L.cols - 10 - tx - 17) * P, say = g.measureText(`${wn} for you`).width + 6 <= room ? `${wn} for you` : String(wn);
+      label(say, (tx + 17) * P, (ty - 4) * P, "#ffc370", 9);
+    }
+    const wurl = w => snap.workspace ? `https://bitbucket.org/${snap.workspace}/${w.slug}/pull-requests/${w.id}` : "";
+    const wtip = snap.waiting.map(w => { const age = snap.now - w.since;
+      return `${w.name}#${w.id} · ${w.kind} · ${(age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago"} · ${w.title}`; });
+    hits.push({ x: tx * P, y: (ty - 8) * P, w: (L.cols - 10 - tx) * P, h: 15 * P, url: wn ? wurl(snap.waiting[0]) : "",
+      waiting: snap.waiting.filter(wurl).map(w => [`${w.name}#${w.id}`, wurl(w)]),
+      tip: wn ? `${wn} waiting for you on Slack\n` + wtip.join("\n") +
+        (snap.waiting.some(w => w.kind === "approve") ? "\napprove: a finished review, posted after your 👍" : "") +
+        (snap.waiting.some(w => w.kind === "request") ? "\nrequest: a small PR, reviewed if you 👍 it" : "") +
+        (wurl(snap.waiting[0]) ? `\nclick: open ${snap.waiting[0].name}#${snap.waiting[0].id}` + (wn > 1 ? " · right-click: open another" : "") : "")
+        : "Nothing waiting for your 👍/👎 on Slack" });
   }
-  const wurl = w => snap.workspace ? `https://bitbucket.org/${snap.workspace}/${w.slug}/pull-requests/${w.id}` : "";
-  const wtip = snap.waiting.map(w => { const age = snap.now - w.since;
-    return `${w.name}#${w.id} · ${w.kind} · ${(age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago"} · ${w.title}`; });
-  hits.push({ x: tx * P, y: (ty - 8) * P, w: (L.cols - 10 - tx) * P, h: 15 * P, url: wn ? wurl(snap.waiting[0]) : "",
-    waiting: snap.waiting.filter(wurl).map(w => [`${w.name}#${w.id}`, wurl(w)]),
-    tip: wn ? `${wn} waiting for you on Slack\n` + wtip.join("\n") +
-      (snap.waiting.some(w => w.kind === "approve") ? "\napprove: a finished review, posted after your 👍" : "") +
-      (snap.waiting.some(w => w.kind === "request") ? "\nrequest: a small PR, reviewed if you 👍 it" : "") +
-      (wurl(snap.waiting[0]) ? `\nclick: open ${snap.waiting[0].name}#${snap.waiting[0].id}` + (wn > 1 ? " · right-click: open another" : "") : "")
-      : "Nothing waiting for your 👍/👎 on Slack" });
   // the shelves: reviewed PRs still open ("in review") and finished ones ("recent"), newest first
   if (L.shelfOpen) drawShelf(L.shelfOpen, snap.inReview, "IN REVIEW");
   if (L.shelf) drawShelf(L.shelf, snap.finished, "RECENT");

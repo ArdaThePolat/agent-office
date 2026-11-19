@@ -511,7 +511,7 @@ file, not in the repository. Every key is optional.
   - `<state>/waiting` (optional): one line per PR waiting for your decision on Slack (repo name,
     slug, number, `approve` or `request`, since when in unix seconds, author, title). `approve` is a
     finished review that is posted after your 👍, `request` a small PR that is reviewed if you 👍
-    it. No file, nothing waiting;
+    it. No file: the review room has no in-tray;
   - `<state>/open` (optional): one line per open PR the reviewer watches (repo name, slug, number,
     author, title). With it there are two shelves: a reviewed PR that is still open stands on
     **in review** (off it while a desk re-reviews it), coloured by its last result (blocking red,

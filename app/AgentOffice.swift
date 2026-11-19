@@ -203,7 +203,8 @@ func snapshot(_ cfg: Config) -> [String: Any] {
             try? fm.removeItem(atPath: p)
         }
     }
-    var reviews: [String] = [], queue: [String] = [], waiting: [String] = [], reviewLog: [String] = []
+    var reviews: [String] = [], queue: [String] = [], reviewLog: [String] = []
+    var waiting: [String]? = nil                          // nil: the reviewer does not write one (no in-tray)
     var openPRs: [String]? = nil                          // nil: the reviewer does not write one (one shelf, as before)
     if let rs = cfg.reviewState {
         for name in (try? fm.contentsOfDirectory(atPath: rs + "/running")) ?? [] {
@@ -212,19 +213,21 @@ func snapshot(_ cfg: Config) -> [String: Any] {
             if f.count >= 7, let pid = Int(f[6]), alive(pid) { reviews.append(l) }
         }
         queue = lines(rs + "/queue")
-        waiting = lines(rs + "/waiting")                  // waiting for your 👍/👎 on Slack; no file: none
+        // waiting for your 👍/👎 on Slack; only a reviewer that writes the file gets the in-tray
+        if fm.fileExists(atPath: rs + "/waiting") { waiting = lines(rs + "/waiting") }
         if fm.fileExists(atPath: rs + "/open") { openPRs = lines(rs + "/open") }   // the reviewer's open PRs
     }
     if let rl = cfg.reviewLog {
-        // the last 120 lines, or more when today has more (as far as the tail goes): the whiteboard counts the day
-        reviewLog = lines(rl, tailBytes: 24_000)
+        // the last 120 lines, or all of today's when there are more (as far as the last 256 KB reach,
+        // a few thousand lines): the whiteboard counts the day
+        reviewLog = lines(rl, tailBytes: 256_000)
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
         let day = f.string(from: Date()), todays = reviewLog.reversed().prefix { $0.hasPrefix(day) }.count
         reviewLog = Array(reviewLog.suffix(max(120, todays)))
     }
     return [
         "now": now, "slots": cfg.slots, "overdueMinutes": cfg.overdueMinutes, "workspace": cfg.workspace,
-        "sessions": sessions, "reviews": reviews, "queue": queue, "waiting": waiting,
+        "sessions": sessions, "reviews": reviews, "queue": queue, "waiting": waiting.map { $0 as Any } ?? NSNull(),
         "openPRs": openPRs.map { $0 as Any } ?? NSNull(),
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
         "planLowPercent": cfg.planLowPercent,
