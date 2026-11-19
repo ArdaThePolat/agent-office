@@ -236,6 +236,7 @@ registerGame("bugs", {
   tabClick: b => { if (b.dataset.gbjoin) { joinBugs(b.dataset.gbjoin); return true; } return false; },
   tabKey: () => openRounds().map(l => l.id + l.players.length).join(","),
   homeHTML: () => { const l = openRounds(); return l.length ? `<h3>OPEN BUG ROUNDS</h3>` + l.map(x => `<div class="row"><span class="n">${esc(x.ownerName)} · ${x.players.length} in</span><button class="go" data-bjoin="${esc(x.id)}">Join</button></div>`).join("") : ""; },
+  iconCenter: [215, 132],
   drawIcon: t => { drawBug(215, 128 - Math.abs(Math.sin(t * 3)) * 8, "bug", 1.5); gtext("bug whack", 215, 150, "#a79d93", 8, "center"); },
 });
 gside.addEventListener("click", ev => { const b = ev.target.closest("button[data-bjoin]"); if (b) joinBugs(b.dataset.bjoin); });

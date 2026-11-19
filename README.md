@@ -565,8 +565,12 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   starts the same countdown from its own spot on the grid. The leaderboard keeps the **best lap**
   on each track, so races of any length compare.
 - **🎣 Fishing:** one pond for the whole room. Hold **Space** to charge a cast and let go to throw;
-  when a fish swims by your bobber it may bite (**!**): press Space to hook it, then hold Space to
-  reel and let go when the line's tension climbs into the red, or it snaps. Everyone sees the same
+  when a fish swims by your bobber it may bite (**!**): press Space to hook it. Then the catch: the
+  fish darts up and down a tall meter, and holding Space (or the mouse) lifts a green bar that falls
+  when you let go. While the fish is inside the bar the catch fills; outside it drains. Full, the
+  fish is yours (one that never left the bar is a ✨ perfect catch); empty, it gets away. Bigger
+  fighters get a shorter bar and swim harder, each kind its own way: steady, mixed, sinking to the
+  bottom or darting. Everyone sees the same
   fish and each other's lines on the dock; a fish someone hooks is theirs (when two try, the first
   to reach the pond's keeper gets it), and once caught it is gone for everyone. Eight kinds, up to a
   rare golden koi. Start a **2-minute round** alone or with the room: everyone's catch adds up live.
@@ -578,12 +582,24 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   and now and then a **🔥 fire pad** burns in the middle for a few seconds: a ball through it is
   much faster, and stays on fire until the point is over. Play the computer, or **Challenge** a
   teammate from the Games tab; they get a toast and **Accept**. Wins against teammates count.
+- **🏹 Archery:** five ends of three arrows, on your own. Aim with the mouse (or **↑↓/WS**), hold
+  **Space** or the mouse button to draw and let go to shoot. Arrows fall, the wind (the flag; it
+  changes every end) carries them on or holds them back, and the target moves further away each
+  end; in the last one it rides up and down. Rings score 10, 8, 6, 4 and 2. Held at full draw too
+  long, the aim starts to shake. The best round (out of 150) goes on the leaderboard.
+- **✈ Sky Patrol:** a vertical shoot-'em-up over the sea, on your own. Fly with the arrows / **WASD**
+  or the mouse; the guns fire by themselves, and **Space** (or **B**) drops a bomb (two per life)
+  that clears the enemies' bullets. Waves of scouts, weaving fighters, bombers that shoot back and V
+  formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
+  **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
+  leaderboard (leaving mid-flight keeps what you scored so far).
 - **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
   everyone in the room on the same day (in the same time zone), with their own boards (the best lap
   on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
   score only for its yesterday, today or tomorrow, so teammates in other time zones still count.
-- **🏅 Achievements:** sixteen of them (finish on all five tracks, a 10-lap race, win against a
-  teammate, a golden koi, 50 in a Bug Whack round, beat the computer…), kept on your Mac and listed
+- **🏅 Achievements:** twenty-four of them (finish on all five tracks, a 10-lap race, win against a
+  teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
+  one end, a gunship…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -598,6 +614,10 @@ How the shared games stay in step: a round's bugs and the pond's fish come from 
 whoever opened it sends once, so every Mac shows the same ones without sending them; whoever opened
 it is also the referee for who got a bug or hooked a fish first (in the pond, when its keeper
 leaves, the next person keeps it, with the same fish).
+
+Archery and Sky Patrol are played on your own: only their scores go to the room's board (the
+host's app needs a version that knows those boards; an older one leaves them out, and your bests stay
+on your Mac).
 
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen

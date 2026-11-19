@@ -332,6 +332,7 @@ registerGame("race", {
   tab: () => { const l = openLobbies(); return l.length ? `<div class="gh">OPEN RACES</div>` + l.map(x => `<div class="g"><span class="gn">🏎 ${esc(x.ownerName)} · ${esc(TRACKS[x.track].name)} · ${x.laps} laps · ${x.players.length} in</span><button data-gjoin="${esc(x.id)}">Join</button></div>`).join("") : ""; },
   tabClick: b => { if (b.dataset.gjoin) { joinRace(b.dataset.gjoin); return true; } return false; },
   tabKey: () => openLobbies().map(l => l.id + l.players.length).join(","),
+  iconCenter: [60, 130],
   drawIcon: t => {
     const a = t * 1.4, cx = 60 + Math.cos(a) * 30, cy = 120 + Math.sin(a) * 18;
     gx.strokeStyle = "#3d332e"; gx.lineWidth = 8; gx.beginPath(); gx.ellipse(60, 120, 30, 18, 0, 0, Math.PI * 2); gx.stroke();

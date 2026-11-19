@@ -44,12 +44,14 @@ let ROOM_AWAY: Double = 15 * 60       // seconds someone who left is listed as r
 let ROOM_BOARD_SIZE = 10
 // the leaderboards: (lowest is best?, smallest and largest score taken). Race: the best lap on track n,
 // in seconds (a lap, so races of any length compare); fishing: the biggest fish and a two-minute
-// round's catch, in kg; Bug Whack: a round's points; ping-pong: games won.
+// round's catch, in kg; Bug Whack: a round's points; ping-pong: games won; archery: a round's points
+// (15 arrows, at most 150); Sky Patrol: a flight's points.
 let ROOM_BOARDS: [String: (lowWins: Bool, min: Double, max: Double)] = [
     "race-1": (true, 3, 600), "race-2": (true, 3, 600), "race-3": (true, 3, 600),
     "race-4": (true, 3, 600), "race-5": (true, 3, 600),
     "fish-big": (false, 0.01, 100), "fish-haul": (false, 0.01, 2000),
     "bugs": (false, 1, 2000), "pong-wins": (false, 1, 100_000),
+    "archery": (false, 1, 150), "sky": (false, 1, 1_000_000),
 ]
 let ROOM_DAILY_KEPT = 7               // days of daily-challenge boards the host keeps
 /// A board's rule: one of ROOM_BOARDS, or a daily challenge's ("daily-race-2026-11-18" or

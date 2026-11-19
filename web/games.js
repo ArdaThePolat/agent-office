@@ -1,7 +1,7 @@
 // Agent Office — the lounge's mini-games: the shell they share. Loaded by office.html after its own
 // script (it uses its globals: room, bridge, esc, snap, SHIRTS, hash, roomMates, openSession,
 // peopleKey), then each game registers itself: games-race.js, games-fish.js, games-bugs.js,
-// games-pong.js.
+// games-pong.js, games-archery.js, games-sky.js.
 //
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
@@ -17,6 +17,7 @@ const BOARD_NAMES = {
   "race-4": "Race · Chicane · best lap", "race-5": "Race · Grand Loop · best lap",
   "fish-big": "Fishing · biggest fish", "fish-haul": "Fishing · 2-minute catch",
   "bugs": "Bug Whack · best round", "pong-wins": "Ping-pong · games won",
+  "archery": "Archery · best round", "sky": "Sky Patrol · best flight",
 };
 const LOW_WINS = b => b.startsWith("race-") || b.startsWith("daily-race");
 const gameEl = document.createElement("div");
@@ -71,7 +72,7 @@ document.head.appendChild(gstyle);
 
 // ---------- shared ----------
 const GAME = { open: false, view: "home", keys: new Set(), last: 0, raf: 0 };
-const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, click, msg, tab, tabClick, leave }
+const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave }
 function registerGame(id, g) { GAMES[id] = g; }
 const myName = () => (snap && snap.manager && snap.manager.name) || "You";
 const inRoom = () => room.status === "joined";
@@ -93,7 +94,7 @@ function keep(key, v) { try { localStorage.setItem("agentOffice." + key, JSON.st
 
 // today, by this Mac's calendar: the daily challenge's track and fish, the same for everyone that day
 function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function daily() { const h = hash("daily " + today()); return { day: today(), track: h % 5, fish: (h >> 4) % 8 }; }
+function daily() { const h = hash("daily " + today()); return { day: today(), track: h % 5, fish: (h >>> 4) % 8 }; }
 function boardName(b) {
   if (BOARD_NAMES[b]) return BOARD_NAMES[b];
   const m = /^daily-(race|fish)-(.+)$/.exec(b);
@@ -152,6 +153,14 @@ const ACHIEVEMENTS = [
   ["pong-cpu", "🤖", "Beat the machine", "beat the computer at ping-pong"],
   ["pong-win", "🏓", "Table champion", "win ping-pong against a teammate"],
   ["daily", "📅", "Daily player", "finish a daily challenge"],
+  ["perfect", "💎", "Perfect catch", "land a fish without it ever leaving the green bar"],
+  ["archer", "🏹", "Archer", "finish a round of archery"],
+  ["bullseye", "🎯", "Bullseye", "hit a 10"],
+  ["hat-trick", "🎩", "Hat trick", "three 10s in one end"],
+  ["sharpshooter", "🦅", "Sharpshooter", "score 120 or more in an archery round"],
+  ["ace", "✈", "Ace", "shoot down 100 planes in all"],
+  ["gunship", "💣", "Gunship down", "shoot down a gunship"],
+  ["sky-10k", "🌤", "High flyer", "score 10,000 in one flight"],
 ];
 function achieved() { return store("achievements", {}); }
 function achieve(id) {
@@ -192,6 +201,19 @@ function gamePoint(ev) {
 }
 for (const type of ["mousedown", "mouseup", "mousemove"]) gcv.addEventListener(type, ev => {
   const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), type);
+});
+// A release outside the canvas (past its edge, over the side panel, outside the window) still lets go:
+// a game held with the mouse (the fishing bar, the bow) would otherwise stay held until the next click.
+window.addEventListener("mouseup", ev => {
+  if (!GAME.open || ev.target === gcv) return;
+  const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), "mouseup");
+}, true);
+// The window loses focus: the key-ups and the mouse-up will not come, so nothing stays held. A game's
+// cancel() drops what was held without acting on it (no arrow or cast goes off as you switch apps).
+window.addEventListener("blur", () => {
+  if (!GAME.open) return;
+  GAME.keys.clear();
+  const g = GAMES[GAME.view]; if (g && g.cancel) g.cancel();
 });
 
 function openGames(view) {
@@ -262,7 +284,8 @@ function homeSide() {
   const d = daily(), extra = Object.values(GAMES).map(g => g.homeHTML ? g.homeHTML() : "").join("");
   gside.innerHTML = `<h3>PLAY</h3><div class="grid">
       <button class="go" data-play="race">🏎 Race</button><button class="go" data-play="fish">🎣 Fishing</button>
-      <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button></div>
+      <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button>
+      <button class="go" data-play="archery">🏹 Archery</button><button class="go" data-play="sky">✈ Sky Patrol</button></div>
     <h3>📅 TODAY'S CHALLENGE</h3><div class="hint">${esc(GAMES.race.trackName(d.track))} (best lap) and the biggest ${esc(GAMES.fish.speciesName(d.fish))}: the same for everyone today.</div>
     <div class="grid" style="margin-top:5px"><button data-play="race" data-arg="daily">Race today's track</button><button data-play="fish" data-arg="daily">Fish for today's</button></div>
     ${extra}
@@ -273,7 +296,11 @@ function drawHome(t) {
   gpx(0, 0, GW, GH, "#1b1820");
   gtext("MINI-GAMES", GW / 2, 30, "#8fd6b4", 16, "center");
   gtext("pick one on the right · Esc goes back", GW / 2, 52, "#a79d93", 8, "center");
-  for (const g of Object.values(GAMES)) if (g.drawIcon) g.drawIcon(t);
+  // the games' icons, three to a row: each game draws its own around its iconCenter
+  Object.values(GAMES).filter(g => g.drawIcon).forEach((g, i) => {
+    const [cx, cy] = g.iconCenter || [0, 0], x = 60 + (i % 3) * 100, y = 92 + Math.floor(i / 3) * 64;
+    gx.save(); gx.translate(x - cx, y - cy); g.drawIcon(t); gx.restore();
+  });
 }
 
 // ---------- from the room ----------
@@ -292,6 +319,8 @@ window.gamesTabHTML = () => {
     <div class="g"><span class="gn">🎣 Fishing</span><button data-gplay="fish">Play</button></div>
     <div class="g"><span class="gn">🪲 Bug Whack</span><button data-gplay="bugs">Play</button></div>
     <div class="g"><span class="gn">🏓 Ping-pong</span><button data-gplay="pong">Play</button></div>
+    <div class="g"><span class="gn">🏹 Archery</span><button data-gplay="archery">Play</button></div>
+    <div class="g"><span class="gn">✈ Sky Patrol</span><button data-gplay="sky">Play</button></div>
     <div class="empty">${inRoom() ? "Races, rounds and challenges you start are open to the room. G opens the games." : "On your own for now: join a room to play together. G opens the games."}</div></div>`;
 };
 window.scoresTabHTML = () => `<div class="list">${boardsHTML(true)}<div class="gh">ACHIEVEMENTS</div><div class="sc">${
@@ -303,7 +332,7 @@ window.gamesPanelClick = b => {
 };
 window.gamesKey = () => Object.values(GAMES).map(g => g.tabKey ? g.tabKey() : "").join("|") + JSON.stringify(boardsNow()) + Object.keys(achieved()).length;
 
-// the demo (office.html opened without the app): ?game=race, fish, bugs or pong opens one
+// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery or sky opens one
 if (!bridge) {
   const want = new URLSearchParams(location.search).get("game") || "";
   if (want) setTimeout(() => { openGames("home"); if (GAMES[want]) GAMES[want].start("demo"); }, 300);
