@@ -669,18 +669,18 @@ function paintRooms(L) {
   wall(rx, 0, cols - rx, "#6f7f99", "#58667c");
   carpet(rx, WALL, cols - rx, L.reviewH - WALL);
   door(rx + 3, 0);
-  const winW = 16, from = rx + 44, deskSpan = L.bx - 14 - from;
+  const winW = 16, signX = L.wbX + L.wbW + 3, from = signX + 31, deskSpan = L.bx - 14 - from;
   for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
     windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
   clock(L.bx - 10, 4);
-  whiteboard(L.bx + 4, 3, Math.max(12, Math.min(26, L.benchW - 16)), boardNotes());
+  whiteboard(L.wbX, 3, L.wbW, boardNotes());
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
   if (L.shelf) lowShelf(L.shelf.x, L.shelf.y + 9, L.shelf.w);
   if (L.shelfOpen) lowShelf(L.shelfOpen.x, L.shelfOpen.y + 9, L.shelfOpen.w);
   { const nW = Math.max(1, Math.floor(deskSpan / 46)), firstWin = Math.round(from + 0.5 * deskSpan / nW - winW / 2);
-    sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3, firstWin - 2 - (rx + 13), "REVIEW ROOM"); }
+    sign(roomLabel("review", "REVIEW ROOM"), signX, 3, firstWin - 2 - signX, "REVIEW ROOM"); }
   // the others room: warm walls, wood floor
   const oy = L.oy;
   wall(0, oy, cols, "#b9a184", "#8e7458");
@@ -849,6 +849,9 @@ function layout() {
   // the manager's room takes the top-left corner when one is configured and the window is wide enough
   const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
+  // the whiteboard hangs on the left of the review room's back wall, after the door: the right of
+  // the wall is under the buttons along the top (Stats, Settings, Terminal)
+  const wbW = Math.max(12, Math.min(26, benchW - 16)), wbX = rx + 13;
   // the shelf runs along the front of the review room, under the desks, as wide as they are
   // ("in review" above "recent" when there are both)
   const shelf = snap.finished.length ? { x: rx + 6, y: reviewH - 17, w: bx - 8 - rx - 6 } : null;
@@ -858,7 +861,7 @@ function layout() {
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
   // the people in the shared room (or Create / Join when there is none) on the lounge's right side
   const peopleW = cols >= 240 ? Math.min(84, Math.max(66, Math.floor(cols * 0.2))) : 0;
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, shelfOpen, chatW, chatWide, cells, endY: ry,
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, wbX, wbW, mw, rx, shelf, shelfOpen, chatW, chatWide, cells, endY: ry,
            peopleW, lw: cols - peopleW };
 }
 
@@ -920,8 +923,7 @@ function draw() {
         tip: "A free desk: drag a PR here from the \"in review\" shelf to review it again now" });
     }
   }
-  if (snap.today) { const bw = Math.max(12, Math.min(26, L.benchW - 16));
-    hits.push({ x: (L.bx + 4) * P, y: 2 * P, w: bw * P, h: 13 * P, tip: boardTip() }); }
+  if (snap.today) hits.push({ x: L.wbX * P, y: 2 * P, w: L.wbW * P, h: 13 * P, tip: boardTip() });
   // waiting area: a sofa by the coffee machine
   const sx = L.bx + 3, sw = L.benchW - 16;
   label("WAITING", (sx + sw / 2) * P, (WALL + 4) * P, "#f1ebe2", 9, "center");

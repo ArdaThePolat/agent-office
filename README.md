@@ -115,8 +115,8 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   the result and cost when the reviewer logs them; green posted, amber asked you on Slack, grey
   rejected on Slack, red failed. When the reviewer lists its open PRs, the shelf splits in two:
   **in review** for reviewed PRs still open, **recent** for merged or declined ones (purple:
-  merged). Hover one for the details; a click opens its PR. The whiteboard
-  sums up today, since midnight: reviews finished, what they cost, how long they took on average
+  merged). Hover one for the details; a click opens its PR. The whiteboard,
+  on the left of the back wall by the door, sums up today, since midnight: reviews finished, what they cost, how long they took on average
   from `review started` to the finished line, and the blocking and major findings in their
   results; a number the log does not give (no `cost` fields, say) is left off. A review counts
   once: a `posted comment` after `asked you on Slack`, with no new start, is your 👍. Hover it for
