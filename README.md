@@ -437,6 +437,8 @@ appears at the top right. Clicking it:
 1. fetches the release into the checkout the app was built from and moves it there with
    `git merge --ff-only <tag>`, so it never overwrites anything: local commits or uncommitted
    changes in the way stop the update with the reason and the manual command;
+   it also stops when the checkout's tracked files are not exactly the release's (an uncommitted
+   edit, or a local commit on top), so what it builds is always the release;
 2. runs `scripts/build-app.sh` into the folder the app is in;
 3. reopens the new app.
 
