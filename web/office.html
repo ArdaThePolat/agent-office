@@ -1880,7 +1880,8 @@ function waterGlass(level) {       // a pixel glass on the card's 14×18 canvas,
   f(0, 17, 14, 1, "#00000055");
 }
 function showWater(mins) {
-  waterEl.querySelector(".when").textContent = mins >= 120 ? mins / 60 + " hours" : mins >= 60 ? "an hour" : mins + " minutes";
+  const h = Math.floor(mins / 60), m = mins % 60, part = (n, one, many) => n === 1 ? one : n + " " + many;
+  waterEl.querySelector(".when").textContent = [h ? part(h, "an hour", "hours") : "", m ? part(m, "a minute", "minutes") : ""].filter(Boolean).join(" and ");
   waterGlass(0.8); waterEl.style.display = "flex";
 }
 waterEl.addEventListener("click", e => {
