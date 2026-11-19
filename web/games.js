@@ -72,7 +72,7 @@ document.head.appendChild(gstyle);
 
 // ---------- shared ----------
 const GAME = { open: false, view: "home", keys: new Set(), last: 0, raf: 0 };
-const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, click, msg, tab, tabClick, leave }
+const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave }
 function registerGame(id, g) { GAMES[id] = g; }
 const myName = () => (snap && snap.manager && snap.manager.name) || "You";
 const inRoom = () => room.status === "joined";
@@ -201,6 +201,19 @@ function gamePoint(ev) {
 }
 for (const type of ["mousedown", "mouseup", "mousemove"]) gcv.addEventListener(type, ev => {
   const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), type);
+});
+// A release outside the canvas (past its edge, over the side panel, outside the window) still lets go:
+// a game held with the mouse (the fishing bar, the bow) would otherwise stay held until the next click.
+window.addEventListener("mouseup", ev => {
+  if (!GAME.open || ev.target === gcv) return;
+  const g = GAMES[GAME.view]; if (g && g.mouse) g.mouse(gamePoint(ev), "mouseup");
+}, true);
+// The window loses focus: the key-ups and the mouse-up will not come, so nothing stays held. A game's
+// cancel() drops what was held without acting on it (no arrow or cast goes off as you switch apps).
+window.addEventListener("blur", () => {
+  if (!GAME.open) return;
+  GAME.keys.clear();
+  const g = GAMES[GAME.view]; if (g && g.cancel) g.cancel();
 });
 
 function openGames(view) {

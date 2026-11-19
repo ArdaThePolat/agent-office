@@ -245,7 +245,8 @@ registerGame("sky", {
   key: (k, down) => { if (down && (k === " " || k === "b")) bomb(); },
   mouse: (p, type) => { if (type === "mousemove") SP.mouse = { x: p.x, y: p.y }; },
   click: b => { if (b.dataset.again) skyStart(); },
-  leave: () => { if (SP.phase === "play") SP.phase = "idle"; },
+  // leaving mid-flight keeps what was scored so far
+  leave: () => { if (SP.phase === "play") { SP.phase = "idle"; if (SP.score > 0) scoreBoard("sky", SP.score); } },
   iconCenter: [0, 4],
   drawIcon: t => {
     gpx(-30, -18, 60, 36, "#2a5a8a");

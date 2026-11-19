@@ -181,6 +181,7 @@ registerGame("archery", {
     if (type === "mousedown" && A.phase === "aim") { A.drawing = true; A.power = 0; A.held = 0; }
     if (type === "mouseup" && A.drawing) shoot();
   },
+  cancel: () => { ARCH.drawing = false; ARCH.power = 0; ARCH.held = 0; },
   click: b => { if (b.dataset.again) archStart(); },
   leave: () => { ARCH.drawing = false; },
   iconCenter: [0, 4],

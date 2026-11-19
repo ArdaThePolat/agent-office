@@ -377,6 +377,7 @@ registerGame("fish", {
     if (type === "mousedown") { FISHING.mouseDown = true; fishKey(" ", true); }
     if (type === "mouseup") { FISHING.mouseDown = false; fishKey(" ", false); }
   },
+  cancel: () => { FISHING.mouseDown = false; if (FISHING.phase === "charge") FISHING.phase = "idle"; },
   click: b => { if (b.dataset.cup) startCup(true); },
   speciesName: i => FISH[i][0],
   tab: () => { const now = Date.now() / 1000, n = Object.values(POND.people).filter(p => now - p.at < 20).length;

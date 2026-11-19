@@ -587,7 +587,7 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   that clears the enemies' bullets. Waves of scouts, weaving fighters, bombers that shoot back and V
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
-  leaderboard.
+  leaderboard (leaving mid-flight keeps what you scored so far).
 - **📅 Daily challenge:** today's track and today's fish, picked from the date, so the same for
   everyone in the room on the same day (in the same time zone), with their own boards (the best lap
   on today's track, the biggest of today's fish). The host keeps the last 7 days and takes a daily
