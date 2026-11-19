@@ -794,7 +794,12 @@ const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting f
 
 // One shelf of binders, as many as fit side by side (fewer on a narrow window). A merged or declined PR
 // says so and when; an open one is coloured by how its last review went.
+// Drag a binder from "in review" to a review desk: the app asks the reviewer to review that PR now
+// (a file in its state folder's requests/), instead of waiting for its next round.
+let drag = null, dropping = false, skipClick = false;
+const requested = {};            // "repo#id" -> when it was dropped on a desk
 function drawShelf(S, items, title) {
+  const open = title === "IN REVIEW";
   const head = S.w >= 120 ? Math.ceil((9 * 5.45 + 9) / P) : 0,   // as wide as "IN REVIEW", so the two shelves line up
     k = Math.min(items.length, Math.floor((S.w - head) / 46));
   const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
@@ -802,7 +807,8 @@ function drawShelf(S, items, title) {
   items.slice(0, k).forEach((r, j) => {
     const c = r.closed ? CLOSED_COLOR[r.closed] : resultColor(r), age = snap.now - (r.closedAt || r.t);
     const ex = S.x + head + j * ew, ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago";
-    const tail = `#${r.id} · ${r.closed ? r.closed + " " : ""}${ago}`;
+    const asked = open && requested[r.pr] && snap.now - requested[r.pr] < 180;
+    const tail = `#${r.id} · ${asked ? "to a desk…" : (r.closed ? r.closed + " " : "") + ago}`;
     const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
     px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
     label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
@@ -815,12 +821,12 @@ function drawShelf(S, items, title) {
     }
     const who = [...new Set(r.replies.map(e => e.event.replace(/^feedback\s*(from\s*)?/, "") || "someone"))];
     const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
-    hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url,
+    hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url, drag: open && bridge && !asked ? r.pr : null,
       tip: `${r.pr} · ${r.closed ? r.closed + " at " + hhmm(r.closedAt) + " · " : ""}${word}\n${hhmm(r.t)}, ${mins(snap.now - r.t)} ago · ${r.event}` +
         (prog.length ? `\nsince the last review: ${[f.fixed && f.fixed + " fixed", f.open && f.open + " still open", f.new && f.new + " new"].filter(Boolean).join(", ")}` : "") +
         Object.entries(f).filter(([k]) => !["fixed", "open", "new"].includes(k)).map(([k, v]) => `\n${k}: ${v}`).join("") +
         (r.replies.length ? `\n💬 ${r.replies.length} feedback since, from ${who.join(", ")} (last ${hhmm(r.replies[r.replies.length - 1].t)})` : "") +
-        (url ? "\nclick: open the PR" : "") });
+        (url ? "\nclick: open the PR" : "") + (open && bridge ? "\ndrag it to a review desk: review it again now" : "") });
   });
 }
 
@@ -903,10 +909,15 @@ function draw() {
       label(clip(parts[0], Math.max(5, Math.floor(fitc * 0.9))), cx, (y + 10) * P, "#f1ebe2", 11, "center");
       label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + (over ? "⚠ " : "") + el : ""), fitc), cx, (y + 15) * P, over ? "#ff9a94" : "#8fd6b4", 9, "center");
       label(clip(dk.sub, fitc), cx, (y + 19.5) * P, "#bdb3a8", 9, "center");
-      hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P,
+      hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P, desk: true,
         tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}` +
           (over ? `\n⚠ over the ${snap.overdue} min limit (reviews.overdueMinutes): it may be stuck` : "") + (dk.url ? "\nclick: open the PR" : ""), url: dk.url });
-    } else text("free", cx, (y + 10) * P, "#8ea3ad", 9, "center");
+    } else {
+      text(dropping ? "drop here" : "free", cx, (y + 10) * P, dropping ? "#9fe8b6" : "#8ea3ad", 9, "center");
+      if (dropping) { const c = "rgba(159,232,182,0.5)"; px(x0 + 2, 24, slotW - 4, 1, c); px(x0 + 2, 70, slotW - 4, 1, c); px(x0 + 2, 24, 1, 47, c); px(x0 + slotW - 3, 24, 1, 47, c); }
+      if (bridge && snap.inReview.length) hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P, desk: true,
+        tip: "A free desk: drag a PR here from the \"in review\" shelf to review it again now" });
+    }
   }
   if (snap.today) { const bw = Math.max(12, Math.min(26, L.benchW - 16));
     hits.push({ x: (L.bx + 4) * P, y: 2 * P, w: bw * P, h: 13 * P, tip: boardTip() }); }
@@ -2042,7 +2053,29 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal || h.goto || h.juke || h.lights || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+const ghost = document.createElement("div");
+ghost.style.cssText = "position:fixed;display:none;pointer-events:none;z-index:50;padding:3px 7px;border-radius:4px;font:11px Menlo,monospace;background:#2b3a33;color:#9fe8b6;border:1px solid #5fbf7f";
+document.body.appendChild(ghost);
+cv.addEventListener("mousedown", ev => { const h = ev.button === 0 && hitAt(ev); if (h && h.drag) drag = { pr: h.drag, x: ev.clientX, y: ev.clientY, moved: false }; });
+window.addEventListener("mousemove", ev => {
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return;
+  if (!drag.moved) { drag.moved = true; dropping = true; layerKey = ""; ghost.textContent = "📁 " + drag.pr; ghost.style.display = "block"; tip.style.display = "none"; }
+  ghost.style.left = ev.clientX + 10 + "px"; ghost.style.top = ev.clientY + 8 + "px";
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  cv.style.cursor = hits.some(h => h.desk && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) ? "copy" : "grabbing";
+});
+window.addEventListener("mouseup", ev => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (!d.moved) return;
+  dropping = false; layerKey = ""; ghost.style.display = "none"; cv.style.cursor = "default"; skipClick = true;
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (bridge && hits.some(h => h.desk && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h)) {
+    bridge.postMessage({ reviewNow: d.pr }); requested[d.pr] = Date.now() / 1000;
+  }
+});
+cv.addEventListener("click", ev => { if (skipClick) { skipClick = false; return; } const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }

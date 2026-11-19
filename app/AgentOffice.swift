@@ -529,6 +529,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     // office.html asks to open a PR (https only), reveal a session's folder, chime, or keep the
     // list of agents hidden from view (a small JSON object it reads back in every snapshot).
+    /// Ask the PR reviewer to review `repo#number` now: an empty file of that name in its state
+    /// folder's `requests/`. The reviewer takes it on its next look (pr-watch looks every 2 seconds).
+    func requestReview(_ pr: String) {
+        guard let rs = Config.load().reviewState,
+              pr.range(of: "^[A-Za-z0-9._-]{1,100}#[0-9]{1,9}$", options: .regularExpression) != nil else { return }
+        let dir = rs + "/requests"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir + "/" + pr, contents: Data())
+    }
+
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let body = m.body as? [String: String] else { return }
         if let h = body["hidden"], h.utf8.count < 64_000 { defaults.set(h, forKey: "hidden") }
@@ -558,6 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if body["update"] == "go" { DispatchQueue.main.async { self.offerSigning { self.updater.update() } } }   // Signing.swift
         if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
         if let a = body["water"] { waterAnswered(a) }   // the water card's Done / Later (Water.swift)
+        if let pr = body["reviewNow"] { requestReview(pr) }   // a PR dragged from "in review" to a desk
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {

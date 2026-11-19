@@ -514,6 +514,10 @@ file, not in the repository. Every key is optional.
     major orange, else green), and moves to **recent** once it is no longer open. The reviewer logs
     `merged` or `declined` when a PR leaves the list, and the recent shelf shows that with when.
     No file: one shelf of the latest finished reviews;
+  - `<state>/requests/` (written by the app): drag a binder from **in review** to a review desk
+    and the app leaves an empty file named `<repo>#<pr>` there, asking the reviewer to review that
+    PR again now rather than at its next round. The binder says "to a desk…" until a desk takes it.
+    pr-watch looks for these every 2 seconds while idle, and removes each file once read;
   - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`. A line whose
     event is `posted comment`, `asked you on Slack`, `rejected on Slack` or starts with `FAILED`
     is a finished review and goes on the shelf. After the event, optional ` | key: value` fields
