@@ -94,6 +94,8 @@ welcome tour that asks for both (and Agent Office → Welcome Tour… opens it a
   password, never you.
 - **View → Terminal** (⌃`) opens their own shell next to the office, with tabs (⌘T) and a side
   of their choosing (View → Terminal Position).
+- **⚙ Settings** at the top right (or ⌘,) has the water reminder, with its hours and interval;
+  the glass on the manager's desk turns it on or off.
 
 ## Uninstall
 

@@ -1831,8 +1831,8 @@ let welcomeSeen = false, welcomeStep = 0;
 const WELCOME = [
   { title: "Welcome to Agent Office", sub: "Your Claude Code sessions as a little pixel office: who is working, who is waiting for you, and who is on a break, at a glance.",
     items: [["🖥", "The office", "every session at a desk, with what it is doing, its model, effort and how full its context is. Click one to jump to it; right-click for its PR, its folder, or to hide it."],
-            ["👔", "Your room", "you at the manager's desk, with how much of your plan is left this week, when it resets and what the sessions cost."],
-            ["🔍", "Review room", "optional: PR reviews in progress at their desks, the queue waiting on the sofa."],
+            ["👔", "Your room", "you at the manager's desk, with how much of your plan is left this week, when it resets and what the sessions cost. The glass of water on the desk turns the water reminder on or off."],
+            ["🔍", "Review room", "optional: PR reviews in progress at their desks, the queue waiting on the sofa, and today's tally on the whiteboard by the door."],
             ["☕", "The lounge", "agents with nothing to do take a break here. The jukebox plays what is on in Spotify, Music or a browser, with its buttons. G opens the mini-games: races, fishing, Bug Whack, ping-pong, archery and Sky Patrol, alone or with the room."],
             ["👥", "A shared room", "optional: teammates on your network walk into your lounge. Chat, wave, high five, or poke someone."]],
     buttons: [["Next", "next", true]] },
@@ -1843,7 +1843,8 @@ const WELCOME = [
   { title: "You're all set", sub: "A few things worth knowing:",
     items: [["🖱", "Click", "an agent to bring its session to the front; a piece of the lounge to walk your character there."],
             ["⌨", "C", "shows or hides the chat when you are in a room. Hover your own message to edit or delete it."],
-            ["⚙", "Settings (⌘,)", "sounds, energy saver, the jukebox, open at login, daily update checks."],
+            ["⌨", "Terminal (⌃`)", "your own shell beside the office, with tabs (⌘T), on the side you pick."],
+            ["⚙", "Settings (top right, ⌘,)", "the water reminder with its hours and interval, sounds, energy saver, the jukebox, open at login, daily update checks."],
             ["👋", "This tour", "is in the Agent Office menu, if you want it again."]],
     buttons: [["Start", "done", true]] },
 ];
@@ -2249,6 +2250,8 @@ let lastDraw = 0;
 // ---------- demo (no app bridge) ----------
 if (!bridge) {
   document.getElementById("demo").textContent = "demo data";
+  // ?buttons: also the app-only buttons (Settings, Terminal) along the top, for screenshots; they do nothing here
+  if (new URLSearchParams(location.search).has("buttons")) { setBtn.style.display = termBtn.style.display = "block"; placeUpdate(); }
   const t0 = Date.now() / 1000, hm = m => { const d = new Date(Date.now() - m * 60000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   // an invented 13×13 cover: a sunset over the sea
   const demoCover = () => { if (demoCover.v) return demoCover.v; const c = document.createElement("canvas"); c.width = c.height = 13; const k = c.getContext("2d");

@@ -2,7 +2,7 @@
 
 A small macOS window that shows your Claude Code agents at work, as a pixel-art office.
 
-![Agent Office: the manager in the corner office with its edit button, three PR reviews at their desks and three in the queue on the sofa; Claude Code sessions with their subagents, each with its state, model and effort, beside the shared room's chat; the lounge at the bottom with the jukebox playing in the kitchen corner, teammates on a break and the list of people in the room, each with a Poke button](docs/screenshot.png)
+![Agent Office: the manager in the corner office with its edit button and a glass of water on the desk, the whiteboard with today's reviews by the review room's door, the Terminal, Settings and Stats buttons at the top right, three PR reviews at their desks and three in the queue on the sofa; Claude Code sessions with their subagents, each with its state, model and effort, beside the shared room's chat; the lounge at the bottom with the jukebox playing in the kitchen corner, teammates on a break and the list of people in the room, each with a Poke button](docs/screenshot.png)
 
 *Demo data. Open `web/office.html` in a browser to see it live.*
 
@@ -32,6 +32,8 @@ tour is in the Agent Office menu (Welcome Tour…) to see again. Then make it yo
   picture, the manager at the desk and your character in a shared room.
 - **Create a room** or **Join a room** in the lounge's right-hand panel (or the **Room** menu):
   share the lounge and a chat with teammates on your network.
+- **⚙ Settings** at the top right, next to Stats (or ⌘,): the water reminder with its hours and
+  interval, sounds, the jukebox, open at login and daily update checks.
 
 ### Or let your agent set it up
 
@@ -71,7 +73,8 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   desk: who needs you and who is working, the session that has waited longest for you
   (`longest wait: Checkout flow 23m`, in the same colours as its ⏳), your weekly usage as a battery that drains
   as you use it (orange, then red and blinking as they run low), when the week resets, and
-  what the open sessions have cost. Under 20% of the week left (`planLowPercent`, see
+  what the open sessions have cost. A glass of water on the desk is the water reminder (see
+  *Settings*): it empties toward the next reminder, and a click turns it on or off. Under 20% of the week left (`planLowPercent`, see
   *Configuration*) the battery, the wall screen's bar and the reset line turn red and blink (the
   stats screen's bar too), and the app shows one notification for that week ("Weekly plan: 17%
   left"), with a sound when **Play a sound** is on, the first time the window is on screen after
