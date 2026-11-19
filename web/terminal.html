@@ -24,6 +24,8 @@
   .tab.on { background: #1c1a26; color: #e6e1f0; box-shadow: inset 0 2px 0 #f2c14e; }
   #add { width: 28px; text-align: center; line-height: 23px; font-size: 15px; cursor: default; }
   #add:hover { color: #e6e1f0; background: #2c2838; }
+  #hide { width: 28px; text-align: center; line-height: 23px; font-size: 13px; cursor: default; border-left: 1px solid #2c2838; }
+  #hide:hover { color: #e6e1f0; background: #3a3550; }
   #panes { position: absolute; top: 29px; right: 0; bottom: 0; left: 6px; }
   .pane { position: absolute; inset: 0; }
   .xterm .xterm-viewport { background-color: #1c1a26 !important; }
@@ -32,7 +34,7 @@
   .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: #4a4366; border-radius: 4px; }
 </style>
 </head><body>
-<div id="bar"><div id="grip" title="Drag to move the terminal to another side of the window">⠿</div><div id="tabs"></div><div id="add" title="New tab (⌘T)">+</div></div>
+<div id="bar"><div id="grip" title="Drag to move the terminal to another side of the window">⠿</div><div id="tabs"></div><div id="add" title="New tab (⌘T)">+</div><div id="hide" title="Hide the terminal (⌃\`): its tabs and shells keep running, open it again to carry on">✕</div></div>
 <div id="panes"></div>
 <script src="vendor/xterm/xterm.js"></script>
 <script src="vendor/xterm/addon-fit.js"></script>
@@ -118,6 +120,8 @@ function closeTab(t, quiet) {
 }
 
 document.getElementById('add').onmousedown = e => { e.preventDefault(); newTab(); };
+// ✕ only hides the pane: the app keeps every tab's shell, so opening it again carries on
+document.getElementById('hide').onmousedown = e => { e.preventDefault(); post({ t: 'hide' }); };
 // the grip: pressing it hands the drag to the app, which shows where the terminal would go
 document.getElementById('grip').onmousedown = e => { e.preventDefault(); post({ t: 'drag' }); };
 document.getElementById('bar').ondblclick = e => { if (e.target.id === 'tabs') newTab(); };

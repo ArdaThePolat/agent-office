@@ -294,6 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         terminal.view.isHidden = !terminalShown
         split = OfficeSplit(office: web, terminal: terminal.view, side: terminalSide)
         terminal.onDrag = { [weak self] in self?.dragTerminal() }
+        terminal.onHide = { [weak self] in self?.showTerminal(false) }
         window.contentView = split
         window.delegate = self
         if terminalShown { terminal.load() }
