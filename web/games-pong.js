@@ -194,5 +194,6 @@ registerGame("pong", {
     return false;
   },
   tabKey: () => Object.keys(PONG.asks).join(",") + (inRoom() ? roomMates().map(m => m.id).join(",") : ""),
+  iconCenter: [276, 132],
   drawIcon: t => { const y = 128 + Math.sin(t * 3) * 10; gpx(255, 112, 3, 22, "#f1ebe2"); gpx(295, 112, 3, 22, "#f1ebe2"); gpx(260 + ((t * 40) % 32), y, 3, 3, "#ffe7a8"); gtext("ping-pong", 276, 150, "#a79d93", 8, "center"); },
 });
