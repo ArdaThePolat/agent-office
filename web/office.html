@@ -124,6 +124,19 @@
   #welcome .dots { display: flex; gap: 5px; margin-bottom: 12px; }
   #welcome .dots i { width: 18px; height: 4px; background: #3d332e; border-radius: 2px; }
   #welcome .dots i.on { background: var(--accent); }
+  /* a card in the corner, over the office but not in its way: everything else stays clickable */
+  #water { position: fixed; right: 16px; bottom: calc(var(--log-h, 92px) + 12px); z-index: 21; display: none;
+    width: min(340px, calc(100% - 32px)); pointer-events: none; }
+  #water .card { pointer-events: auto; width: 100% !important; box-sizing: border-box; }
+  #water .card { background: var(--panel); border: 3px solid var(--line); border-radius: 8px; width: min(340px, 100%);
+    padding: 16px 18px 14px; box-shadow: 0 10px 40px #000a; display: flex; gap: 14px; align-items: center; }
+  #water canvas { flex: 0 0 auto; width: 56px; height: 72px; image-rendering: pixelated; }
+  #water h1 { font-size: 15px; margin: 0 0 4px; color: #7ec8f0; }
+  #water p { color: var(--muted); font-size: 12px; margin: 0 0 12px; line-height: 1.5; }
+  #water .row { display: flex; gap: 8px; }
+  #water button { font: 12px Menlo, monospace; border-radius: 5px; padding: 6px 12px; cursor: pointer;
+    border: 1px solid #4a3d36; background: #2d2630; color: var(--text); }
+  #water button.go { background: #7ec8f0; color: #1b1820; border-color: #7ec8f0; }
   #stats { position: absolute; inset: 0 0 var(--log-h, 92px) 0; z-index: 3; display: none; overflow-y: auto;
     background: #1b1820fa; padding: 34px 16px 16px; }
   #stats h2 { font-size: 12px; color: var(--muted); font-weight: normal; margin: 14px 0 6px; letter-spacing: .06em; }
@@ -160,6 +173,10 @@
 <div id="people"></div>
 <div id="stats"></div>
 <div id="welcome"><div class="card"></div></div>
+<div id="water"><div class="card"><canvas width="14" height="18"></canvas><div>
+  <h1>💧 Time for some water</h1><p>It has been <span class="when">an hour</span>. A glass of water, then back to it.</p>
+  <div class="row"><button class="go" data-a="done">Done</button><button data-a="later">In 10 min</button></div>
+</div></div></div>
 <script>
 // Agent Office — the view. The app calls updateOffice(snapshot) every couple of seconds; opened
 // in a plain browser (no app bridge) it animates demo data. All art is drawn here, in code.
@@ -180,6 +197,7 @@ const DONE_FRESH = 30 * 60;           // "done, your turn" for this long, then p
 const CRASH_FRESH = 30 * 60;          // "stopped with an error" for this long, then plain idle: an error the
                                       // network caused (a Wi-Fi switch, a VPN) is not worth a "needs you" for hours
 const STALL_AFTER = 10 * 60;          // working with no heartbeat this long reads as stalled
+const WAIT_WARN = 10 * 60, WAIT_LATE = 30 * 60;   // waiting for you this long turns orange, then red
 const WALL = 16;                      // height of a room's back wall, in art pixels
 const SHELF_MAX = 5;                  // finished reviews on the review room's shelf, at most
 let snap = null, hits = [], frame = 0, energy = false;
@@ -206,6 +224,11 @@ function mins(sec) { const m = Math.max(0, Math.round(sec / 60)); return m < 60 
 function base(p) { return (p || "").split("/").filter(Boolean).slice(-2).join("/"); }
 function hhmm(t) { const d = new Date(t * 1000); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 function clip(s, n) { s = s || ""; return s.length > n ? s.slice(0, Math.max(1, n - 1)) + "…" : s; }
+// clip to a width in CSS px, for text with emoji (wider than a character)
+function clipW(s, w, size) {
+  g.font = (size || 10) + "px Menlo, monospace"; if (g.measureText(s).width <= w) return s;
+  const a = [...s]; while (a.length > 1 && g.measureText(a.join("") + "…").width > w) a.pop(); return a.join("") + "…";
+}
 function team(cwd) { return (cwd || "").split("/").filter(Boolean).slice(0, 6).join("/"); }
 // "claude-opus-5-5" → "Opus 5.5", "claude-sonnet-5-5-20261001" → "Sonnet 5.5"
 function modelName(m) {
@@ -231,6 +254,14 @@ function agentsOf(s) {
 }
 function esc(s) { return String(s).replace(/[<&"]/g, c => ({ "<": "&lt;", "&": "&amp;", '"': "&quot;" })[c]); }
 
+// How long a session has waited for you: the hook sets since when its state changes, so for a
+// waiting session it is when it asked. Amber, then orange after WAIT_WARN, red after WAIT_LATE.
+function waitColor(sec) { return sec >= WAIT_LATE ? "#e06c6c" : sec >= WAIT_WARN ? "#f0884a" : "#ffb347"; }
+function longestWait() {
+  let w = null;
+  for (const s of snap.all) if (shown(s) === "waiting" && s.since && (!w || s.since < w.since)) w = s;
+  return w;
+}
 // What a session shows: its recorded state, with time taken into account.
 function shown(s) {
   if (s.state === "working" && s.beat && snap.now - s.beat > STALL_AFTER) return "stalled";
@@ -271,6 +302,55 @@ function finishedKind(event) {
   return /^FAILED/.test(event) ? "failed" : /posted comment/.test(event) ? "posted"
     : /asked you on Slack/.test(event) ? "asked" : /rejected on Slack/.test(event) ? "rejected" : "";
 }
+// The whiteboard: today's reviews (since local midnight). A review is counted once, at the first
+// finished line after its "review started"; a later posted or rejected line without a new start is
+// your answer on Slack, not another review. Its time runs from that start; cost and result are summed
+// from the lines that have them.
+function reviewDay(log, now) {
+  const mid = new Date(now * 1000); mid.setHours(0, 0, 0, 0);
+  const t0 = mid / 1000, open = new Map();
+  const d = { n: 0, posted: 0, asked: 0, failed: 0, cost: 0, costs: 0, time: 0, timed: 0, blocking: 0, major: 0, results: 0 };
+  for (const l of log) {
+    const r = reviewLine(l); if (!r) continue;
+    if (/review started/.test(r.event)) { open.set(r.pr, r.t); continue; }
+    const kind = finishedKind(r.event), start = open.get(r.pr);
+    if (!kind || kind === "rejected" || start === null) continue;
+    open.set(r.pr, null);
+    if (r.t < t0) continue;
+    const cost = parseFloat((r.fields.cost || "").replace(/[^\d.]/g, ""));
+    if (isFinite(cost)) { d.cost += cost; d.costs++; }
+    if (kind === "failed") { d.failed++; continue; }
+    d.n++; d[kind]++;
+    if (start !== undefined && r.t >= start) { d.time += r.t - start; d.timed++; }
+    if (r.fields.result) {
+      d.results++;
+      d.blocking += +((r.fields.result.match(/(\d+)\s*block/i) || [])[1] || 0);
+      d.major += +((r.fields.result.match(/(\d+)\s*major/i) || [])[1] || 0);
+    }
+  }
+  return d;
+}
+// what the whiteboard says, most important first; null without a review log (it keeps its scribbles)
+function boardNotes() {
+  const d = snap.today; if (!d) return null;
+  const notes = [{ s: `${d.n} today`, c: "#2f4f9e", b: true }];
+  if (d.costs) notes.push({ s: "$" + d.cost.toFixed(2), c: "#2e7d4f" });
+  if (d.timed) notes.push({ s: "⌀ " + mins(d.time / d.timed), c: "#5a5560" });
+  if (d.blocking) notes.push({ s: `${d.blocking} blocking`, c: "#c0392b" });
+  if (d.major) notes.push({ s: `${d.major} major`, c: "#c26a10" });
+  if (d.results && !d.blocking && !d.major) notes.push({ s: "no blockers", c: "#2e7d4f" });
+  if (d.failed) notes.push({ s: `${d.failed} failed`, c: "#c0392b" });
+  return notes;
+}
+function boardTip() {
+  const d = snap.today, of = (k, n, what) => k < n ? ` (${k} of ${n} ${what})` : "";
+  const kinds = [d.posted && d.posted + " posted", d.asked && d.asked + " asked you on Slack"].filter(Boolean).join(", ");
+  return [`Today, since midnight: ${d.n} review${d.n === 1 ? "" : "s"} finished` + (kinds ? ` (${kinds})` : ""),
+    d.failed ? `${d.failed} failed` : "",
+    d.costs ? `cost $${d.cost.toFixed(2)}` + of(d.costs, d.n + d.failed, "logged one") : "",
+    d.timed ? `${mins(d.time / d.timed)} from start to finish on average` + of(d.timed, d.n, "have their start in the log") : "",
+    d.results ? `${d.blocking} blocking, ${d.major} major found` + of(d.results, d.n, "logged a result") : ""].filter(Boolean).join("\n");
+}
 // pr-watch's log line → a general event, or null
 function reviewEvent(line) {
   const r = reviewLine(line); if (!r) return null;
@@ -280,8 +360,9 @@ function reviewEvent(line) {
     [/Slack notified \(safe\)/, "✅ safe to merge"], [/Slack notified \(nits\)/, "🟢 safe, nits only"],
     [/FAILED, temporary/, "↻ review hit a network error, will retry"], [/FAILED/, "⚠️ review failed"],
     [/only a sync/, "↔ only a main sync, not re-reviewed"], [/you approved it/, "👍 approved by you, skipped"],
-    [/removed from the queue by you/, "✋ removed by you"],
+    [/removed from the queue by you/, "✋ removed by you"], [/^👍 on Slack → review requested/, "👍 on Slack → review requested"],
   ];
+  if (/^feedback\b/.test(msg)) return { t, text: "💬 " + msg + " · " + pr };   // "feedback from <name>"
   for (const [re, text] of rules) if (re.test(msg)) return { t, text: text + " · " + pr };
   return null;
 }
@@ -293,6 +374,10 @@ function build(raw) {
     .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], started: f[5], title: f[7] }));
   const queue = (raw.queue || []).map(l => l.split("\t")).filter(f => f.length >= 7)
     .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], manual: f[5] === "manual", title: f[6] }));
+  // waiting for your 👍/👎 on Slack: a finished review before it is posted (approve), or a small PR (request)
+  // null: the reviewer writes no "waiting" file, and the review room has no in-tray
+  const waiting = !Array.isArray(raw.waiting) ? null : raw.waiting.map(l => l.split("\t")).filter(f => f.length >= 7)
+    .map(f => ({ name: f[0], slug: f[1], id: f[2], kind: f[3], since: +f[4] || 0, author: f[5], title: f[6] }));
   const sessions = (raw.sessions || []).filter(s => s && s.id);
   const reviewRepos = new Set(reviews.map(r => r.name));
   const manualReviews = sessions.filter(s => s.kind === "review" && !reviewRepos.has((s.cwd || "").split("/").pop()));
@@ -327,16 +412,37 @@ function build(raw) {
   events.sort((a, b) => b.t - a.t);
   // the review room's shelf: the latest finished review of each PR, newest first
   const finished = new Map();
-  (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event); if (kind) finished.set(r.pr, { ...r, kind, n }); });
-  const shelf = [...finished.values()].sort((a, b) => b.t - a.t || b.n - a.n).slice(0, SHELF_MAX);
+  // and the feedback on it since: "feedback from <name>" lines after its finished line
+  (raw.reviewLog || []).forEach((l, n) => { const r = reviewLine(l), kind = r && finishedKind(r.event), e = r && finished.get(r.pr);
+    if (kind) finished.set(r.pr, { ...r, kind, n, replies: [] });
+    else if (e && /^feedback\b/.test(r.event) && r.t >= e.t) e.replies.push(r); });
+  // With the reviewer's list of open PRs ("open" in its state folder), a reviewed PR that is still open
+  // stands on the "in review" shelf (off it while a desk re-reviews it), and moves to "recent" once it is
+  // merged or declined -- the reviewer logs "merged" / "declined" when it leaves the open list. Without
+  // that list there is one shelf: the latest finished reviews.
+  const closed = new Map();
+  (raw.reviewLog || []).forEach(l => { const r = reviewLine(l); if (r && /^(merged|declined|superseded)$/.test(r.event)) closed.set(r.pr, r); });
+  const openSet = Array.isArray(raw.openPRs)
+    ? new Set(raw.openPRs.map(l => l.split("\t")).filter(f => f.length >= 3).map(f => f[0] + "#" + f[2])) : null;
+  const atDesk = new Set(reviews.map(r => r.name + "#" + r.id));
+  const when = r => r.closedAt || r.t, byNew = (a, b) => when(b) - when(a) || b.n - a.n;
+  const inReview = [], done = [];
+  for (const r of finished.values()) {
+    if (!openSet) done.push(r);
+    else if (openSet.has(r.pr)) { if (!atDesk.has(r.pr)) inReview.push(r); }
+    else { const c = closed.get(r.pr); done.push(c && c.t >= r.t ? { ...r, closed: c.event, closedAt: c.t } : r); }
+  }
+  const shelf = done.sort(byNew).slice(0, SHELF_MAX);
+  inReview.sort(byNew);
+  const today = raw.reviewLog && raw.reviewLog.length ? reviewDay(raw.reviewLog, now) : null;
   energy = !!(raw.settings && raw.settings.energySaver);
   // the Terminal button: in the app only, lit while the terminal is open
   if (bridge && raw.settings) { termBtn.style.display = "block"; termBtn.classList.toggle("on", !!raw.settings.terminal); if (typeof placeUpdate === "function") placeUpdate(); }
   if (raw.settings && raw.settings.welcome && !welcomeSeen) showWelcome();
   if (raw.jukebox) loadJukeArt(raw.jukebox);
-  return { now: raw.now || Date.now() / 1000, reviews, queue, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
+  return { now: raw.now || Date.now() / 1000, reviews, queue, waiting, manualReviews, all, others: visible.slice(0, MAX_SESSIONS),
            overflow: Math.max(0, visible.length - MAX_SESSIONS), hiddenCount: all.filter(s => at.get(s.id) === "hidden").length, lounge,
-           events, finished: shelf, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
+           events, finished: shelf, inReview, today, workspace: raw.workspace || "", slots: raw.slots || 5, overdue: raw.overdueMinutes ?? 45, jukebox: raw.jukebox || null,
            manager: raw.manager && (raw.manager.image || raw.manager.name || raw.manager.hasImage) ? raw.manager : null,
            roomLabels: raw.roomLabels && typeof raw.roomLabels === "object" ? raw.roomLabels : {} };
 }
@@ -447,11 +553,17 @@ function carpet(x, y, w, h) {
   px(x, y, w, h, "#45606a");
   for (let j = 2; j < h; j += 5) for (let i = (j % 10 ? 2 : 4); i < w; i += 5) px(x + i, y + j, 1, 1, "#4f6d78");
 }
-function rug(x, y, w, h, c) {      // a soft rug in the team's colour, the floor showing through
-  const fill = c + "2e", edge = c + "66";
-  px(x + 1, y, w - 2, h, fill); px(x, y + 1, 1, h - 2, fill); px(x + w - 1, y + 1, 1, h - 2, fill);
-  px(x + 2, y + 2, w - 4, 1, edge); px(x + 2, y + h - 3, w - 4, 1, edge);
-  px(x + 2, y + 3, 1, h - 6, edge); px(x + w - 3, y + 3, 1, h - 6, edge);
+function rug(x, y, w, h, c) {      // a woven rug in the team's colour: a dotted border, a dark field, fringe on the ends
+  const bx = x + 2, bw = w - 4, wool = (X, Y, W, H, base, a) => { px(X, Y, W, H, base); px(X, Y, W, H, c + a); };
+  px(bx + 1, y + h, bw - 1, 1, "#00000040");                                      // shadow
+  for (let j = 1; j < h - 1; j += 2) { px(x, y + j, 2, 1, "#d8cbb0"); px(x + w - 2, y + j, 2, 1, "#d8cbb0"); }   // fringe
+  wool(bx, y, bw, h, "#1f1714", "80");                                            // border
+  for (let i = bx + 2; i < bx + bw - 2; i += 3) { px(i, y + 1, 1, 1, c); px(i, y + h - 2, 1, 1, c); }
+  for (let j = y + 4; j < y + h - 2; j += 3) { px(bx + 1, j, 1, 1, c); px(bx + bw - 2, j, 1, 1, c); }
+  px(bx + 3, y + 3, bw - 6, h - 6, c);                                            // a line in the team's colour
+  wool(bx + 4, y + 4, bw - 8, h - 8, "#3b2a22", "60");                            // the field, with small crosses
+  for (let j = 8, r = 0; j < h - 7; j += 6, r++)
+    for (let i = 8 + (r % 2) * 4; i < bw - 7; i += 8) { px(bx + i, y + j - 1, 1, 3, c + "48"); px(bx + i - 1, y + j, 3, 1, c + "48"); }
 }
 function plant(x, y, tall) {        // (x, y) = bottom-left of the pot
   const leaves = ["#3c6e3a", "#4f8a4a", "#68a85e"], hgt = tall ? 14 : 8;
@@ -504,10 +616,24 @@ function bookshelf(x, y) {         // (x, y) = top-left; stands against the wall
   }
   px(x + 1, y + 17, 10, 1, "#00000035");
 }
-function whiteboard(x, y, w) {
-  px(x, y, w, 8, "#cfc8bb"); px(x + 1, y + 1, w - 2, 6, "#f7f5f0");
-  px(x + 2, y + 2, Math.floor(w / 3), 1, "#5b8def"); px(x + 2, y + 4, Math.floor(w / 2), 1, "#e06c6c");
-  px(x + w - 7, y + 2, 4, 3, "#5fbf7f"); px(x + 2, y + 8, w - 4, 1, "#9c9387");
+function whiteboard(x, y, w, notes) {
+  if (!notes) {                    // no review log: scribbles
+    px(x, y, w, 8, "#cfc8bb"); px(x + 1, y + 1, w - 2, 6, "#f7f5f0");
+    px(x + 2, y + 2, Math.floor(w / 3), 1, "#5b8def"); px(x + 2, y + 4, Math.floor(w / 2), 1, "#e06c6c");
+    px(x + w - 7, y + 2, 4, 3, "#5fbf7f"); px(x + 2, y + 8, w - 4, 1, "#9c9387");
+    return;
+  }
+  // today's reviews in marker, a few short notes to a row, three rows at most (the rest is in its tooltip)
+  px(x, y - 1, w, 13, "#cfc8bb"); px(x + 1, y, w - 2, 11, "#f7f5f0"); px(x + 2, y + 12, w - 4, 1, "#9c9387");
+  g.font = "9px Menlo, monospace";
+  const room = (w - 3) * P, sp = g.measureText(" ").width, rows = [];
+  for (const n of notes) {
+    const nw = g.measureText(n.s).width, row = rows[rows.length - 1];
+    if (row && row.w + sp + nw <= room) { row.items.push(n); row.w += sp + nw; }
+    else if (rows.length < 3 && nw <= room) rows.push({ items: [n], w: nw });
+  }
+  rows.forEach((row, r) => { let tx = (x + 1.5) * P;
+    for (const n of row.items) { text(n.s, tx, (y + 0.3 + r * 3.7) * P, n.c, 9, "left", n.b ? "bold" : ""); tx += g.measureText(n.s + " ").width; } });
 }
 function coffee(x, y) {            // (x, y) = bottom-left
   px(x, y - 3, 8, 3, "#9b7350"); px(x, y - 3, 8, 1, "#c49a6c");
@@ -519,6 +645,13 @@ function lowShelf(x, y, w) {       // (x, y) = top-left of the board the finishe
   px(x, y + 2, w, 3, "#9b7350"); px(x + 1, y + 3, w - 2, 1, "#8a6445");
   px(x + 1, y + 5, 2, 2, "#7a5a3e"); px(x + w - 3, y + 5, 2, 2, "#7a5a3e");   // feet
   px(x + 3, y + 5, w - 6, 1, "#00000038");
+}
+function trayTable(x, y, n) {      // (x, y) = top-left of a low table; an in-tray on it with n papers (5 drawn at most)
+  px(x, y, 16, 2, "#c49a6c"); px(x, y, 16, 1, "#dab387"); px(x, y + 2, 16, 1, "#9b7350");
+  px(x + 1, y + 3, 2, 3, "#7a5a3e"); px(x + 13, y + 3, 2, 3, "#7a5a3e"); px(x + 2, y + 6, 12, 1, "#00000038");
+  for (let j = 0; j < Math.min(n, 5); j++) px(x + 4 + (j % 3 === 1 ? 1 : 0), y - 2 - j, 8, 1, j % 2 ? "#e6dfd2" : "#f4efe4");
+  const rim = n ? "#ffb347" : "#8a8096";
+  px(x + 3, y - 1, 10, 1, rim); px(x + 3, y - 3, 1, 2, rim); px(x + 12, y - 3, 1, 2, rim);
 }
 function sofaBack(x, y, w) { px(x, y, w, 7, "#6f5a8f"); px(x, y, w, 1, "#8873a8"); }
 function sofaFront(x, y, w) {
@@ -542,11 +675,12 @@ function paintRooms(L) {
   for (let k = 0, nW = Math.max(1, Math.floor(deskSpan / 46)); k < nW; k++)
     windowAt(Math.round(from + (k + 0.5) * deskSpan / nW - winW / 2), 4, winW, 7, sky, 7 + k * 5);
   clock(L.bx - 10, 4);
-  whiteboard(L.bx + 4, 3, Math.max(12, Math.min(26, L.benchW - 16)));
+  whiteboard(L.bx + 4, 3, Math.max(12, Math.min(26, L.benchW - 16)), boardNotes());
   plant(L.bx - 9, WALL + 9, true);
   coffee(cols - 10, WALL + 9);
   plant(L.cols - 9, L.reviewH - 2, false);
   if (L.shelf) lowShelf(L.shelf.x, L.shelf.y + 9, L.shelf.w);
+  if (L.shelfOpen) lowShelf(L.shelfOpen.x, L.shelfOpen.y + 9, L.shelfOpen.w);
   { const nW = Math.max(1, Math.floor(deskSpan / 46)), firstWin = Math.round(from + 0.5 * deskSpan / nW - winW / 2);
     sign(roomLabel("review", "REVIEW ROOM"), rx + 13, 3, firstWin - 2 - (rx + 13), "REVIEW ROOM"); }
   // the others room: warm walls, wood floor
@@ -655,12 +789,55 @@ const NAME_COLOR = { background: "#9fe3e8", waiting: "#ffc370", working: "#f1ebe
 const SHELF_COLOR = { posted: { binder: "#5fbf7f", text: "#9fe8b6" }, asked: { binder: "#ffb347", text: "#ffc370" },
                       rejected: { binder: "#8a8096", text: "#bdb3a8" }, failed: { binder: "#e06c6c", text: "#ff9a94" } };
 const SHELF_WORD = { posted: "review posted", asked: "asked you on Slack", rejected: "rejected on Slack" };
+const CLOSED_COLOR = { merged: { binder: "#9b7fd4", text: "#c9b6f0" }, declined: { binder: "#8a8096", text: "#bdb3a8" }, superseded: { binder: "#8a8096", text: "#bdb3a8" } };
+// an open PR's binder says how its last review went: blocking red, major orange, else green
+const resultColor = r => r.kind !== "posted" ? SHELF_COLOR[r.kind]
+  : /Blocking/.test(r.fields.result || "") ? SHELF_COLOR.failed : /Major/.test(r.fields.result || "") ? SHELF_COLOR.asked : SHELF_COLOR.posted;
 const STATE_WORD = { background: "waiting on its subagents", waiting: "waiting for you", working: "working", done: "done, your turn", crashed: "stopped with an error", compacting: "compacting", stalled: "quiet", idle: "idle" };
+
+// One shelf of binders, as many as fit side by side (fewer on a narrow window). A merged or declined PR
+// says so and when; an open one is coloured by how its last review went.
+// Drag a binder from "in review" to a review desk: the app asks the reviewer to review that PR now
+// (a file in its state folder's requests/), instead of waiting for its next round.
+let drag = null, dropping = false, skipClick = false;
+const requested = {};            // "repo#id" -> when it was dropped on a desk
+function drawShelf(S, items, title) {
+  const open = title === "IN REVIEW";
+  const head = S.w >= 120 ? Math.ceil((9 * 5.45 + 9) / P) : 0,   // as wide as "IN REVIEW", so the two shelves line up
+    k = Math.min(items.length, Math.floor((S.w - head) / 46));
+  const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
+  if (head && k) label(title, S.x * P, (S.y + 2) * P, "#bdb3a8", 9);
+  items.slice(0, k).forEach((r, j) => {
+    const c = r.closed ? CLOSED_COLOR[r.closed] : resultColor(r), age = snap.now - (r.closedAt || r.t);
+    const ex = S.x + head + j * ew, ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago";
+    const asked = open && requested[r.pr] && snap.now - requested[r.pr] < 180;
+    const tail = `#${r.id} · ${asked ? "to a desk…" : (r.closed ? r.closed + " " : "") + ago}`;
+    const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
+    px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
+    label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
+    // a re-review says what became of the earlier findings: fixed, still open, and new ones
+    const f = r.fields, prog = [["✅", f.fixed], ["⏳", f.open], ["🆕", f.new]].filter(p => p[1] !== undefined);
+    label(clipW([prog.map(p => p[0] + p[1]).join(" "), f.result, f.cost].filter(Boolean).join(" · ") || word, (ew - 8) * P - 6, 9), (ex + 7) * P, (S.y + 4.5) * P, c.text, 9);
+    if (r.replies.length) {    // feedback on it since: a speech bubble over the binder
+      px(ex - 1, S.y - 4, 7, 4, "#f4efe4"); px(ex + 1, S.y, 2, 1, "#f4efe4"); px(ex + 2, S.y + 1, 1, 1, "#f4efe4");
+      for (const d of [0, 2, 4]) px(ex + d, S.y - 3, 1, 1, "#5b8def");
+    }
+    const who = [...new Set(r.replies.map(e => e.event.replace(/^feedback\s*(from\s*)?/, "") || "someone"))];
+    const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
+    hits.push({ x: ex * P, y: (S.y - 4) * P, w: ew * P, h: 19 * P, url, drag: open && bridge && !asked ? r.pr : null,
+      tip: `${r.pr} · ${r.closed ? r.closed + " at " + hhmm(r.closedAt) + " · " : ""}${word}\n${hhmm(r.t)}, ${mins(snap.now - r.t)} ago · ${r.event}` +
+        (prog.length ? `\nsince the last review: ${[f.fixed && f.fixed + " fixed", f.open && f.open + " still open", f.new && f.new + " new"].filter(Boolean).join(", ")}` : "") +
+        Object.entries(f).filter(([k]) => !["fixed", "open", "new"].includes(k)).map(([k, v]) => `\n${k}: ${v}`).join("") +
+        (r.replies.length ? `\n💬 ${r.replies.length} feedback since, from ${who.join(", ")} (last ${hhmm(r.replies[r.replies.length - 1].t)})` : "") +
+        (url ? "\nclick: open the PR" : "") + (open && bridge ? "\ndrag it to a review desk: review it again now" : "") });
+  });
+}
 
 function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
   // the review room grows a little for the shelf of finished reviews (the manager's room is tall enough)
-  const reviewH = snap.manager ? 108 : snap.finished.length ? 92 : 82, teamW = 64, loungeH = 70;
+  const shelves = (snap.finished.length ? 1 : 0) + (snap.inReview.length ? 1 : 0);
+  const reviewH = (snap.manager ? 108 : shelves ? 92 : 82) + (shelves > 1 ? 15 : 0), teamW = 64, loungeH = 70;
   // with a room set up (joined or not), the chat is docked on the others room's right side
   const chatWide = room.status !== "off" && cols >= 240;
   const chatW = chatWide && !chatHidden ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
@@ -675,13 +852,15 @@ function layout() {
   const mw = snap.manager && cols >= 230 ? Math.max(60, Math.min(80, Math.floor(cols * 0.2))) : 0, rx = mw ? mw + 2 : 0;
   const benchW = Math.min(52, Math.max(34, Math.floor((cols - rx) * 0.22))), bx = cols - benchW - 1;
   // the shelf runs along the front of the review room, under the desks, as wide as they are
+  // ("in review" above "recent" when there are both)
   const shelf = snap.finished.length ? { x: rx + 6, y: reviewH - 17, w: bx - 8 - rx - 6 } : null;
+  const shelfOpen = snap.inReview.length ? { x: rx + 6, y: reviewH - 17 - (shelf ? 15 : 0), w: bx - 8 - rx - 6 } : null;
   const cells = []; let ry = oy + WALL + 9;
   rowsOf.forEach((row, r) => { row.forEach((s, c) => cells.push({ s, x: 6 + c * teamW, y: ry, h: rowH[r],
     rug: SHIRTS[hash(team(s.cwd) || s.id) % SHIRTS.length] })); ry += rowH[r]; });
   // the people in the shared room (or Create / Join when there is none) on the lounge's right side
   const peopleW = cols >= 240 ? Math.min(84, Math.max(66, Math.floor(cols * 0.2))) : 0;
-  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, chatW, chatWide, cells, endY: ry,
+  return { W, cols, H: (ly + loungeH) * P, reviewH, oy, othersH, ly, loungeH, teamW, benchW, bx, mw, rx, shelf, shelfOpen, chatW, chatWide, cells, endY: ry,
            peopleW, lw: cols - peopleW };
 }
 
@@ -694,7 +873,7 @@ function draw() {
   if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px"; }
   // the room layer, repainted only when the layout or the minute changes
   const d = new Date();
-  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.shelf ? [L.shelf.x, L.shelf.y, L.shelf.w].join(",") : "", JSON.stringify(snap.roomLabels || {}), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
+  const key = [W, H, dpr, L.chatW, L.peopleW, d.getHours(), d.getMinutes(), mgrSrc && mgrCut ? mgrSrc.length + ":" + mgrSrc.slice(-24) : "", snap.manager ? snap.manager.name : "", snap.jukebox && snap.jukebox.available ? "juke" : "", L.shelf ? [L.shelf.x, L.shelf.y, L.shelf.w].join(",") : "", L.shelfOpen ? [L.shelfOpen.x, L.shelfOpen.y].join(",") : "", JSON.stringify(snap.roomLabels || {}), JSON.stringify(boardNotes()), L.cells.map(c => c.x + "," + c.y + "," + c.h + c.rug).join(";")].join("|");
   if (key !== layerKey) {
     layerKey = key; layer.width = W * dpr; layer.height = H * dpr;
     g = lctx; lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.imageSmoothingEnabled = false;
@@ -733,11 +912,18 @@ function draw() {
       label(clip(parts[0], Math.max(5, Math.floor(fitc * 0.9))), cx, (y + 10) * P, "#f1ebe2", 11, "center");
       label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + (over ? "⚠ " : "") + el : ""), fitc), cx, (y + 15) * P, over ? "#ff9a94" : "#8fd6b4", 9, "center");
       label(clip(dk.sub, fitc), cx, (y + 19.5) * P, "#bdb3a8", 9, "center");
-      hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P,
+      hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P, desk: true,
         tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}` +
           (over ? `\n⚠ over the ${snap.overdue} min limit (reviews.overdueMinutes): it may be stuck` : "") + (dk.url ? "\nclick: open the PR" : ""), url: dk.url });
-    } else text("free", cx, (y + 10) * P, "#8ea3ad", 9, "center");
+    } else {
+      text(dropping ? "drop here" : "free", cx, (y + 10) * P, dropping ? "#9fe8b6" : "#8ea3ad", 9, "center");
+      if (dropping) { const c = "rgba(159,232,182,0.5)"; px(x0 + 2, 24, slotW - 4, 1, c); px(x0 + 2, 70, slotW - 4, 1, c); px(x0 + 2, 24, 1, 47, c); px(x0 + slotW - 3, 24, 1, 47, c); }
+      if (bridge && snap.inReview.length) hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P, desk: true,
+        tip: "A free desk: drag a PR here from the \"in review\" shelf to review it again now" });
+    }
   }
+  if (snap.today) { const bw = Math.max(12, Math.min(26, L.benchW - 16));
+    hits.push({ x: (L.bx + 4) * P, y: 2 * P, w: bw * P, h: 13 * P, tip: boardTip() }); }
   // waiting area: a sofa by the coffee machine
   const sx = L.bx + 3, sw = L.benchW - 16;
   label("WAITING", (sx + sw / 2) * P, (WALL + 4) * P, "#f1ebe2", 9, "center");
@@ -752,23 +938,30 @@ function draw() {
   sofaFront(sx, 44, sw);
   if (snap.queue.length > fit) label(`+${snap.queue.length - fit}`, (sx + sw / 2) * P, 59 * P, "#bdb3a8", 9, "center");
   if (!snap.queue.length) label("nobody", (sx + sw / 2) * P, 59 * P, "#8ea3ad", 9, "center");
-  // the shelf: finished reviews, newest first, as many as fit side by side (fewer on a narrow window)
-  if (L.shelf) {
-    const S = L.shelf, head = S.w >= 120 ? 15 : 0, k = Math.min(snap.finished.length, Math.floor((S.w - head) / 46));
-    const ew = k ? Math.min(80, Math.floor((S.w - head) / k)) : 0, chars = Math.floor(((ew - 8) * P - 6) / 5.45);
-    if (head && k) label("RECENT", S.x * P, (S.y + 2) * P, "#bdb3a8", 9);
-    snap.finished.slice(0, k).forEach((r, j) => {
-      const ex = S.x + head + j * ew, c = SHELF_COLOR[r.kind], age = snap.now - r.t;
-      const ago = (age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago", tail = `#${r.id} · ${ago}`;
-      const word = r.kind === "failed" ? (/temporary/.test(r.event) ? "failed, will retry" : "review failed") : SHELF_WORD[r.kind];
-      px(ex + 1, S.y + 2, 3, 7, c.binder); px(ex + 1, S.y + 2, 3, 1, shade(c.binder, 0.3)); px(ex + 2, S.y + 4, 1, 2, "#f4efe4");   // a binder
-      label(clip(r.repo, Math.max(3, chars - tail.length)) + tail, (ex + 7) * P, S.y * P, "#f1ebe2", 9);
-      label(clip([r.fields.result, r.fields.cost].filter(Boolean).join(" · ") || word, chars), (ex + 7) * P, (S.y + 4.5) * P, c.text, 9);
-      const url = snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.repo}/pull-requests/${r.id}` : "";
-      hits.push({ x: ex * P, y: (S.y - 1) * P, w: ew * P, h: 16 * P, url,
-        tip: `${r.pr} · ${word}\n${hhmm(r.t)}, ${ago} · ${r.event}` + Object.entries(r.fields).map(([f, v]) => `\n${f}: ${v}`).join("") + (url ? "\nclick: open the PR" : "") });
-    });
+  // the in-tray on a low table in front of the sofa: what waits for your 👍/👎 on Slack (only for a
+  // reviewer that writes its "waiting" file)
+  if (snap.waiting) {
+    const tx = sx + 2, ty = 70, wn = snap.waiting.length;
+    trayTable(tx, ty, wn);
+    if (wn) {
+      g.font = "9px Menlo, monospace";
+      const room = (L.cols - 10 - tx - 17) * P, say = g.measureText(`${wn} for you`).width + 6 <= room ? `${wn} for you` : String(wn);
+      label(say, (tx + 17) * P, (ty - 4) * P, "#ffc370", 9);
+    }
+    const wurl = w => snap.workspace ? `https://bitbucket.org/${snap.workspace}/${w.slug}/pull-requests/${w.id}` : "";
+    const wtip = snap.waiting.map(w => { const age = snap.now - w.since;
+      return `${w.name}#${w.id} · ${w.kind} · ${(age >= 86400 ? Math.floor(age / 86400) + "d" : mins(age)) + " ago"} · ${w.title}`; });
+    hits.push({ x: tx * P, y: (ty - 8) * P, w: (L.cols - 10 - tx) * P, h: 15 * P, url: wn ? wurl(snap.waiting[0]) : "",
+      waiting: snap.waiting.filter(wurl).map(w => [`${w.name}#${w.id}`, wurl(w)]),
+      tip: wn ? `${wn} waiting for you on Slack\n` + wtip.join("\n") +
+        (snap.waiting.some(w => w.kind === "approve") ? "\napprove: a finished review, posted after your 👍" : "") +
+        (snap.waiting.some(w => w.kind === "request") ? "\nrequest: a small PR, reviewed if you 👍 it" : "") +
+        (wurl(snap.waiting[0]) ? `\nclick: open ${snap.waiting[0].name}#${snap.waiting[0].id}` + (wn > 1 ? " · right-click: open another" : "") : "")
+        : "Nothing waiting for your 👍/👎 on Slack" });
   }
+  // the shelves: reviewed PRs still open ("in review") and finished ones ("recent"), newest first
+  if (L.shelfOpen) drawShelf(L.shelfOpen, snap.inReview, "IN REVIEW");
+  if (L.shelf) drawShelf(L.shelf, snap.finished, "RECENT");
 
   // ----- others room -----
   const oy = L.oy, states = snap.others.map(shown);
@@ -782,10 +975,11 @@ function draw() {
     24 * P, (oy + WALL + 8) * P, "#d9cfc3", 10);
   for (const c of L.cells) {
     const s = c.s, x = c.x, y = c.y, st = shown(s), tk = team(s.cwd), cx = x + 26;
-    if (st === "waiting" || st === "crashed") {
-      const col = st === "crashed" ? "rgba(224,108,108,0.30)" : (frame % 2 ? "rgba(255,179,71,0.38)" : "rgba(255,179,71,0.18)");
-      px(x - 3, c.y + 1, L.teamW - 6, 1, col); px(x - 3, c.y + c.h - 4, L.teamW - 6, 1, col);
-      px(x - 3, c.y + 1, 1, c.h - 4, col); px(x + L.teamW - 10, c.y + 1, 1, c.h - 4, col);
+    const waited = st === "waiting" && s.since ? snap.now - s.since : null;
+    if (st === "waiting" || st === "crashed") {   // the rug's edge lights up, in the wait's colour
+      const wc = waitColor(waited || 0), col = st === "crashed" ? "#ff8a80" : frame % 2 || energy ? wc : wc + "70";
+      px(x - 1, c.y + 1, L.teamW - 10, 1, col); px(x - 1, c.y + c.h - 4, L.teamW - 10, 1, col);
+      px(x - 1, c.y + 1, 1, c.h - 4, col); px(x + L.teamW - 12, c.y + 1, 1, c.h - 4, col);
     }
     const subs = agentsOf(s);
     // head agent at the big desk
@@ -794,6 +988,7 @@ function draw() {
     person(hp.x, hp.y, s.id, tk, st, false, hp.walking);
     desk(cx - 9, y + 23, 18, st === "working" || st === "compacting" || st === "background" ? "on" : st === "waiting" ? "wait" : st === "crashed" ? "err" : "off", false, hash(s.id));
     if (!hp.walking && st !== "working") bubble(cx + 5, y + 1, st);
+    if (waited != null && !hp.walking) label("⏳" + mins(waited), (cx + 14) * P, (y + 2) * P, waitColor(waited), 10);
     // subagents: their own row of small desks under the head agent
     subs.slice(0, 3).forEach((a, j) => {
       const wx = x + j * 18, wy = y + 33, aid = a.id;
@@ -824,7 +1019,7 @@ function draw() {
       text(t, gx + gw + 4, gy - 2.5, ctxColor(pct), 9);
     }
     hits.push({ x: (x - 3) * P, y: y * P, w: (L.teamW - 6) * P, h: (c.h - 3) * P, session: s,
-      tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}` +
+      tip: `${s.title || "untitled"}\n${s.cwd}\n${STATE_WORD[st] || st}${ago ? " for " + ago : ""}${waited != null ? " (since " + hhmm(s.since) + ")" : ""}` +
         (st === "crashed" ? `\nits turn ended on an API error at ${hhmm(s.since)} (a network drop does this);\nsend it a message to carry on. Clears by itself after ${CRASH_FRESH / 60} min.` : "") +
         (s.model ? `\n${modelName(s.model)}${s.effort ? ", effort " + s.effort : ""}` : "") +
         (pct != null ? `\ncontext ${Math.round(pct)}%${s.live.costUsd != null ? " · $" + s.live.costUsd.toFixed(2) : ""}` : "") +
@@ -1254,6 +1449,20 @@ function planLimits() {
   }
   return [...best.values()];
 }
+// the weekly window with less than PLAN_LOW % left ("planLowPercent" in the config file; 0: never)
+const PLAN_LOW = 20;
+function weekLow(l) { return !!l && l.kind === "seven_day" && 100 - (l.percentUsed || 0) < ((lastRaw || {}).planLowPercent ?? PLAN_LOW); }
+// Crossing it tells the app once per week window (the app remembers it across launches): it shows
+// a notification, and plays a sound with "Play a sound" on.
+let planAlerted = "";
+function planAlert() {
+  const wk = planLimits().find(weekLow);
+  if (!bridge || !wk || !wk.resetsAt) return;
+  const win = String(Math.round((Date.parse(wk.resetsAt) || 0) / 3600e3));
+  if (win === planAlerted) return;
+  planAlerted = win;
+  bridge.postMessage({ planLow: String(Math.round(100 - wk.percentUsed)), window: win, resets: untilText(wk.resetsAt) });
+}
 function managerCounts() {
   const st = snap.all.map(shown), n = k => st.filter(x => k.includes(x)).length;
   return { needs: n(["waiting", "crashed"]), working: n(["working", "compacting", "background"]), done: n(["done"]) };
@@ -1305,15 +1514,15 @@ function paintManager(L, sky) {
   text(clip(name, Math.floor((pw - 4) * P / 5.6)), m.cx * P, (deskY + 5.6) * P, "#2a1d12", 9, "center", "bold");
 }
 // a small battery for one plan window, centred on cx: the charge is what is left and shrinks
-// smoothly, a hair per percent; it turns orange under 40% and red, blinking, under 15%
-function battery(cx, y, name, used, h, short) {
-  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 22, x = cx - 10;
-  const c = left > 40 ? "#5fbf7f" : left > 15 ? "#f0a35e" : "#e06c6c";
+// smoothly, a hair per percent; it turns orange under 40% and red, blinking, under 15% (or low)
+function battery(cx, y, name, used, h, short, low) {
+  const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 22, x = cx - 10, red = low || left <= 15;
+  const c = red ? "#e06c6c" : left > 40 ? "#5fbf7f" : "#f0a35e";
   g.fillStyle = "#17131bcc"; g.fillRect((x - 11) * P, (y - 1) * P, (w + (short ? 22 : 29)) * P, (h + 2) * P);
   text(name, (x - 2) * P, (y + h / 2) * P - 5, "#d9cfc3", 10, "right");
   px(x, y, w, h, "#d9cfc3"); px(x + 1, y + 1, w - 2, h - 2, "#2a2530"); px(x + w, y + 1, 1, h - 2, "#d9cfc3");
   const inner = (w - 2) * P, fill = Math.round(inner * left / 100 * 2) / 2;
-  if (fill > 0 && !(left <= 15 && frame % 2 && !energy)) {
+  if (fill > 0 && !(red && frame % 2 && !energy)) {
     g.fillStyle = c; g.fillRect((x + 1) * P, (y + 1) * P, fill, (h - 2) * P);
     g.fillStyle = shade(c, 0.25); g.fillRect((x + 1) * P, (y + 1) * P, fill, 1.5);
   }
@@ -1330,7 +1539,7 @@ function drawManager(L) {
     const k = l.kind === "five_hour" ? "5h" : l.kind === "seven_day" ? "7d" : l.kind.slice(0, 2), bw = (sw - 14) * P;
     text(k, sx, ry, "#9fd3c0", 9);
     g.fillStyle = "#24302c"; g.fillRect(sx + 16, ry + 3, bw, 4);
-    g.fillStyle = ctxColor(l.percentUsed); g.fillRect(sx + 16, ry + 3, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
+    g.fillStyle = weekLow(l) ? "#e06c6c" : ctxColor(l.percentUsed); g.fillRect(sx + 16, ry + 3, Math.max(1, bw * Math.min(100, l.percentUsed) / 100), 4);
     text(l.percentUsed + "%", sx + 19 + bw, ry, "#d9f2e8", 9);
   }
   // without a picture: a drawn manager, twice the size of everyone else
@@ -1349,13 +1558,19 @@ function drawManager(L) {
   if (c.needs) parts.push(`${c.needs} need${c.needs === 1 ? "s" : ""} you`);
   if (c.working) parts.push(`${c.working} working`);
   label(parts.join(" · ") || "all quiet", m.cx * P, (m.deskY + 15.5) * P, c.needs ? "#ffc370" : "#f1ebe2", 12, "center");
+  let ly = m.deskY + 21;
+  const lw = longestWait(), lwt = lw && mins(snap.now - lw.since);
+  if (lw) {
+    const room = Math.floor(mw * P / 6.2) - 18 - lwt.length;
+    label(`longest wait: ${clip(lw.title || "untitled", Math.max(4, room))} ${lwt}`, m.cx * P, (ly - 0.5) * P, waitColor(snap.now - lw.since), 10, "center");
+    ly += 6;
+  }
   const wk = lim.find(l => l.kind === "seven_day");
   // plan usage as batteries: what is LEFT of each window, draining as you use it
-  let ly = m.deskY + 21;
   const rows = [[wk, "week", 4]].filter(r => r[0]);
-  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76); ly += h + 2; }
+  for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76, weekLow(l)); ly += h + 2; }
   if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
-  if (wk && wk.resetsAt) { label("week " + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, "#bdb3a8", 10, "center"); ly += 6; }
+  if (wk && wk.resetsAt) { label((weekLow(wk) ? "⚠ week " : "week ") + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, weekLow(wk) ? (frame % 2 && !energy ? "#e06c6c" : "#ff9a94") : "#bdb3a8", 10, "center"); ly += 6; }
   const lives = snap.all.map(s => s.live).filter(Boolean), cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
   ly += 0.5;
   if (lives.length) { label("$" + cost.toFixed(2) + " spent", m.cx * P, ly * P, "#e3c74f", 10, "center"); ly += 6; }
@@ -1363,7 +1578,7 @@ function drawManager(L) {
     m.cx * P, ly * P, "#d9cfc3", 10, "center");
   const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
-    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
+    tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (lw ? `\nlongest wait: ${lw.title || "untitled"}, ${lwt} (since ${hhmm(lw.since)})` : "") + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
 }
 
 
@@ -1634,6 +1849,30 @@ welcomeCard.addEventListener("click", ev => {
 });
 if (!bridge && new URLSearchParams(location.search).has("welcome")) setTimeout(showWelcome, 0);   // the demo: ?welcome
 
+// ---- the water reminder (Settings → Remind me to drink water; the app says when, Water.swift) ----
+const waterEl = document.getElementById("water");
+function waterGlass(level) {       // a pixel glass on the card's 14×18 canvas, filled to `level` (0…1)
+  const c = waterEl.querySelector("canvas").getContext("2d"), f = (x, y, w, h, col) => { c.fillStyle = col; c.fillRect(x, y, w, h); };
+  c.clearRect(0, 0, 14, 18);
+  f(1, 1, 12, 1, "#c9e6f5"); f(1, 1, 1, 16, "#c9e6f5"); f(12, 1, 1, 16, "#c9e6f5"); f(2, 16, 10, 1, "#c9e6f5");   // the glass
+  f(2, 2, 10, 14, "#ffffff14");
+  const top = 16 - Math.round(13 * level);
+  f(2, top, 10, 16 - top, "#4fa8de"); f(2, top, 10, 1, "#9fdcff"); f(3, top + 1, 1, 16 - top - 2, "#7ec8f0");    // the water
+  f(8, top + 4, 1, 1, "#d6f1ff"); f(6, top + 8, 1, 1, "#d6f1ff");                                                 // bubbles
+  f(0, 17, 14, 1, "#00000055");
+}
+function showWater(mins) {
+  waterEl.querySelector(".when").textContent = mins >= 120 ? mins / 60 + " hours" : mins >= 60 ? "an hour" : mins + " minutes";
+  waterGlass(0.8); waterEl.style.display = "flex";
+}
+waterEl.addEventListener("click", e => {
+  const a = e.target.dataset && e.target.dataset.a; if (!a) return;
+  if (a === "done") waterGlass(0.15);   // drunk
+  setTimeout(() => { waterEl.style.display = "none"; }, a === "done" ? 350 : 0);
+  if (bridge) bridge.postMessage({ water: a });
+});
+if (!bridge && new URLSearchParams(location.search).has("water")) setTimeout(() => showWater(60), 0);   // the demo: ?water
+
 // ---------- the people panel ----------
 // On the lounge's right side: everyone in the shared room, you first. Click a name for the same
 // menu as clicking their character (hug, high five…); Poke sends them a notification and shakes
@@ -1820,7 +2059,29 @@ cv.addEventListener("mousemove", ev => {
   cv.style.cursor = h.url || h.reveal || h.goto || h.juke || h.lights || h.session || h.chat || h.stats || h.profile || (h.self && mySpot) ? "pointer" : "default";
 });
 cv.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-cv.addEventListener("click", ev => { const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
+const ghost = document.createElement("div");
+ghost.style.cssText = "position:fixed;display:none;pointer-events:none;z-index:50;padding:3px 7px;border-radius:4px;font:11px Menlo,monospace;background:#2b3a33;color:#9fe8b6;border:1px solid #5fbf7f";
+document.body.appendChild(ghost);
+cv.addEventListener("mousedown", ev => { const h = ev.button === 0 && hitAt(ev); if (h && h.drag) drag = { pr: h.drag, x: ev.clientX, y: ev.clientY, moved: false }; });
+window.addEventListener("mousemove", ev => {
+  if (!drag) return;
+  if (!drag.moved && Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return;
+  if (!drag.moved) { drag.moved = true; dropping = true; layerKey = ""; ghost.textContent = "📁 " + drag.pr; ghost.style.display = "block"; tip.style.display = "none"; }
+  ghost.style.left = ev.clientX + 10 + "px"; ghost.style.top = ev.clientY + 8 + "px";
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  cv.style.cursor = hits.some(h => h.desk && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) ? "copy" : "grabbing";
+});
+window.addEventListener("mouseup", ev => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (!d.moved) return;
+  dropping = false; layerKey = ""; ghost.style.display = "none"; cv.style.cursor = "default"; skipClick = true;
+  const r = cv.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (bridge && hits.some(h => h.desk && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h)) {
+    bridge.postMessage({ reviewNow: d.pr }); requested[d.pr] = Date.now() / 1000;
+  }
+});
+cv.addEventListener("click", ev => { if (skipClick) { skipClick = false; return; } const h = hitAt(ev); if (!h) return; if (h.profile) { if (bridge) bridge.postMessage({ profile: "edit" }); } else if (h.juke) { if (bridge) bridge.postMessage({ jukebox: h.juke }); } else if (h.lights) setJukeLights(!jukeLights); else if (h.session) openSession(h.session); else if (h.stats) toggleStats(true); else if (h.chat) toggleChat(true); else if (h.mate) mateMenu(ev, h.mate); else if (h.goto) setMySpot(h.goto); else if (h.self) { if (mySpot) setMySpot(mySpot); } else act(h); });
 
 // Right-click: hide an agent, open its PR or folder, or bring hidden agents back.
 function closeMenu() { menu.style.display = "none"; }
@@ -1838,7 +2099,8 @@ document.addEventListener("contextmenu", ev => {
     if (rel) items.push(["Back to the desk", () => backToDesk(h.session)]);
     else if (!h.lounge) items.push(["Release to the lounge", () => hideSession(h.session, true)]);
     items.push(["Hide from view", () => hideSession(h.session)]);
-  } else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
+  } else if (h && h.waiting && h.waiting.length) { head = h.tip.split("\n")[0]; for (const [pr, url] of h.waiting) items.push([`Open ${pr}`, () => act({ url })]); }
+  else if (h && h.url) { head = h.tip.split("\n")[0]; items.push(["Open the PR", () => act(h)]); }
   const hs = Object.values(hidden).filter(x => !x.release);
   if (hs.length) {
     items.push([`Show hidden agents (${hs.length})`, unhideAll]);
@@ -1888,7 +2150,7 @@ function renderStats() {
   const subsN = all.reduce((t, s) => t + agentsOf(s).length, 0);
   let h = `<h2>PLAN USAGE</h2>`;
   h += limits.length ? `<div class="cards">${limits.map(l => `<div class="card"><small>${esc(LIMIT_NAME[l.kind] || l.kind)}</small>
-      <b>${l.percentUsed}%</b>${bar(l.percentUsed, ctxColor(l.percentUsed))}<small>${esc(untilText(l.resetsAt))}</small></div>`).join("")}</div>`
+      <b>${l.percentUsed}%</b>${bar(l.percentUsed, weekLow(l) ? "#e06c6c" : ctxColor(l.percentUsed))}<small>${esc(untilText(l.resetsAt))}</small></div>`).join("")}</div>`
     : `<div class="note">No plan usage reported yet${lives.length ? "" : " — it comes from the companion mod (see README)"}.</div>`;
   h += `<h2>RIGHT NOW</h2><div class="cards">
     <div class="card"><small>sessions</small><b>${all.length}</b></div>
@@ -1896,6 +2158,25 @@ function renderStats() {
     <div class="card"><small>working</small><b>${count(["working", "compacting", "background"])}</b></div>
     <div class="card"><small>subagents</small><b>${subsN}</b></div>
     <div class="card"><small>cost of these sessions</small><b>${lives.length ? "$" + cost.toFixed(2) : "–"}</b></div></div>`;
+  // Cost by repo: the sessions that did something today (an event from the hook since midnight),
+  // grouped like the shirts. The mod reports what a session has cost since it started, not per
+  // day, so a session that began before today counts in full.
+  const midnight = new Date(snap.now * 1000).setHours(0, 0, 0, 0) / 1000, repos = new Map();
+  let older = 0;
+  for (const s of all) {
+    if (!s.live || s.live.costUsd == null) continue;
+    if (Math.max(s.updated || 0, s.beat || 0) < midnight) { older++; continue; }
+    const k = team(s.cwd) || s.id, r = repos.get(k) || { k, cost: 0, n: 0 };
+    r.cost += s.live.costUsd; r.n++; repos.set(k, r);
+  }
+  if (repos.size) {
+    const rows = [...repos.values()].sort((a, b) => b.cost - a.cost), total = rows.reduce((t, r) => t + r.cost, 0);
+    h += `<h2>COST BY REPO · SESSIONS ACTIVE TODAY</h2><table style="width:auto"><tr><th>Repo</th><th>Sessions</th><th>Cost</th><th></th></tr>`;
+    for (const r of rows) h += `<tr><td title="/${esc(r.k)}"><span class="dot" style="background:${SHIRTS[hash(r.k) % SHIRTS.length]}"></span>${esc(base(r.k) || "untitled")}</td>
+      <td>${r.n}</td><td>$${r.cost.toFixed(2)}</td><td>${bar(total ? r.cost / total * 100 : 0, "#e3c74f")}</td></tr>`;
+    h += `<tr><td><b>total</b></td><td>${rows.reduce((t, r) => t + r.n, 0)}</td><td><b>$${total.toFixed(2)}</b></td><td></td></tr></table>
+      <div class="note">Each session's cost since it started, so one that began before today counts in full${older ? `; ${older} session${older === 1 ? "" : "s"} with nothing since midnight left out` : ""}.</div>`;
+  }
   h += `<h2>SESSIONS</h2><table><tr><th>Session</th><th>Where</th><th>State</th><th>Model</th><th>Context</th><th>Cost</th><th>Subagents</th></tr>`;
   for (const s of all) {
     const x = shown(s), l = s.live, p = l && l.context && l.context.percent, ag = agentsOf(s);
@@ -1917,7 +2198,7 @@ function renderStats() {
 wrap.addEventListener("scroll", closeMenu);
 
 function refresh() { if (lastRaw) { const next = build(lastRaw); track(next); snap = next; draw(); } }
-window.updateOffice = raw => { lastRaw = raw; if (raw.manager && raw.manager.image !== undefined) loadManager(raw.manager.image); const next = build(raw); track(next); snap = next; renderStats(); };
+window.updateOffice = raw => { lastRaw = raw; if (raw.manager && raw.manager.image !== undefined) loadManager(raw.manager.image); const next = build(raw); track(next); snap = next; planAlert(); renderStats(); };
 window.addEventListener("resize", () => snap && draw());
 // At most FPS (or ENERGY_FPS) redraws a second, and none while the page is hidden.
 let lastDraw = 0;
@@ -1947,6 +2228,12 @@ if (!bridge) {
     queue: [["infra", "infra", "109", "x", "Jordan K.", "auto", "Notifications table index"],
             ["web-app", "web-app", "464", "x", "Jordan K.", "manual", "Expire old generation rows"],
             ["deploy-scripts", "deploy-scripts", "217", "x", "Riley M.", "auto", "Rollout surge settings"]].map(f => f.join("\t")),
+    // the open PRs the reviewer watches: reviewed ones stand on the "in review" shelf
+    openPRs: [["engine", "engine", "90"], ["engine", "engine", "88"], ["infra", "infra", "118"], ["infra", "infra", "123"],
+              ["deploy-scripts", "deploy-scripts", "211"], ["docs", "docs", "41"]].map(f => f.join("\t")),
+    waiting: [["infra", "infra", "118", "approve", Math.floor(t0 - 27 * 60), "Sam R.", "Retry policy for the webhook worker"],
+              ["docs", "docs", "43", "request", Math.floor(t0 - 50 * 60), "Riley M.", "Fix broken links in the setup guide"],
+              ["web-app", "web-app", "469", "request", Math.floor(t0 - 130 * 60), "Jordan K.", "Bump the date library"]].map(f => f.join("\t")),
     sessions: [
       { id: "s1", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Checkout flow refactor", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 300, beat: Date.now() / 1000,
         subagents: tick % 6 > 1 ? { a1: { type: "Explore" }, a2: { type: "general-purpose" } } : { a1: { type: "Explore" } } },
@@ -1957,32 +2244,38 @@ if (!bridge) {
       { id: "s5", kind: "session", model: "claude-opus-5-5", effort: "xhigh", title: "Infra cleanup", cwd: "/Users/me/code/deploy-scripts", state: "working", since: t0 - 2000, beat: t0 - 1500, subagents: {} },
       { id: "s6", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Flaky test hunt", cwd: "/Users/me/code/web-app", state: "crashed", since: t0 - 90, beat: t0 - 90, subagents: {} },
       { id: "s8", kind: "session", model: "claude-sonnet-5-5", effort: "medium", title: "Release notes", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 3000, beat: t0 - 3000, subagents: {} },
-      { id: "s9", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Onboarding docs", cwd: "/Users/me/code/docs", state: "idle", since: t0 - 5000, beat: t0 - 5000, subagents: {} },
+      { id: "s9", kind: "session", model: "claude-opus-5-5", effort: "high", title: "Onboarding docs", cwd: "/Users/me/code/docs", state: "idle", since: t0 - 100000, beat: t0 - 100000, subagents: {} },
       { id: "s10", kind: "session", model: "claude-haiku-5-5", effort: "low", title: "Log cleanup", cwd: "/Users/me/code/infra", state: "idle", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
-      { id: "s11", kind: "session", model: "claude-sonnet-5-5", effort: "high", title: "Cache warmup", cwd: "/Users/me/code/engine", state: "done", since: t0 - 4000, beat: t0 - 4000, subagents: {} },
+      { id: "s11", kind: "session", model: "claude-sonnet-5-5", effort: "high", title: "Cache warmup", cwd: "/Users/me/code/engine", state: "waiting", since: t0 - 1400, beat: t0 - 1400, subagents: {} },
       { id: "s12", kind: "session", model: "claude-opus-5-5", effort: "high", title: "API sketch", cwd: "/Users/me/code/web-app", state: "idle", since: t0 - 7000, beat: t0 - 7000, subagents: {} },
       { id: "s4", kind: "automation", model: "claude-sonnet-5-5", effort: "high", title: "clean-reports: infra", cwd: "/Users/me/code/infra", state: "compacting", since: t0 - 120, beat: Date.now() / 1000, subagents: {} },
     ],
     officeEvents: [`${Math.floor(t0 - 20)}\ts2\twaiting for you · Agent Office app`, `${Math.floor(t0 - 90)}\ts6\tstopped with an error · Flaky test hunt`,
                    `${Math.floor(t0 - 200)}\ts3\tdone, your turn · TTS latency investigation`],
-    reviewLog: [[95, "engine#88: review started"], [86, "engine#88: posted comment | result: 2 Blocking, 1 Major | cost: $1.84"],
+    reviewLog: [[240, "web-app#455: review started"], [228, "web-app#455: posted comment | result: 1 Blocking | cost: $1.12"],
+                [180, "infra#120: review started"], [161, "infra#120: posted comment | result: No blockers | cost: $0.95"],
+                [130, "engine#90: review started"], [118, "engine#90: posted comment | result: 1 Major | cost: $1.40"],
+                [95, "engine#88: review started"], [86, "engine#88: posted comment | result: 2 Blocking, 1 Major | cost: $1.84"],
                 [70, "docs#41: review started"], [64, "docs#41: FAILED"], [52, "infra#123: review started"],
                 [41, "deploy-scripts#211: posted comment | result: No blockers | cost: $0.62"], [27, "infra#118: asked you on Slack (low confidence)"],
-                [14, "web-app#466: posted comment 1001"], [13, "web-app#466: Slack notified (safe)"],
-                [6, "web-app#470: review started"], [0, "deploy-scripts#214: review started"]].map(([m, msg]) => {
+                [20, "web-app#466: feedback from Casey L."],
+                [14, "web-app#466: posted comment | result: No blockers | cost: $0.71 | fixed: 3 | open: 1 | new: 2"], [13, "web-app#466: Slack notified (safe)"],
+                [9, "deploy-scripts#211: feedback from Casey L."], [6, "web-app#470: review started"], [4, "deploy-scripts#211: feedback from Sam R."],
+                [2, "docs#45: 👍 on Slack → review requested"], [0, "deploy-scripts#214: review started"],
+                [150, "web-app#455: merged"], [20, "infra#120: merged"]].sort((a, b) => b[0] - a[0]).map(([m, msg]) => {
       const d = new Date(Date.now() - m * 60000), z = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())} [pr-watch] ${msg}`; }),
   }; };
   const LIVE = {
     s1: { ctx: 38, cost: 2.41, agents: { a1: "running", a2: "waiting" } }, s2: { ctx: 64, cost: 1.12 }, s3: { ctx: 22, cost: 0.31 },
-    s5: { ctx: 91, cost: 4.80 }, s6: { ctx: 12, cost: 0.05 }, s4: { ctx: 47, cost: 0.66 },
+    s5: { ctx: 91, cost: 4.80 }, s6: { ctx: 12, cost: 0.05 }, s4: { ctx: 47, cost: 0.66 }, s9: { ctx: 33, cost: 3.10 },
     s7: { ctx: 71, cost: 6.20, agents: { b1: "running", b2: "running", b3: "idle", b4: "running" } } };
   const ORIG = { s1: "iterm", s2: "vscode-panel", s3: "desktop", s5: "terminal", s6: "vscode-terminal", s4: "headless", s7: "desktop" };
   const withLive = r => { r.sessions.forEach(s => {
     s.origin = { app: ORIG[s.id] || "other" };
     const l = LIVE[s.id]; if (!l) return;
     s.live = { context: { percent: l.ctx }, costUsd: l.cost, updated: Date.now() / 1000,
-      rateLimits: [{ kind: "seven_day", percentUsed: 28, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
+      rateLimits: [{ kind: "seven_day", percentUsed: 83, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
       agents: Object.entries(l.agents || {}).filter(([id]) => (s.subagents || {})[id]).map(([id, st]) => ({ id, type: "general-purpose", status: st })) };
   }); return r; };
   updateOffice(withLive(demo())); setInterval(() => updateOffice(withLive(demo())), 2000);

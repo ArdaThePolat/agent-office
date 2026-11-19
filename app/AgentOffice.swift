@@ -2,7 +2,7 @@
 //
 // The window hosts web/office.html (bundled as a resource) and hands it a snapshot every
 // couple of seconds: the Claude sessions the hook records (hook/agent-office-hook.sh), and,
-// when configured, a PR-review queue (a pr-watch layout: running/, queue, a log file).
+// when configured, a PR-review queue (a pr-watch layout: running/, queue, waiting, a log file).
 // Nothing runs while the app is closed except the hook itself; there is no server and no port.
 //
 // Configuration: ~/.config/agent-office/config.json, every key optional:
@@ -21,6 +21,7 @@
 import Cocoa
 import WebKit
 import ServiceManagement
+import UserNotifications
 
 let home = FileManager.default.homeDirectoryForCurrentUser.path
 /// "agent-office", or "agent-office-dev" in the dev app (scripts/build-app.sh --dev): its own config
@@ -37,6 +38,7 @@ struct Config {
     var slots = 5
     var overdueMinutes = 45                               // a review desk running longer is flagged; 0: never
     var workspace = ""
+    var planLowPercent = 20                               // under this % of the week left: a warning; 0: never
     var managerName = ""
     var managerImage = ""
     var room = RoomConfig()
@@ -87,6 +89,7 @@ struct Config {
         guard let data = try? Data(contentsOf: url),
               let j = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return c }
         if let s = j["officeState"] as? String { c.officeState = expand(s) }
+        if let n = j["planLowPercent"] as? Int { c.planLowPercent = max(0, min(100, n)) }
         if let r = j["reviews"] as? [String: Any] {
             if let s = r["state"] as? String { c.reviewState = expand(s) }
             if let s = r["log"] as? String { c.reviewLog = expand(s) }
@@ -126,12 +129,15 @@ func alive(_ pid: Int) -> Bool { pid > 0 && (kill(pid_t(pid), 0) == 0 || errno =
 func lines(_ path: String, tailBytes: Int = 0) -> [String] {
     guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
     defer { try? fh.close() }
-    if tailBytes > 0, let end = try? fh.seekToEnd(), end > UInt64(tailBytes) {
-        try? fh.seek(toOffset: end - UInt64(tailBytes))
+    // seekToEnd leaves the handle at the end: a file no longer than tailBytes is read from the start
+    var cut = false
+    if tailBytes > 0, let end = try? fh.seekToEnd() {
+        cut = end > UInt64(tailBytes)
+        try? fh.seek(toOffset: cut ? end - UInt64(tailBytes) : 0)
     }
     let data = (try? fh.readToEnd()) ?? Data()
     var out = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
-    if tailBytes > 0, !out.isEmpty { out.removeFirst() }   // the first line may be cut in half
+    if cut, !out.isEmpty { out.removeFirst() }   // the first line may be cut in half
     return out
 }
 
@@ -198,6 +204,8 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         }
     }
     var reviews: [String] = [], queue: [String] = [], reviewLog: [String] = []
+    var waiting: [String]? = nil                          // nil: the reviewer does not write one (no in-tray)
+    var openPRs: [String]? = nil                          // nil: the reviewer does not write one (one shelf, as before)
     if let rs = cfg.reviewState {
         for name in (try? fm.contentsOfDirectory(atPath: rs + "/running")) ?? [] {
             guard let l = lines(rs + "/running/" + name).first else { continue }
@@ -205,13 +213,25 @@ func snapshot(_ cfg: Config) -> [String: Any] {
             if f.count >= 7, let pid = Int(f[6]), alive(pid) { reviews.append(l) }
         }
         queue = lines(rs + "/queue")
+        // waiting for your 👍/👎 on Slack; only a reviewer that writes the file gets the in-tray
+        if fm.fileExists(atPath: rs + "/waiting") { waiting = lines(rs + "/waiting") }
+        if fm.fileExists(atPath: rs + "/open") { openPRs = lines(rs + "/open") }   // the reviewer's open PRs
     }
-    if let rl = cfg.reviewLog { reviewLog = lines(rl, tailBytes: 24_000) }
+    if let rl = cfg.reviewLog {
+        // the last 120 lines, or all of today's when there are more (as far as the last 256 KB reach,
+        // a few thousand lines): the whiteboard counts the day
+        reviewLog = lines(rl, tailBytes: 256_000)
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let day = f.string(from: Date()), todays = reviewLog.reversed().prefix { $0.hasPrefix(day) }.count
+        reviewLog = Array(reviewLog.suffix(max(120, todays)))
+    }
     return [
         "now": now, "slots": cfg.slots, "overdueMinutes": cfg.overdueMinutes, "workspace": cfg.workspace,
-        "sessions": sessions, "reviews": reviews, "queue": queue,
+        "sessions": sessions, "reviews": reviews, "queue": queue, "waiting": waiting.map { $0 as Any } ?? NSNull(),
+        "openPRs": openPRs.map { $0 as Any } ?? NSNull(),
         "officeEvents": Array(lines(cfg.officeState + "/events.log", tailBytes: 16_000).suffix(60)),
-        "reviewLog": Array(reviewLog.suffix(120)),
+        "planLowPercent": cfg.planLowPercent,
+        "reviewLog": reviewLog,
         "manager": ["name": cfg.managerName, "image": managerImageURL(cfg.managerImage)],
         "roomLabels": cfg.roomLabels,
     ]
@@ -313,7 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         NSApp.activate(ignoringOtherApps: true)
         decideWelcome()                                      // before the env import: it looks at what was set up before
         importEnvOnce()                                      // before the first look at the room (RoomSetup.swift)
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push() }
+        scheduleWater(after: TimeInterval(waterMinutes * 60))   // Water.swift
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.syncRoom(); self?.push(); self?.checkWater() }
         syncRoom()
         updater.onChange = { [weak self] in self?.pushUpdate() }
         jukebox.onChange = { [weak self] in self?.push() }
@@ -483,6 +504,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
+    /// The weekly plan dropped under "planLowPercent" left: a notification, and "Sosumi" with
+    /// "Play a sound" on (played here, so it sounds even when notifications are turned off).
+    func planLowNotice(left: String, resets: String) {
+        if sound { NSSound(named: "Sosumi")?.play() }
+        let c = UNUserNotificationCenter.current()
+        c.delegate = self
+        c.requestAuthorization(options: [.alert]) { ok, _ in
+            guard ok else { return }
+            let n = UNMutableNotificationContent()
+            n.title = "Weekly plan: \(left)% left"
+            n.body = resets.isEmpty ? "Your weekly plan usage is running low." : "The week \(resets)."
+            c.add(UNNotificationRequest(identifier: "plan-low", content: n, trigger: nil))
+        }
+    }
+
     func watchExits(_ snap: [String: Any]) {
         let pids = Set(((snap["sessions"] as? [[String: Any]]) ?? []).compactMap { $0["pid"] as? Int }.filter { $0 > 0 })
         for (pid, src) in exitWatch where !pids.contains(pid) { src.cancel(); exitWatch[pid] = nil }
@@ -496,11 +532,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     // office.html asks to open a PR (https only), reveal a session's folder, chime, or keep the
     // list of agents hidden from view (a small JSON object it reads back in every snapshot).
+    /// Ask the PR reviewer to review `repo#number` now: an empty file of that name in its state
+    /// folder's `requests/`. The reviewer takes it on its next look (pr-watch looks every 2 seconds).
+    func requestReview(_ pr: String) {
+        guard let rs = Config.load().reviewState,
+              pr.range(of: "^[A-Za-z0-9._-]{1,100}#[0-9]{1,9}$", options: .regularExpression) != nil else { return }
+        let dir = rs + "/requests"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: dir + "/" + pr, contents: Data())
+    }
+
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
         guard let body = m.body as? [String: String] else { return }
         if let h = body["hidden"], h.utf8.count < 64_000 { defaults.set(h, forKey: "hidden") }
         if let kind = body["chime"], sound {
             NSSound(named: kind == "waiting" ? "Glass" : "Pop")?.play()
+        }
+        // the weekly plan ran low: once per week window, remembered across launches
+        if let left = body["planLow"], let win = body["window"], defaults.string(forKey: "planLowWindow") != win {
+            defaults.set(win, forKey: "planLowWindow")
+            planLowNotice(left: left, resets: body["resets"] ?? "")
         }
         if let u = body["open"], let url = URL(string: u), url.scheme == "https" { NSWorkspace.shared.open(url) }
         if let p = body["reveal"], FileManager.default.fileExists(atPath: p) {
@@ -519,6 +570,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if body["terminal"] == "toggle" { DispatchQueue.main.async { self.showTerminal(!self.terminalShown) } }   // the Terminal button
         if body["update"] == "go" { DispatchQueue.main.async { self.offerSigning { self.updater.update() } } }   // Signing.swift
         if body["welcome"] == "done" { defaults.set(true, forKey: "welcomed") }
+        if let a = body["water"] { waterAnswered(a) }   // the water card's Done / Later (Water.swift)
+        if let pr = body["reviewNow"] { requestReview(pr) }   // a PR dragged from "in review" to a desk
         if let j = body["jukebox"] { jukebox.control(j) }   // previous | playpause | next
         if body["profile"] == "edit" { DispatchQueue.main.async { self.editProfile() } }   // after this message returns
         if let r = body["room"] {
@@ -784,7 +837,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     @objc func showSettings() {
         if settings == nil {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 700),
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 772),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
             w.title = "Agent Office Settings"
             w.isReleasedWhenClosed = false
@@ -849,8 +902,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             hint8.frame = NSRect(x: 38, y: 18, width: 320, height: 32)
             let hint7 = NSTextField(wrappingLabelWithString: "A room you create or join is saved and joined again at every launch, until you change it or delete it here.")
             hint7.frame = NSRect(x: 20, y: 516, width: 340, height: 30)
-            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
-            for v in [sigL, sig, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
+            let watL = NSTextField(labelWithString: "Remind me to drink water")
+            watL.frame = NSRect(x: 20, y: 734, width: 200, height: 20)
+            let wat = NSPopUpButton(frame: NSRect(x: 220, y: 728, width: 145, height: 30), pullsDown: false)
+            wat.addItems(withTitles: ["Off", "Every 30 minutes", "Every hour", "Every 2 hours"])   // WATER_CHOICES
+            wat.selectItem(at: WATER_CHOICES.firstIndex(of: waterMinutes) ?? 0)
+            wat.target = self; wat.action = #selector(pickWater(_:))
+            let hint9 = NSTextField(wrappingLabelWithString: "Off by default. A small card in the office asks you to drink some water; Done starts the next interval, Later asks again in 10 minutes.")
+            hint9.frame = NSRect(x: 20, y: 692, width: 340, height: 32)
+            for h in [hint, hint2, hint3, hint4, hint5, hint6, hint7, hint8, hint9] { h.textColor = .secondaryLabelColor; h.font = .systemFont(ofSize: 11) }
+            for v in [watL, wat, hint9, sigL, sig, profL, prof, impL, imp, roomLbl, del, hint7, upd, hint6, lgn, hint5, shr, hint4, box, hint, snd, hint2, eco, hint3, jbx, hint8] { w.contentView?.addSubview(v) }
             w.center()
             settings = w
         }

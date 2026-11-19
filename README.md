@@ -57,7 +57,7 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
 
   | bubble | means |
   |---|---|
-  | **!** orange, blinking | waiting for your permission |
+  | **!** orange, blinking | waiting for your permission; **⏳ 12m** beside it says for how long, and it and the desk's frame turn from amber to orange after 10 minutes, red after 30 |
   | **✓** | done, your turn (for 30 minutes after its turn ends) |
   | **×** | its turn ended on an API error, often a network drop (for 30 minutes, then idle; send it a message to carry on) |
   | **hourglass** | its turn is over but subagents it started in the background are still running |
@@ -68,9 +68,14 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
 - **Manager's room** (optional, top left): you, at your desk. A screen on the wall counts the
   sessions that need you, are working or are done, with your weekly plan usage when
   the companion mod reports it; an orange **!** over your head when someone needs you. Under the
-  desk: who needs you and who is working, your weekly usage as a battery that drains
+  desk: who needs you and who is working, the session that has waited longest for you
+  (`longest wait: Checkout flow 23m`, in the same colours as its ⏳), your weekly usage as a battery that drains
   as you use it (orange, then red and blinking as they run low), when the week resets, and
-  what the open sessions have cost. Click it
+  what the open sessions have cost. Under 20% of the week left (`planLowPercent`, see
+  *Configuration*) the battery, the wall screen's bar and the reset line turn red and blink (the
+  stats screen's bar too), and the app shows one notification for that week ("Weekly plan: 17%
+  left"), with a sound when **Play a sound** is on, the first time the window is on screen after
+  the drop. It does not notify again until the next week's window. Click it
   for the stats screen. **✎ edit** under its window sets your name and picture (also in
   Settings, and Agent Office → Your Name and Picture…); the picture is copied next to the config,
   and a teammate in your shared room sees the change at once. Saving makes it the manager right
@@ -101,13 +106,23 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   control Spotify (if you said no, the tooltip says where to change it: System Settings → Privacy
   & Security → Automation).
 - **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
-  been running, and a sofa for the queue. A review running longer than `overdueMinutes` (45 by
+  been running, and a sofa for the queue. On a low table in front of the sofa, an in-tray holds
+  what waits for your 👍/👎 on Slack: its stack grows with the count, amber with a number when
+  something is there, empty when nothing is. Hover it for the list; a click opens the first PR,
+  a right-click any of them. A review running longer than `overdueMinutes` (45 by
   default) gets a red frame and a ⚠ by its time: it may be stuck. A shelf along the front holds the
   last finished reviews, newest first (up to 5, fewer on a narrow window): PR, how long ago, and
   the result and cost when the reviewer logs them; green posted, amber asked you on Slack, grey
-  rejected on Slack, red failed. Hover one for the details; a click opens its PR. See *Configuration*.
+  rejected on Slack, red failed. When the reviewer lists its open PRs, the shelf splits in two:
+  **in review** for reviewed PRs still open, **recent** for merged or declined ones (purple:
+  merged). Hover one for the details; a click opens its PR. The whiteboard
+  sums up today, since midnight: reviews finished, what they cost, how long they took on average
+  from `review started` to the finished line, and the blocking and major findings in their
+  results; a number the log does not give (no `cost` fields, say) is left off. A review counts
+  once: a `posted comment` after `asked you on Slack`, with no new start, is your 👍. Hover it for
+  the details. See *Configuration*.
 - **Log strip**: general events only (session waiting for you, done, subagent started / finished,
-  review started / posted).
+  review started / posted, feedback on a review, your 👍 on Slack).
 
 Hover an agent for details. **Click a session to bring it to the front where it runs:**
 
@@ -137,6 +152,12 @@ asks for a permission, its turn ends, it errors); then it walks back in. Right-c
 **Stats** (top right, or press **S**) lists every session with where it runs, its state, model and
 effort, how full its context is, what it has cost and its subagents' states, plus your plan usage
 (the weekly window, and when it resets). Click a row to open that session.
+
+**Cost by repo** adds up the sessions that did something today (the hook heard from them since
+midnight), grouped by folder the same way as the shirt colours, most expensive first, with a total.
+The mod reports what a session has cost since it started, not per day, so a session that began
+yesterday and is still in use counts in full; sessions with nothing since midnight are left out
+(the note under it says how many). Without the mod's cost the section is not shown.
 
 ![The stats screen: plan usage, totals, and one row per session](docs/stats.png)
 
@@ -396,13 +417,18 @@ Agent Office → Settings… (⌘,):
 - **Check for updates once a day** (off by default): see *Updating* below.
 - **Join the shared room** (on by default, does nothing until a room is configured).
 - **Jukebox in the lounge** (on by default): off hides it and stops its helper.
+- **Remind me to drink water** (off by default): every 30 minutes, hour or 2 hours, a small card
+  in the office asks you to drink some water. **Done** starts the next interval, **In 10 min** asks
+  again in 10 minutes. With the window off screen a notification says it too, and with **Play a
+  sound** on it purrs.
 - **Open at login** (off by default): starts Agent Office when you log in. Turn it on on the Mac
   that hosts a room, so the room is back after a restart. macOS may ask you to approve it in
   System Settings → General → Login Items.
 
 The rest are off by default:
 - **Keep on top**: float the window above other apps and across Spaces.
-- **Play a sound**: "Glass" when an agent waits for your permission, "Pop" when one finishes.
+- **Play a sound**: "Glass" when an agent waits for your permission, "Pop" when one finishes,
+  "Sosumi" once a week when the weekly plan runs low.
 - **Energy saver**: 2 redraws a second instead of 6, no walking or blinking.
 
 The window remembers its size and position. **Check Setup…** in the same menu says whether the
@@ -454,6 +480,7 @@ file, not in the repository. Every key is optional.
 
 ```json
 { "officeState": "~/.local/state/agent-office",
+  "planLowPercent": 20,
   "manager": { "name": "Alex", "image": "~/agent-office/local/manager.png" },
   "room": { "name": "team-lounge", "password": "<password>", "host": false, "alwaysJoin": true,
             "address": "10.20.30.40" },
@@ -473,19 +500,43 @@ file, not in the repository. Every key is optional.
   manager sits there. `local/` in the repository is ignored by git: a good place to keep the
   picture. `AGENT_OFFICE_MANAGER_IMAGE` and `AGENT_OFFICE_MANAGER_NAME` override both keys, until
   **✎ edit** saves a new name and picture: that takes those two lines out of the env file.
+- **`planLowPercent`** (default 20, `0` turns it off): under this share of the week left, the
+  manager's room shows the weekly plan as low and the app notifies you once for that week. It
+  needs the companion mod's plan usage; without it nothing changes.
 - **`reviews`** feeds the review room from a PR reviewer that keeps:
   - `<state>/running/<repo>-<pr>`: one tab-separated line per review in progress (repo name, repo
     slug, PR number, commit, author, start time `HH:MM`, pid, title);
   - `<state>/queue`: one line per waiting PR (repo name, slug, number, commit, author,
     `auto`/`manual`, title);
+  - `<state>/waiting` (optional): one line per PR waiting for your decision on Slack (repo name,
+    slug, number, `approve` or `request`, since when in unix seconds, author, title). `approve` is a
+    finished review that is posted after your 👍, `request` a small PR that is reviewed if you 👍
+    it. No file: the review room has no in-tray;
+  - `<state>/open` (optional): one line per open PR the reviewer watches (repo name, slug, number,
+    author, title). With it there are two shelves: a reviewed PR that is still open stands on
+    **in review** (off it while a desk re-reviews it), coloured by its last result (blocking red,
+    major orange, else green), and moves to **recent** once it is no longer open. The reviewer logs
+    `merged` or `declined` when a PR leaves the list, and the recent shelf shows that with when.
+    No file: one shelf of the latest finished reviews;
+  - `<state>/requests/` (written by the app): drag a binder from **in review** to a review desk
+    and the app leaves an empty file named `<repo>#<pr>` there, asking the reviewer to review that
+    PR again now rather than at its next round. The binder says "to a desk…" until a desk takes it.
+    pr-watch looks for these every 2 seconds while idle, and removes each file once read;
   - a log whose lines look like `YYYY-MM-DD HH:MM:SS [pr-watch] <repo>#<pr>: …`. A line whose
     event is `posted comment`, `asked you on Slack`, `rejected on Slack` or starts with `FAILED`
     is a finished review and goes on the shelf. After the event, optional ` | key: value` fields
-    say how it went: `result` and `cost` are shown on the shelf, any others in its tooltip.
+    say how it went: `result` and `cost` are shown on the shelf, any others in its tooltip. A
+    re-review that checked the earlier findings again can add `fixed`, `open` and `new` (how many
+    were fixed, are still open, are new): the shelf shows them as ✅3 ⏳1 🆕2 before the result.
+    A line whose event starts with `feedback` (`feedback from <name>`) is not a review: when it is
+    newer than the PR's entry on the shelf, the entry gets a 💬 and its tooltip says from whom.
+    Feedback lines and `👍 on Slack → review requested` also show in the log strip.
 
     ```
     2026-11-18 11:03:55 [pr-watch] infra#230: posted comment | result: 2 Blocking, 1 Major | cost: $1.84
     2026-11-18 11:20:12 [pr-watch] web-app#126: posted comment | result: No blockers | cost: $0.62
+    2026-11-18 12:40:00 [pr-watch] web-app#131: posted comment | result: No blockers | cost: $0.71 | fixed: 3 | open: 1 | new: 2
+    2026-11-18 13:02:00 [pr-watch] web-app#131: feedback from Casey L.
     ```
 
   `slots` is the number of review desks. `overdueMinutes` (default 45, `0` turns it off) is how
