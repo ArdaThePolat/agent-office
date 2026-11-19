@@ -21,7 +21,7 @@
 //   mini-games, host → member:    {t:"g", from, name, d}  {t:"scores", boards}   (welcome carries scores too)
 // d is a game's own small message (web/games.js), relayed as it is to everyone. The host keeps the
 // room's leaderboard: it takes a score only for a known board and within that board's bounds, keeps
-// each name's best and the top ROOM_BOARD_SIZE, and saves it on its own Mac (scoresFile).
+// each name's best of the UTC day and the top ROOM_BOARD_SIZE, and saves it on its own Mac (scoresFile).
 // mid names one message; the host gives it out and accepts an edit or an unsay of a message only
 // from the connection that said it. A member whose app predates edit and unsay ignores those two,
 // so it keeps showing the first text.
@@ -54,13 +54,19 @@ let ROOM_BOARDS: [String: (lowWins: Bool, min: Double, max: Double)] = [
     "archery": (false, 1, 150), "sky": (false, 1, 1_000_000),
 ]
 let ROOM_DAILY_KEPT = 7               // days of daily-challenge boards the host keeps
+/// The start of the current UTC day. The room's boards (ROOM_BOARDS) start empty every day at 00:00
+/// UTC, the same moment for every member wherever they are: the host keeps only scores made since.
+/// The daily challenge's boards are a UTC day's already ("daily-race-<UTC date>").
+func utcMidnight(_ d: Date = Date()) -> Double { (d.timeIntervalSince1970 / 86400).rounded(.down) * 86400 }
 /// A board's rule: one of ROOM_BOARDS, or a daily challenge's ("daily-race-2026-11-18" or
-/// "daily-fish-…") for the host's today, yesterday or tomorrow (the members' clocks and time zones
-/// differ); any other day is refused, so old days cannot be filled in later.
+/// "daily-fish-…") for today, yesterday or tomorrow in UTC (a member's clock may be off, or on a
+/// version that still names the day by its own time zone); any other day is refused, so old days
+/// cannot be filled in later.
 func roomBoardRule(_ board: String) -> (lowWins: Bool, min: Double, max: Double)? {
     if let r = ROOM_BOARDS[board] { return r }
     guard let m = board.range(of: "^daily-(race|fish)-[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression), m.lowerBound == board.startIndex else { return nil }
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = TimeZone(identifier: "UTC")
     let day = String(board.suffix(10)), now = Date()
     guard [-86400.0, 0, 86400].contains(where: { f.string(from: now.addingTimeInterval($0)) == day }) else { return nil }
     return board.hasPrefix("daily-race") ? (true, 3, 600) : (false, 0.01, 100)
@@ -184,10 +190,12 @@ final class RoomHost {
         }
         l.start(queue: q)
         listener = l
+        if !watching { watching = true; watchMidnight() }
     }
     func stop() {
         listener?.cancel(); peers.values.forEach { $0.conn.cancel() }; peers = [:]
-        q.async { if self.saving { self.saving = false; self.writeScores() } }   // a score from the last 2 s is not lost
+        q.async { self.listener = nil   // ends watchMidnight
+            if self.saving { self.saving = false; self.writeScores() } }   // a score from the last 2 s is not lost
     }
 
     private func accept(_ c: NWConnection) {
@@ -229,6 +237,7 @@ final class RoomHost {
             failures[p.ip] = nil
             p.key = k
             let others = peers.values.filter { $0 !== p && $0.key != nil && !$0.name.isEmpty }.map { $0.member }
+            _ = rollOver()
             if let box = seal(["t": "welcome", "you": p.id, "members": others, "scores": boards], k) { wsSend(p.conn, box) }
             return
         }
@@ -297,6 +306,7 @@ final class RoomHost {
     }
     /// Keep `name`'s best on `board` and the board's top ROOM_BOARD_SIZE; true when it changed.
     private func addScore(_ board: String, _ name: String, _ value: Double, _ lowWins: Bool) -> Bool {
+        let rolled = rollOver()                            // yesterday's best does not stand in today's way
         var list = boards[board] ?? []
         let better = { (a: Double, b: Double) in lowWins ? a < b : a > b }
         if let i = list.firstIndex(where: { $0["name"] as? String == name }) {
@@ -306,7 +316,7 @@ final class RoomHost {
         list.append(["name": name, "value": (value * 1000).rounded() / 1000, "at": Date().timeIntervalSince1970])
         list.sort { better($0["value"] as? Double ?? 0, $1["value"] as? Double ?? 0) }
         let kept = Array(list.prefix(ROOM_BOARD_SIZE))
-        guard kept.contains(where: { $0["name"] as? String == name }) else { return false }
+        guard kept.contains(where: { $0["name"] as? String == name }) else { return rolled }
         boards[board] = kept
         // daily boards: only the last ROOM_DAILY_KEPT days
         let dailies = boards.keys.filter { $0.hasPrefix("daily-") }.sorted { $0.suffix(10) > $1.suffix(10) }
@@ -320,6 +330,30 @@ final class RoomHost {
               let all = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
               let mine = all[cfg.name] as? [String: [[String: Any]]] else { return }
         boards = mine.filter { ROOM_BOARDS[$0.key] != nil || $0.key.hasPrefix("daily-") }
+        _ = rollOver()
+    }
+    /// Drop the room's boards' scores from before today's 00:00 UTC; true when anything went.
+    private func rollOver() -> Bool {
+        let from = utcMidnight()
+        var changed = false
+        for key in Array(boards.keys) where ROOM_BOARDS[key] != nil {
+            let list = boards[key] ?? [], kept = list.filter { ($0["at"] as? Double ?? 0) >= from }
+            guard kept.count != list.count else { continue }
+            boards[key] = kept.isEmpty ? nil : kept
+            changed = true
+        }
+        if changed { saveScores() }
+        return changed
+    }
+    /// At 00:00 UTC the members' Scores tabs empty too, without waiting for the day's first score:
+    /// a check a minute while the room is up.
+    private var watching = false
+    private func watchMidnight() {
+        q.asyncAfter(deadline: .now() + 60) { [weak self] in
+            guard let self, self.listener != nil else { self?.watching = false; return }
+            if self.rollOver() { self.broadcast(["t": "scores", "boards": self.boards]) }
+            self.watchMidnight()
+        }
     }
     /// Written at most every 2 s, the last state wins: a burst of scores is one write.
     private var saving = false
