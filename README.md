@@ -72,7 +72,10 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   the companion mod reports it; an orange **!** over your head when someone needs you. Under the
   desk: who needs you and who is working, the session that has waited longest for you
   (`longest wait: Checkout flow 23m`, in the same colours as its ⏳), your weekly usage as a battery that drains
-  as you use it (orange, then red and blinking as they run low), when the week resets, and
+  as you use it (orange, then red and blinking as they run low), and under it a smaller battery
+  for each other limit Claude Code reports (the 5-hour window, a weekly limit of one model such
+  as `opus`, a spend limit; a kind added later shows the same way, named from its kind, up to
+  three; hover the room for each one's full name and reset), when the week resets, and
   what the open sessions have cost. A glass of water on the desk is the water reminder (see
   *Settings*): it empties toward the next reminder, and a click turns it on or off. Under 20% of the week left (`planLowPercent`, see
   *Configuration*) the battery, the wall screen's bar and the reset line turn red and blink (the

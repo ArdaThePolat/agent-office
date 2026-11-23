@@ -853,7 +853,7 @@ function layout() {
   const W = Math.max(320, wrap.clientWidth), cols = Math.floor(W / P);
   // the review room grows a little for the shelf of finished reviews (the manager's room is tall enough)
   const shelves = (snap.finished.length ? 1 : 0) + (snap.inReview.length ? 1 : 0);
-  const reviewH = (snap.manager ? 108 : shelves ? 92 : 82) + (shelves > 1 ? 15 : 0), teamW = 64, loungeH = 70;
+  const reviewH = (snap.manager ? 108 + 5 * extraLimits().length : shelves ? 92 : 82) + (shelves > 1 ? 15 : 0), teamW = 64, loungeH = 70;
   // with a room set up (joined or not), the chat is docked on the others room's right side
   const chatWide = room.status !== "off" && cols >= 240;
   const chatW = chatWide && !chatHidden ? Math.min(112, Math.max(92, Math.floor(cols * 0.26))) : 0;
@@ -1555,7 +1555,7 @@ function deskGlass(m) {
 function battery(cx, y, name, used, h, short, low) {
   const left = Math.max(0, Math.min(100, 100 - (used || 0))), w = 22, x = cx - 10, red = low || left <= 15;
   const c = red ? "#e06c6c" : left > 40 ? "#5fbf7f" : "#f0a35e";
-  g.fillStyle = "#17131bcc"; g.fillRect((x - 11) * P, (y - 1) * P, (w + (short ? 22 : 29)) * P, (h + 2) * P);
+  g.fillStyle = "#17131bcc"; g.fillRect((x - 13) * P, (y - 1) * P, (w + (short ? 24 : 31)) * P, (h + 2) * P);
   text(name, (x - 2) * P, (y + h / 2) * P - 5, "#d9cfc3", 10, "right");
   px(x, y, w, h, "#d9cfc3"); px(x + 1, y + 1, w - 2, h - 2, "#2a2530"); px(x + w, y + 1, 1, h - 2, "#d9cfc3");
   const inner = (w - 2) * P, fill = Math.round(inner * left / 100 * 2) / 2;
@@ -1604,7 +1604,7 @@ function drawManager(L) {
   }
   const wk = lim.find(l => l.kind === "seven_day");
   // plan usage as batteries: what is LEFT of each window, draining as you use it
-  const rows = [[wk, "week", 4]].filter(r => r[0]);
+  const rows = [[wk, "week", 4]].filter(r => r[0]).concat(extraLimits().map(l => [l, limitShort(l.kind), 3]));
   for (const [l, name, h] of rows) { battery(m.cx - (L.mw < 76 ? 0 : 3), ly, name, l.percentUsed, h, L.mw < 76, weekLow(l)); ly += h + 2; }
   if (!rows.length) { label("plan usage: needs the mod", m.cx * P, (ly + 1) * P, "#8ea3ad", 10, "center"); ly += 6; }
   if (wk && wk.resetsAt) { label((weekLow(wk) ? "⚠ week " : "week ") + untilText(wk.resetsAt), m.cx * P, (ly + 0.5) * P, weekLow(wk) ? (frame % 2 && !energy ? "#e06c6c" : "#ff9a94") : "#bdb3a8", 10, "center"); ly += 6; }
@@ -1614,7 +1614,7 @@ function drawManager(L) {
   label([`${snap.all.length} session${snap.all.length === 1 ? "" : "s"}`, snap.lounge.length ? `${snap.lounge.length} resting` : ""].filter(Boolean).join(" · "),
     m.cx * P, ly * P, "#d9cfc3", 10, "center");
   deskGlass(m);
-  const tipLim = lim.map(l => `${LIMIT_NAME[l.kind] || l.kind}: ${l.percentUsed}%`).join(" · ");
+  const tipLim = lim.map(l => `${limitName(l.kind)}: ${l.percentUsed}% used${l.resetsAt ? ", " + untilText(l.resetsAt) : ""}`).join("\n");
   hits.push({ x: 0, y: 0, w: mw * P, h: L.reviewH * P, stats: true,
     tip: `${snap.manager.name || "Manager"}\n${c.needs} need you · ${c.working} working · ${c.done} done · ${snap.lounge.length} on a break` + (lw ? `\nlongest wait: ${lw.title || "untitled"}, ${lwt} (since ${hhmm(lw.since)})` : "") + (tipLim ? `\n${tipLim}` : "") + `\n${snap.all.reduce((t, s) => t + agentsOf(s).length, 0)} subagents running\nclick: stats`});
 }
@@ -2191,7 +2191,23 @@ function toggleStats(on) {
   if (statsOpen) renderStats();
 }
 statsBtn.addEventListener("click", () => toggleStats());
+// A limit's name from its kind, so a kind Claude Code adds later (a weekly limit for one model,
+// "seven_day_<model>") is named without a change here: the long one for tooltips and Stats, the
+// short one beside its battery in the manager's room.
 const LIMIT_NAME = { five_hour: "5-hour window", seven_day: "7-day window", spend_limit: "spend limit" };
+const LIMIT_SHORT = { five_hour: "5h", seven_day: "week", spend_limit: "spend" };
+const limitRest = k => (k.match(/^(?:seven_day|five_hour)_(.+)$/) || [])[1];
+function limitName(k) {
+  if (LIMIT_NAME[k]) return LIMIT_NAME[k];
+  const rest = limitRest(k);
+  if (rest) return (k.startsWith("five") ? "5-hour" : "7-day") + " window · " + rest.replace(/_/g, " ");
+  return k.replace(/_/g, " ");
+}
+function limitShort(k) { return LIMIT_SHORT[k] || (limitRest(k) || k).replace(/_/g, " ").slice(0, 5); }
+// every limit but the week, which has its own battery and reset line (at most EXTRA_LIMITS rows)
+const EXTRA_LIMITS = 3;
+const extraLimits = () => planLimits().filter(l => l.kind !== "seven_day")
+  .sort((a, b) => a.kind.localeCompare(b.kind)).slice(0, EXTRA_LIMITS);
 function untilText(iso) {
   if (!iso) return ""; const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return "resets now";
   return "resets in " + (s > 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : mins(s));
@@ -2207,7 +2223,7 @@ function renderStats() {
   const cost = lives.reduce((t, l) => t + (l.costUsd || 0), 0);
   const subsN = all.reduce((t, s) => t + agentsOf(s).length, 0);
   let h = `<h2>PLAN USAGE</h2>`;
-  h += limits.length ? `<div class="cards">${limits.map(l => `<div class="card"><small>${esc(LIMIT_NAME[l.kind] || l.kind)}</small>
+  h += limits.length ? `<div class="cards">${limits.map(l => `<div class="card"><small>${esc(limitName(l.kind))}</small>
       <b>${l.percentUsed}%</b>${bar(l.percentUsed, weekLow(l) ? "#e06c6c" : ctxColor(l.percentUsed))}<small>${esc(untilText(l.resetsAt))}</small></div>`).join("")}</div>`
     : `<div class="note">No plan usage reported yet${lives.length ? "" : " — it comes from the companion mod (see README)"}.</div>`;
   h += `<h2>RIGHT NOW</h2><div class="cards">
@@ -2336,7 +2352,8 @@ if (!bridge) {
     s.origin = { app: ORIG[s.id] || "other" };
     const l = LIVE[s.id]; if (!l) return;
     s.live = { context: { percent: l.ctx }, costUsd: l.cost, updated: Date.now() / 1000,
-      rateLimits: [{ kind: "seven_day", percentUsed: 83, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
+      rateLimits: [{ kind: "seven_day", percentUsed: 83, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() },
+                   { kind: "seven_day_opus", percentUsed: 41, resetsAt: new Date(Date.now() + 4.6 * 86400e3).toISOString() }],
       agents: Object.entries(l.agents || {}).filter(([id]) => (s.subagents || {})[id]).map(([id, st]) => ({ id, type: "general-purpose", status: st })) };
   }); return r; };
   updateOffice(withLive(demo())); setInterval(() => updateOffice(withLive(demo())), 2000);
