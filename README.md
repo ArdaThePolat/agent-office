@@ -670,14 +670,29 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
   leaderboard (leaving mid-flight keeps what you scored so far).
+- **💣 Defuse:** a top-down team shooter, 1 on 1 up to 5 on 5, on two maps: **Dune**, a desert town
+  with site A in the west, B in the east and a courtyard between, and **Depot**, a small warehouse.
+  One team attacks: it carries a bomb to a site and plants it (hold **E** there for 3 s); the other
+  defends, and defuses a planted bomb (hold **E** at it for 5 s). A round ends when a side is out,
+  the bomb goes off (35 s) or is defused, or the clock runs out, which goes to the defenders. First
+  to 5 rounds; sides swap after round 4. It plays in **first person** (the default) or **from
+  above**; **V** switches, and each player picks their own. In first person **W S** go forward and
+  back, **A D** step aside and the mouse turns: the first click locks the mouse to the game, and
+  **← →** turn too. From above, **WASD** move and the mouse aims. In a match one **Esc** never
+  leaves: it frees the locked mouse (or asks), and a second Esc leaves. Either way a click shoots, **Shift** walks (a steadier aim), **R** reloads, **Q**
+  swaps to the pistol, and **1–4** at buy time pick a rifle, SMG, shotgun or sniper. You see
+  enemies only in your line of sight. In a room, **Open a
+  match to the room** makes a lobby teammates join; the opener picks the teams, adds bots to fill
+  places and starts it. Alone, it is you and bots. Whoever opened the match runs it (health, the
+  bomb, the clock, the bots): their window has to stay open, and when they leave the match ends.
 - **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
   everyone in the room wherever they are, with their own boards (the best lap on today's track, the
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** twenty-four of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** twenty-seven of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship…), kept on your Mac and listed
+  one end, a gunship, a defused bomb…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -703,7 +718,9 @@ on your Mac).
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
 times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
-finish times, catches and scores.
+finish times, catches and scores. In Defuse, every player's position, facing, gun, shots and hits
+ten times a second, a planted or defused bomb, and from whoever runs the match its state (health,
+kills, the score, the bomb, the clock and where the bots are).
 
 ## Trying a change: the dev app
 

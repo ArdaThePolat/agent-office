@@ -306,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let conf = WKWebViewConfiguration()
         conf.userContentController.add(self, name: "office")
         web = WKWebView(frame: .zero, configuration: conf)
+        web.uiDelegate = self                                // lets a mini-game lock the mouse (Games.swift)
         web.setValue(false, forKey: "drawsBackground")
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 480),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
