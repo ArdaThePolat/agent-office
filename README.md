@@ -88,7 +88,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   away: `AGENT_OFFICE_MANAGER_…` lines in the env file, which would win over it, are taken out
   (a copy stays in `env.bak`). Or set `manager` by hand (see
   *Configuration*). The weekly number is one for the whole account: each session reports the
-  value from its own last reply, so the gauge shows the highest report for the current week.
+  value from its own last reply, so the gauge shows the reading that came from the server last
+  (an idle session keeps the number it had before a reset; it does not win), and a week that has
+  ended shows as unused until the next reading.
 - **Lounge**: where agents with nothing to do go. A session that has been idle (or done for over 30
   minutes) leaves its desk for the lounge and keeps itself busy there: it makes a coffee at the machine,
   drinks it at the kitchen table, plays on the console, chats at the high table, each agent in

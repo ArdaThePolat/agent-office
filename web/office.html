@@ -1456,16 +1456,22 @@ function managerSprite(th) {
 }
 // Plan usage is one number for the whole account, but each session reports the value from its own
 // last API reply, and an idle session keeps re-reporting an old one. So the most recently written
-// report is not the newest number: taking it makes the gauge jump back and forth. Usage only rises
-// inside a window, so per kind the latest window wins, and inside it the highest percentage.
+// report is not the newest number. Per kind the latest window wins; inside it, the reading that
+// came from the server last (seenAt, stamped by the mod when a session's number changes). The
+// highest number is only the tie-break: usage can go DOWN inside a window when the plan is reset
+// early, and taking the highest then keeps the number from before the reset. Reports from a mod
+// without seenAt count only when no report in that window has one.
+// A window that has ended with no reading from the next one is shown as unused: it has reset.
 function planLimits() {
   const best = new Map();
+  const hr = x => Math.round((Date.parse(x) || 0) / 3600e3);     // to the hour: one window may be reported with jitter
   for (const s of snap ? snap.all : []) for (const l of (s.live && s.live.rateLimits) || []) {
-    const hr = x => Math.round((Date.parse(x) || 0) / 3600e3);     // to the hour: one window may be reported with jitter
     const b = best.get(l.kind), t = hr(l.resetsAt), bt = b ? hr(b.resetsAt) : -1;
-    if (!b || t > bt || (t === bt && (l.percentUsed || 0) > (b.percentUsed || 0))) best.set(l.kind, l);
+    const seen = l.seenAt || 0, bseen = b ? b.seenAt || 0 : 0;
+    if (!b || t > bt || (t === bt && (seen > bseen || (seen === bseen && (l.percentUsed || 0) > (b.percentUsed || 0))))) best.set(l.kind, l);
   }
-  return [...best.values()];
+  const now = Date.now();
+  return [...best.values()].map(l => l.resetsAt && Date.parse(l.resetsAt) <= now ? { ...l, percentUsed: 0, ended: true } : l);
 }
 // the weekly window with less than PLAN_LOW % left ("planLowPercent" in the config file; 0: never)
 const PLAN_LOW = 20;
@@ -2209,7 +2215,7 @@ const EXTRA_LIMITS = 3;
 const extraLimits = () => planLimits().filter(l => l.kind !== "seven_day")
   .sort((a, b) => a.kind.localeCompare(b.kind)).slice(0, EXTRA_LIMITS);
 function untilText(iso) {
-  if (!iso) return ""; const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return "resets now";
+  if (!iso) return ""; const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return "just reset";
   return "resets in " + (s > 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : mins(s));
 }
 function bar(pct, color) { const p = Math.max(0, Math.min(100, pct || 0)); return `<span class="bar"><i style="width:${p}%;background:${color}"></i></span>`; }
