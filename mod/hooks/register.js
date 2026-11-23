@@ -5,7 +5,12 @@
 // file, as <state>/live/<session-id>.json:
 //
 //   { id, updated, model, context: {tokens, window, percent}, costUsd,
-//     rateLimits: [{kind, percentUsed, resetsAt}], agents: [{id, type, status, description}] }
+//     rateLimits: [{kind, percentUsed, resetsAt, seenAt}], agents: [{id, type, status, description}] }
+//
+// A session's limits are the ones its last API reply carried, so an idle session keeps reporting
+// an old number. seenAt (unix seconds) is when this session's reading of that limit last CHANGED,
+// which is when it last came from the server: the office trusts the newest one, so a session that
+// has seen a reset outvotes the idle ones still holding the number from before it.
 //
 // It also pins a one-line status under the prompt: how many of your OTHER sessions need you or
 // are working, read from the office's session files. Nothing here records prompts or tool calls.
@@ -18,6 +23,7 @@ const DONE_FRESH_S = 30 * 60
 let stateDir = null
 let sessionId = null
 let timer = null
+let seen = null   // kind -> {percentUsed, resetsAt, seenAt}, as last written
 
 async function dir($) {
   if (stateDir) return stateDir
@@ -25,6 +31,27 @@ async function dir($) {
   const home = await $.env.get('HOME')
   stateDir = own || `${home}/.local/state/agent-office`
   return stateDir
+}
+
+// Carry each limit's seenAt over while its reading is unchanged. The first report of a process
+// takes them from the file it is about to replace, so a resumed or restarted session does not
+// pass off the number it had before as a new one.
+async function stamp($, base, limits) {
+  if (!seen) {
+    seen = new Map()
+    try {
+      const old = JSON.parse(await $.fs.read(`${base}/live/${sessionId}.json`))
+      for (const r of old.rateLimits || []) if (r.seenAt) seen.set(r.kind, r)
+    } catch (_) { /* no earlier report */ }
+  }
+  const now = Math.floor(Date.now() / 1000)
+  return limits.map(r => {
+    const b = seen.get(r.kind), resetsAt = r.resetsAt ?? null
+    const same = b && b.percentUsed === r.percentUsed && b.resetsAt === resetsAt
+    const out = { kind: r.kind, percentUsed: r.percentUsed, resetsAt, seenAt: same ? b.seenAt : now }
+    seen.set(r.kind, out)
+    return out
+  })
 }
 
 async function report($) {
@@ -46,9 +73,7 @@ async function report($) {
         percent: usage.context?.percent ?? null,
       },
       costUsd: usage.cost ? usage.cost.usd : null,
-      rateLimits: (usage.rateLimits || []).map(r => ({
-        kind: r.kind, percentUsed: r.percentUsed, resetsAt: r.resetsAt ?? null,
-      })),
+      rateLimits: await stamp($, base, usage.rateLimits || []),
       agents: (agents || []).map(a => ({
         id: a.id, type: a.type, status: a.status, description: a.description || '',
       })),
