@@ -630,7 +630,8 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 ## Mini-games
 
 The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
-(or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes.
+(or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes
+(in a Defuse or Noggin Cup match the first Esc only asks, so one press never leaves a match).
 
 - **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
   **↑/W** go, **↓/S** brake, **←→/AD** steer. Three numbered checkpoints stand across each track:
@@ -679,20 +680,28 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   above**; **V** switches, and each player picks their own. In first person **W S** go forward and
   back, **A D** step aside and the mouse turns: the first click locks the mouse to the game, and
   **← →** turn too. From above, **WASD** move and the mouse aims. In a match one **Esc** never
-  leaves: it frees the locked mouse (or asks), and a second Esc leaves. Either way a click shoots, **Shift** walks (a steadier aim), **R** reloads, **Q**
-  swaps to the pistol, and **1–4** at buy time pick a rifle, SMG, shotgun or sniper. You see
-  enemies only in your line of sight. In a room, **Open a
-  match to the room** makes a lobby teammates join; the opener picks the teams, adds bots to fill
-  places and starts it. Alone, it is you and bots. Whoever opened the match runs it (health, the
+  leaves: it frees the locked mouse (or asks), and a second Esc leaves. Either way a click shoots,
+  **Shift** walks (a steadier aim), **R** reloads, **Q** swaps to the pistol, and **1–4** at buy
+  time pick a rifle, SMG, shotgun or sniper. You see enemies only in your line of sight. In a room,
+  **Open a match to the room** makes a lobby teammates join; the opener picks the teams, adds bots
+  to fill places and starts it. Alone, it is you and bots. Whoever opened the match runs it (health, the
   bomb, the clock, the bots): their window has to stay open, and when they leave the match ends.
+- **⚽ Noggin Cup:** side-view football, one on one, with big heads: your profile picture is your
+  head. **← →/AD** run, **↑/W** jump (jumping into the ball heads it), **Space/S** kick. Touches fill
+  a lightning bar; full, **Shift** (or **X**) arms a lightning shot that zigzags at the goal and zaps
+  whoever it hits. Now and then a power-up floats down in a bubble: a mega ball, frost for the other
+  player, a big noggin, a guard across your goal, or spring boots. A match is 90 seconds; level after
+  that, a golden goal (45 seconds more, then a draw). Against the computer (Easy, Normal or Hard) or
+  a teammate: challenge them from the Games tab or the game's panel; they **Accept**. The
+  challenger's Mac runs the match. In a match the first **Esc** asks, and a second leaves.
 - **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
   everyone in the room wherever they are, with their own boards (the best lap on today's track, the
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** twenty-seven of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** thirty-one of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship, a defused bomb…), kept on your Mac and listed
+  one end, a gunship, a defused bomb, a lightning-shot goal…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -720,7 +729,8 @@ opened or joined, your car's position ten times a second while racing, the ball 
 times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
 finish times, catches and scores. In Defuse, every player's position, facing, gun, shots and hits
 ten times a second, a planted or defused bomb, and from whoever runs the match its state (health,
-kills, the score, the bomb, the clock and where the bots are).
+kills, the score, the bomb, the clock and where the bots are). In Noggin Cup, as in ping-pong, the
+challenger's Mac sends the match fifteen times a second and the other sends its keys.
 
 ## Trying a change: the dev app
 
