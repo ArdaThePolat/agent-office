@@ -376,7 +376,7 @@ let lastRaw = null, layoutCache = null;
 function build(raw) {
   loadHidden(raw);
   const reviews = (raw.reviews || []).map(l => l.split("\t")).filter(f => f.length >= 8)
-    .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], started: f[5], title: f[7] }));
+    .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], started: f[5], title: f[7], model: f[8] || "", effort: f[9] || "", tier: f[10] || "" }));
   const queue = (raw.queue || []).map(l => l.split("\t")).filter(f => f.length >= 7)
     .map(f => ({ name: f[0], slug: f[1], id: f[2], author: f[4], manual: f[5] === "manual", title: f[6] }));
   // waiting for your 👍/👎 on Slack: a finished review before it is posted (approve), or a small PR (request)
@@ -908,6 +908,8 @@ function draw() {
   const active = snap.reviews.length + snap.manualReviews.length;
   label(`${active}/${n} desks · ${snap.queue.length} waiting`, (L.bx - 13) * P, (WALL + 2) * P, "#f1ebe2", 10, "right");
   const desks = snap.reviews.map(r => ({ id: "r:" + r.slug + r.id, top: `${r.name}#${r.id}`, sub: r.author, title: r.title, since: r.started,
+      // the reviewer's model and effort, like a session's in the others room; the tier when it has one
+      me: [modelName(r.model), r.effort].filter(Boolean).join(" · "), tier: r.tier,
       url: snap.workspace ? `https://bitbucket.org/${snap.workspace}/${r.slug}/pull-requests/${r.id}` : "" }))
     .concat(snap.manualReviews.map(s => ({ id: "r:" + s.id, top: s.title, sub: "by hand", title: s.title + "\n" + s.cwd, start: s.since })));
   for (let i = 0; i < n; i++) {
@@ -931,8 +933,10 @@ function draw() {
       label(clip(parts[0], Math.max(5, Math.floor(fitc * 0.9))), cx, (y + 10) * P, "#f1ebe2", 11, "center");
       label(clip((parts[1] ? "#" + parts[1] : "") + (el ? " · " + (over ? "⚠ " : "") + el : ""), fitc), cx, (y + 15) * P, over ? "#ff9a94" : "#8fd6b4", 9, "center");
       label(clip(dk.sub, fitc), cx, (y + 19.5) * P, "#bdb3a8", 9, "center");
+      if (dk.me) label(clip(dk.me, fitc), cx, (y + 24) * P, "#9fd3c0", 9, "center");
       hits.push({ x: x0 * P, y: 20 * P, w: slotW * P, h: 52 * P, desk: true,
         tip: `${dk.top}\n${dk.title}\n${dk.sub}${el ? " · reviewing for " + el : ""}` +
+          (dk.me ? `\n${dk.me.replace(" · ", ", effort ")}${dk.tier ? " (" + dk.tier + " tier)" : ""}` : "") +
           (over ? `\n⚠ over the ${snap.overdue} min limit (reviews.overdueMinutes): it may be stuck` : "") + (dk.url ? "\nclick: open the PR" : ""), url: dk.url });
     } else {
       text(dropping ? "drop here" : "free", cx, (y + 10) * P, dropping ? "#9fe8b6" : "#8ea3ad", 9, "center");
@@ -2305,8 +2309,8 @@ if (!bridge) {
       key: "demo", art: demoCover(), duration: 214, elapsed: 61 + tick * 2, at: Date.now() / 1000 }, manager: { name: "Alex", image: new URLSearchParams(location.search).get("manager") || "" },
     water: demoWater || (demoWater = { on: true, minutes: 25, start: 540, end: 1080, due: Date.now() / 1000 + 15 * 60 }),
     reviews: [
-      ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs"],
-      ["infra", "infra", "123", "abc", "Sam R.", hm(52), "1", "Split stacks into modules"],
+      ["web-app", "web-app", "470", "abc", "Alex P.", hm(6), "1", "Update the realtime API docs", "claude-sonnet-5-5", "medium", "light"],
+      ["infra", "infra", "123", "abc", "Sam R.", hm(52), "1", "Split stacks into modules", "claude-opus-5-5", "high", "full"],
     ].concat(tick % 6 > 2 ? [["deploy-scripts", "deploy-scripts", "214", "abc", "Jordan K.", hm(0), "1", "Database migration"]] : []).map(f => f.join("\t")),
     queue: [["infra", "infra", "109", "x", "Jordan K.", "auto", "Notifications table index"],
             ["web-app", "web-app", "464", "x", "Jordan K.", "manual", "Expire old generation rows"],
