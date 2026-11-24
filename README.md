@@ -113,8 +113,9 @@ Missing a prerequisite: `xcode-select --install` for the command-line tools, `br
   song, and Apple Events for the buttons, which makes macOS ask once whether Agent Office may
   control Spotify (if you said no, the tooltip says where to change it: System Settings → Privacy
   & Security → Automation).
-- **Review room** (optional): one desk per PR-review slot with repo, PR, owner and how long it has
-  been running, and a sofa for the queue. On a low table in front of the sofa, an in-tray holds
+- **Review room** (optional): one desk per PR-review slot with repo, PR, owner, how long it has
+  been running and, when the reviewer says, the model and effort it runs on, and a sofa for the
+  queue. On a low table in front of the sofa, an in-tray holds
   what waits for your 👍/👎 on Slack: its stack grows with the count, amber with a number when
   something is there, empty when nothing is. Hover it for the list; a click opens the first PR,
   a right-click any of them. A review running longer than `overdueMinutes` (45 by
@@ -520,6 +521,8 @@ file, not in the repository. Every key is optional.
 - **`reviews`** feeds the review room from a PR reviewer that keeps:
   - `<state>/running/<repo>-<pr>`: one tab-separated line per review in progress (repo name, repo
     slug, PR number, commit, author, start time `HH:MM`, pid, title);
+  - `<state>/running-model/<repo>-<pr>` (optional): `model<TAB>effort<TAB>tier` of that review,
+    shown under its owner (the tier only in the tooltip);
   - `<state>/queue`: one line per waiting PR (repo name, slug, number, commit, author,
     `auto`/`manual`, title);
   - `<state>/waiting` (optional): one line per PR waiting for your decision on Slack (repo name,

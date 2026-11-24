@@ -210,7 +210,11 @@ func snapshot(_ cfg: Config) -> [String: Any] {
         for name in (try? fm.contentsOfDirectory(atPath: rs + "/running")) ?? [] {
             guard let l = lines(rs + "/running/" + name).first else { continue }
             let f = l.split(separator: "\t", omittingEmptySubsequences: false)
-            if f.count >= 7, let pid = Int(f[6]), alive(pid) { reviews.append(l) }
+            guard f.count >= 7, let pid = Int(f[6]), alive(pid) else { continue }
+            // what it runs on, when the reviewer says: running-model/<same name> holds
+            // "model<TAB>effort<TAB>tier"; appended after the title so older readers ignore it
+            if f.count == 8, let m = lines(rs + "/running-model/" + name).first, !m.isEmpty { reviews.append(l + "\t" + m) }
+            else { reviews.append(l) }
         }
         queue = lines(rs + "/queue")
         // waiting for your 👍/👎 on Slack; only a reviewer that writes the file gets the in-tray
