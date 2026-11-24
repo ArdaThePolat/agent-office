@@ -633,7 +633,8 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 ## Mini-games
 
 The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
-(or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes.
+(or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes
+(in a Rocket Rumpus match the first Esc only asks, so one press never leaves a match).
 
 - **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
   **↑/W** go, **↓/S** brake, **←→/AD** steer. Three numbered checkpoints stand across each track:
@@ -673,14 +674,25 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
   leaderboard (leaving mid-flight keeps what you scored so far).
+- **🚀 Rocket Rumpus:** a top-down arena brawl for 2 to 6 rockets. A rocket always flies forward and
+  turns one way only: **← /A** turns it and **→ /D** or **Space** fires. If whoever opens the match
+  picks "both ways", **← → / A D** turn and **↑ /W** or **Space** fires. Three shots, refilled one
+  every 0.8 s. A hit blows the rocket up and throws its pilot out on foot (the same keys spin it and
+  puff its jetpack): a pilot who lasts 5 s gets a new rocket, one shot or run over is out of the
+  round. The last one left takes the round; first to 3, 5 or 7. After 45 s the fence closes in and
+  no new rockets come, so every round ends. Three arenas (Crystal Quarry, Gravewell with a black
+  hole, Rotor Station) and six power-ups (ion lance, spike mines, fan shot, cryo shot, bubble shield,
+  bounce rounds). Open a match to the room: teammates join from the Games tab, bots (Easy, Normal or
+  Hard) fill the places, and extra people at the opener's keyboard can play too (turn, fire: Z X,
+  V B, K L; with both ways turn, turn, fire: Z C X, V N B, J L K). Whoever opened the match runs it.
 - **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
   everyone in the room wherever they are, with their own boards (the best lap on today's track, the
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** twenty-four of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** twenty-nine of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship…), kept on your Mac and listed
+  one end, a gunship, a pilot run over…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -706,7 +718,8 @@ on your Mac).
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
 times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
-finish times, catches and scores.
+finish times, catches and scores. In Rocket Rumpus, whoever opened the match sends it fifteen times
+a second and every other player sends their keys.
 
 ## Trying a change: the dev app
 
