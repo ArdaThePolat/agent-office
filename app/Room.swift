@@ -45,13 +45,15 @@ let ROOM_BOARD_SIZE = 10
 // the leaderboards: (lowest is best?, smallest and largest score taken). Race: the best lap on track n,
 // in seconds (a lap, so races of any length compare); fishing: the biggest fish and a two-minute
 // round's catch, in kg; Bug Whack: a round's points; ping-pong: games won; archery: a round's points
-// (15 arrows, at most 150); Sky Patrol: a flight's points.
+// (15 arrows, at most 150); Sky Patrol: a flight's points; Desk Karts: the best lap on track n, in
+// seconds.
 let ROOM_BOARDS: [String: (lowWins: Bool, min: Double, max: Double)] = [
     "race-1": (true, 3, 600), "race-2": (true, 3, 600), "race-3": (true, 3, 600),
     "race-4": (true, 3, 600), "race-5": (true, 3, 600),
     "fish-big": (false, 0.01, 100), "fish-haul": (false, 0.01, 2000),
     "bugs": (false, 1, 2000), "pong-wins": (false, 1, 100_000),
     "archery": (false, 1, 150), "sky": (false, 1, 1_000_000),
+    "kart-1": (true, 5, 600), "kart-2": (true, 5, 600), "kart-3": (true, 5, 600), "kart-4": (true, 5, 600),
 ]
 let ROOM_DAILY_KEPT = 7               // days of daily-challenge boards the host keeps
 /// The start of the current UTC day. The room's boards (ROOM_BOARDS) start empty every day at 00:00
