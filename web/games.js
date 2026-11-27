@@ -1,7 +1,8 @@
 // Agent Office — the lounge's mini-games: the shell they share. Loaded by office.html after its own
 // script (it uses its globals: room, bridge, esc, snap, SHIRTS, hash, roomMates, openSession,
 // peopleKey), then each game registers itself: games-race.js, games-fish.js, games-bugs.js,
-// games-pong.js, games-archery.js, games-sky.js, games-defuse.js, games-headball.js, games-rocketbrawl.js.
+// games-pong.js, games-archery.js, games-sky.js, games-kart.js (with games-kart-world.js), games-defuse.js,
+// games-headball.js, games-rocketbrawl.js.
 //
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
@@ -19,8 +20,10 @@ const BOARD_NAMES = {
   "fish-big": "Fishing · biggest fish", "fish-haul": "Fishing · 2-minute catch",
   "bugs": "Bug Whack · best round", "pong-wins": "Ping-pong · games won",
   "archery": "Archery · best round", "sky": "Sky Patrol · best flight",
+  "kart-1": "Desk Karts · Desk Circuit · best lap", "kart-2": "Desk Karts · Server Room · best lap", "kart-3": "Desk Karts · Rooftop Run · best lap",
+  "kart-4": "Desk Karts · Break Room · best lap",
 };
-const LOW_WINS = b => b.startsWith("race-") || b.startsWith("daily-race");
+const LOW_WINS = b => b.startsWith("race-") || b.startsWith("daily-race") || b.startsWith("kart-");
 const gameEl = document.createElement("div");
 gameEl.id = "game";
 gameEl.innerHTML = `<div class="gbar"><b class="gtitle"></b><span class="ginfo"></span><button class="gclose" title="Close (Esc)">✕</button></div>
@@ -171,6 +174,12 @@ const ACHIEVEMENTS = [
   ["ace", "✈", "Ace", "shoot down 100 planes in all"],
   ["gunship", "💣", "Gunship down", "shoot down a gunship"],
   ["sky-10k", "🌤", "High flyer", "score 10,000 in one flight"],
+  ["kart-first", "🏁", "Kart racer", "finish a Desk Karts race"],
+  ["kart-podium", "🥉", "On the podium", "finish a kart race in the top three, with four karts or more"],
+  ["kart-win", "🏆", "Kart champion", "win a kart race with four karts or more"],
+  ["clean-win", "🫧", "Spotless", "win a kart race without being hit once"],
+  ["drifter", "🌀", "Drifter", "fire 100 drift turbos"],
+  ["duck-hunter", "🦆", "Duck hunter", "hit other karts with your items 10 times"],
 ];
 function achieved() { return store("achievements", {}); }
 function achieve(id) {
@@ -301,7 +310,7 @@ function homeSide() {
       <button class="go" data-play="race">🏎 Race</button><button class="go" data-play="fish">🎣 Fishing</button>
       <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button>
       <button class="go" data-play="archery">🏹 Archery</button><button class="go" data-play="sky">✈ Sky Patrol</button>
-      <button class="go" data-play="defuse">💣 Defuse</button><button class="go" data-play="headball">⚽ Noggin Cup</button><button class="go" data-play="rocketbrawl">🚀 Rocket Rumpus</button></div>
+      <button class="go" data-play="defuse">💣 Defuse</button><button class="go" data-play="headball">⚽ Noggin Cup</button><button class="go" data-play="rocketbrawl">🚀 Rocket Rumpus</button><button class="go" data-play="kart">🏁 Desk Karts</button></div>
     <h3>📅 TODAY'S CHALLENGE</h3><div class="hint">${esc(GAMES.race.trackName(d.track))} (best lap) and the biggest ${esc(GAMES.fish.speciesName(d.fish))}: the same for everyone today.</div>
     <div class="grid" style="margin-top:5px"><button data-play="race" data-arg="daily">Race today's track</button><button data-play="fish" data-arg="daily">Fish for today's</button></div>
     ${extra}
@@ -340,6 +349,7 @@ window.gamesTabHTML = () => {
     <div class="g"><span class="gn">🏓 Ping-pong</span><button data-gplay="pong">Play</button></div>
     <div class="g"><span class="gn">🏹 Archery</span><button data-gplay="archery">Play</button></div>
     <div class="g"><span class="gn">✈ Sky Patrol</span><button data-gplay="sky">Play</button></div>
+    <div class="g"><span class="gn">🏁 Desk Karts · 3D, 4 tracks</span><button data-gplay="kart">Play</button></div>
     <div class="g"><span class="gn">💣 Defuse · 1v1 to 5v5</span><button data-gplay="defuse">Play</button></div>
     <div class="g"><span class="gn">⚽ Noggin Cup · 1 on 1</span><button data-gplay="headball">Play</button></div>
     <div class="g"><span class="gn">🚀 Rocket Rumpus · 2 to 6 rockets</span><button data-gplay="rocketbrawl">Play</button></div>
@@ -354,7 +364,7 @@ window.gamesPanelClick = b => {
 };
 window.gamesKey = () => Object.values(GAMES).map(g => g.tabKey ? g.tabKey() : "").join("|") + JSON.stringify(boardsNow()) + Object.keys(achieved()).length;
 
-// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky, defuse, headball or rocketbrawl opens one
+// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky, kart, defuse, headball or rocketbrawl opens one
 if (!bridge) {
   const want = new URLSearchParams(location.search).get("game") || "";
   if (want) setTimeout(() => { openGames("home"); if (GAMES[want]) GAMES[want].start("demo"); }, 300);

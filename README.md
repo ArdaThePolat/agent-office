@@ -674,6 +674,43 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
   leaderboard (leaving mid-flight keeps what you scored so far).
+- **🏁 Desk Karts:** a 3D kart race on four office tracks drawn big: **Desk Circuit** (pencils,
+  mugs, books, a lamp, a keyboard, a hump, a kicker ramp, a coffee spill and rolling tape),
+  **Server Room** (racks, cables, ramps, a leak, robot vacuums and a fan that blows you sideways),
+  **Rooftop Run** (hills, a puddle, rolling barrels and a jump between two roofs; fall short and a
+  delivery drone puts you back) and **Break Room** (along the kitchen counters, past the fridge and
+  the coffee machine, with rolling donuts, spills and a jump over the sink). Puddles make you slide;
+  the things rolling across the road knock you over. Pick a track, 1 to 5 laps, a speed (Chill, Fast, Turbo) and one of
+  six karts in three weights (🪑 Swivel Chair and 📮 Mail Trolley are light: quick off the line,
+  tight in bends, good off the road, long turbos; 🏎 Desk Kart and ☕ Coffee Cart in the middle;
+  🖨 Photocopier and 🚜 Forklift are heavy: faster flat out and they push the others about).
+  - **Driving:** **↑/W** go, **↓/S** brake, **←→/AD** steer. How hard you can turn falls with
+    speed, so tight bends want a **drift**: tap **Space** while steering and keep it held; steering
+    into the drift charges a turbo faster (blue sparks for a short one, orange for one three times as
+    long), and letting go of Space fires it. Hold ↑ as the **2** of the countdown shows for a
+    **rocket start** (from the 3 and the engine stalls). Stay right behind a kart for a moment for a
+    **slipstream** boost. Press **Space** as you fly off a ramp for a **trick** and a boost on
+    landing. Boost pads speed you up; off the road you slow right down.
+  - **Items** come from the boxes, used with **E** (or **X**); driving through a box while you hold
+    something swaps it for a new one when the roulette stops (until then you can still use it): ☕ an espresso boost (sometimes
+    three), 🫖 a coffee pot (a boost on every press for 7 s), 📝 a sticky note, 🦆 three rubber ducks
+    that go round you (each press fires one where you are pointing; they bounce off the walls), ✈ a
+    paper plane that finds the kart ahead of you, 🛡 bubble wrap, 🌟 a caffeine rush (faster, and nothing stops you: karts you touch
+    spin), 📧 a reply-all that flies to the leader and goes off over them, 🔌 a power cut (everyone
+    else drops what they hold and slows, the leaders longest) and 🚀 overtime (an autopilot rocket).
+    Hold the key to drag a note or plane behind you as a shield, and let go to throw it (with **↓**
+    held: backwards); ducks going round you also take hits. The front of the pack gets
+    defensive things, the back the race-changers.
+  - **Bots** (easy, normal or hard) fill the grid up to eight karts, or none. They follow a racing
+    line, brake in time for bends, drift through them (normal and hard), steer round hazards and
+    sticky notes, take rocket starts and tricks, slipstream, and use their items quickly: they drag
+    notes and planes behind them, fire ducks at whoever is lined up, and save the wrap for when
+    something is coming; hard bots are a little quicker
+    than your kart and push on when you get away.
+  - In a room it opens like a race: teammates join with the kart they picked, you press **Start**,
+    and the bots drive from your Mac. Each driver is their lounge picture, or a blocky driver in their
+    colour. The leaderboard keeps the **best lap** on each track (a faster speed class laps faster).
+    It is drawn with three.js (`web/vendor/three`, MIT), loaded the first time the game opens.
 - **💣 Defuse:** a top-down team shooter, 1 on 1 up to 5 on 5, on two maps: **Dune**, a desert town
   with site A in the west, B in the east and a courtyard between, and **Depot**, a small warehouse.
   One team attacks: it carries a bomb to a site and plants it (hold **E** there for 3 s); the other
@@ -713,9 +750,10 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** thirty-six of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** forty-two of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship, a defused bomb, a lightning-shot goal, a pilot run over…), kept on your Mac and listed
+  one end, a gunship, a defused bomb, a lightning-shot goal, a pilot run over, a kart win without
+  being hit…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -732,11 +770,14 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
 How the shared games stay in step: a round's bugs and the pond's fish come from a random seed that
 whoever opened it sends once, so every Mac shows the same ones without sending them; whoever opened
 it is also the referee for who got a bug or hooked a fish first (in the pond, when its keeper
-leaves, the next person keeps it, with the same fish).
+leaves, the next person keeps it, with the same fish). In a kart race every Mac drives its own kart
+and sends where it is eight times a second (the opener's Mac also sends its bots); an item someone
+throws is sent once and flies the same way on every Mac, and each Mac says when its own kart was
+hit or took a box.
 
-Archery and Sky Patrol are played on your own: only their scores go to the room's board (the
-host's app needs a version that knows those boards; an older one leaves them out, and your bests stay
-on your Mac).
+Archery and Sky Patrol are played on your own: only their scores go to the room's board. Their
+boards and Desk Karts' need a host whose app knows them; an older one leaves them out, and your bests
+stay on your Mac.
 
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
@@ -744,8 +785,9 @@ times a second in ping-pong, your bobber's place while fishing, which bug or fis
 finish times, catches and scores. In Defuse, every player's position, facing, gun, shots and hits
 ten times a second, a planted or defused bomb, and from whoever runs the match its state (health,
 kills, the score, the bomb, the clock and where the bots are). In Noggin Cup, as in ping-pong, the
-challenger's Mac sends the match fifteen times a second and the other sends its keys. In Rocket Rumpus, whoever opened the match sends it fifteen times
-a second and every other player sends their keys.
+challenger's Mac sends the match fifteen times a second and the other sends its keys. In Rocket
+Rumpus, whoever opened the match sends it fifteen times a second and every other player sends
+their keys.
 
 ## Trying a change: the dev app
 
