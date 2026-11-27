@@ -1,7 +1,8 @@
 // Agent Office — the lounge's mini-games: the shell they share. Loaded by office.html after its own
 // script (it uses its globals: room, bridge, esc, snap, SHIRTS, hash, roomMates, openSession,
 // peopleKey), then each game registers itself: games-race.js, games-fish.js, games-bugs.js,
-// games-pong.js, games-archery.js, games-sky.js, games-kart.js (with games-kart-world.js).
+// games-pong.js, games-archery.js, games-sky.js, games-kart.js (with games-kart-world.js), games-defuse.js,
+// games-headball.js, games-rocketbrawl.js.
 //
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
@@ -75,7 +76,7 @@ document.head.appendChild(gstyle);
 
 // ---------- shared ----------
 const GAME = { open: false, view: "home", keys: new Set(), last: 0, raf: 0 };
-const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave }
+const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave, escape }
 function registerGame(id, g) { GAMES[id] = g; }
 const myName = () => (snap && snap.manager && snap.manager.name) || "You";
 const inRoom = () => room.status === "joined";
@@ -271,7 +272,12 @@ function gtick(ts) {
 window.addEventListener("keydown", ev => {
   if (!GAME.open) return;
   const k = ev.key.toLowerCase();
-  if (ev.key === "Escape") { ev.preventDefault(); return GAME.view === "home" ? closeGames() : gshow("home"); }
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    // a game may keep the first Esc for itself (Defuse frees a locked mouse with it, Rocket Rumpus asks before leaving a match)
+    const g = GAMES[GAME.view]; if (g && g.escape && g.escape()) return;
+    return GAME.view === "home" ? closeGames() : gshow("home");
+  }
   GAME.keys.add(k);
   if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) ev.preventDefault();
   const g = GAMES[GAME.view]; if (g && g.key) g.key(k, true);
@@ -304,7 +310,7 @@ function homeSide() {
       <button class="go" data-play="race">🏎 Race</button><button class="go" data-play="fish">🎣 Fishing</button>
       <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button>
       <button class="go" data-play="archery">🏹 Archery</button><button class="go" data-play="sky">✈ Sky Patrol</button>
-      <button class="go" data-play="kart">🏁 Desk Karts</button></div>
+      <button class="go" data-play="defuse">💣 Defuse</button><button class="go" data-play="headball">⚽ Noggin Cup</button><button class="go" data-play="rocketbrawl">🚀 Rocket Rumpus</button><button class="go" data-play="kart">🏁 Desk Karts</button></div>
     <h3>📅 TODAY'S CHALLENGE</h3><div class="hint">${esc(GAMES.race.trackName(d.track))} (best lap) and the biggest ${esc(GAMES.fish.speciesName(d.fish))}: the same for everyone today.</div>
     <div class="grid" style="margin-top:5px"><button data-play="race" data-arg="daily">Race today's track</button><button data-play="fish" data-arg="daily">Fish for today's</button></div>
     ${extra}
@@ -315,10 +321,13 @@ function drawHome(t) {
   gpx(0, 0, GW, GH, "#1b1820");
   gtext("MINI-GAMES", GW / 2, 30, "#8fd6b4", 16, "center");
   gtext("pick one on the right · Esc goes back", GW / 2, 52, "#a79d93", 8, "center");
-  // the games' icons, four to a row: each game draws its own around its iconCenter
-  Object.values(GAMES).filter(g => g.drawIcon).forEach((g, i) => {
-    const [cx, cy] = g.iconCenter || [0, 0], x = 46 + (i % 4) * 76, y = 96 + Math.floor(i / 4) * 66;
-    gx.save(); gx.translate(x - cx, y - cy); g.drawIcon(t); gx.restore();
+  // the games' icons, three to a row; past six, four to a row a little smaller, and past eight three
+  // rows smaller still, so they fit under the title: each game draws its own around its iconCenter
+  const icons = Object.values(GAMES).filter(g => g.drawIcon), cols = icons.length > 6 ? 4 : 3, gap = cols === 4 ? 76 : 100;
+  const rows = Math.ceil(icons.length / cols), small = rows > 2, k = small ? 0.68 : cols === 4 ? 0.85 : 1, top = small ? 85 : 94, step = small ? 41 : 62;
+  icons.forEach((g, i) => {
+    const [cx, cy] = g.iconCenter || [0, 0], x = GW / 2 + (i % cols - (cols - 1) / 2) * gap, y = top + Math.floor(i / cols) * step;
+    gx.save(); gx.translate(x, y); gx.scale(k, k); gx.translate(-cx, -cy); g.drawIcon(t); gx.restore();
   });
 }
 
@@ -341,6 +350,9 @@ window.gamesTabHTML = () => {
     <div class="g"><span class="gn">🏹 Archery</span><button data-gplay="archery">Play</button></div>
     <div class="g"><span class="gn">✈ Sky Patrol</span><button data-gplay="sky">Play</button></div>
     <div class="g"><span class="gn">🏁 Desk Karts · 3D, 4 tracks</span><button data-gplay="kart">Play</button></div>
+    <div class="g"><span class="gn">💣 Defuse · 1v1 to 5v5</span><button data-gplay="defuse">Play</button></div>
+    <div class="g"><span class="gn">⚽ Noggin Cup · 1 on 1</span><button data-gplay="headball">Play</button></div>
+    <div class="g"><span class="gn">🚀 Rocket Rumpus · 2 to 6 rockets</span><button data-gplay="rocketbrawl">Play</button></div>
     <div class="empty">${inRoom() ? "Races, rounds and challenges you start are open to the room. G opens the games." : "On your own for now: join a room to play together. G opens the games."}</div></div>`;
 };
 window.scoresTabHTML = () => `<div class="list">${boardsHTML(true)}<div class="gh">ACHIEVEMENTS</div><div class="sc">${
@@ -352,7 +364,7 @@ window.gamesPanelClick = b => {
 };
 window.gamesKey = () => Object.values(GAMES).map(g => g.tabKey ? g.tabKey() : "").join("|") + JSON.stringify(boardsNow()) + Object.keys(achieved()).length;
 
-// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky or kart opens one
+// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky, kart, defuse, headball or rocketbrawl opens one
 if (!bridge) {
   const want = new URLSearchParams(location.search).get("game") || "";
   if (want) setTimeout(() => { openGames("home"); if (GAMES[want]) GAMES[want].start("demo"); }, 300);
