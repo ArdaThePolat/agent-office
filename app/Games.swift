@@ -4,6 +4,19 @@
 
 import Cocoa
 import UserNotifications
+import WebKit
+
+/// The first-person game (web/games-defuse.js) turns with the mouse, which needs the page to lock the
+/// pointer. WebKit asks the web view's UI delegate first, through a method of its private delegate
+/// protocol; without an answer the lock never comes. The page asks only on a click in that game, and
+/// Esc (or leaving the window) frees it. On a WebKit that asks some other way, nothing is locked and
+/// the game turns with the pointer over it instead.
+extension AppDelegate: WKUIDelegate {
+    @objc(_webViewDidRequestPointerLock:completionHandler:)
+    func webViewDidRequestPointerLock(_ webView: WKWebView, completionHandler: @escaping (Bool) -> Void) { completionHandler(true) }
+    @objc(_webViewDidLosePointerLock:)
+    func webViewDidLosePointerLock(_ webView: WKWebView) {}
+}
 
 extension AppDelegate {
     /// Room → Mini-Games… (also G in the office).
