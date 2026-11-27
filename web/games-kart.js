@@ -579,6 +579,7 @@ function kJoin(id) {
   kLoad();
   kSetup(KR.players, []);
 }
+const kTrackOk = n => Number.isInteger(n) && n >= 0 && n < KTRACKS.length;
 function kLeave() {
   kShowGL(false);
   if (!KR.id) return;
@@ -589,14 +590,22 @@ function kLeave() {
 }
 /// Takes the karts and items of the last race out of the scene.
 function kClear() {
-  for (const m of KR.meshes.values()) if (m.parent) m.parent.remove(m);
+  for (const m of KR.meshes.values()) {
+    if (m.parent) m.parent.remove(m);
+    m.traverse(o => { if (o.isSprite) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } });   // the driver's picture
+  }
   for (const m of KR.imeshes.values()) if (m.parent) m.parent.remove(m);
   KR.meshes.clear(); KR.imeshes.clear();
 }
 function kStartNow() {
   if (!kOwner() || KR.phase !== "lobby") return;
   const bots = kMakeBots(KR.players.length);
-  gsend({ ...kLobbyMsg("start"), bots: bots.map(b => ({ id: b.id, name: b.name, skill: b.skill, car: b.car })), in: KT.START_IN });
+  // names are capped, and cut harder if the message would still pass ~1400 bytes: the relay drops anything over 1500
+  const msg = cap => ({ ...kLobbyMsg("start"), ownerName: undefined, players: KR.players.map(p => ({ ...p, name: String(p.name || "").slice(0, cap) })),
+    bots: bots.map(b => ({ id: b.id, name: String(b.name || "").slice(0, cap), skill: b.skill, car: b.car })), in: KT.START_IN });
+  let out = msg(16);
+  for (const cap of [8, 4, 1]) if (JSON.stringify(out).length > 1400) out = msg(cap);
+  gsend(out);
   kBegin(KR.players, bots, KT.START_IN);
 }
 function kSetup(players, bots) {
@@ -605,7 +614,7 @@ function kSetup(players, bots) {
   const all = bots.map(b => ({ ...b, bot: true })).concat(players.map(p => ({ ...p, bot: false })));
   KR.karts = all.slice(0, KT.MAX).map((p, slot) => kNewKart(p, slot, t));
   KR.me = KR.karts.find(k => k.id === myId()) || null;
-  Object.assign(KR, { items: [], booms: [], boxGone: {}, t: 0, rank: KR.karts.slice(), flash: null, wrongT: 0, multi: inRoom() && players.length > 1 });
+  Object.assign(KR, { items: [], booms: [], boxGone: {}, t: 0, zapAt: -9, rank: KR.karts.slice(), flash: null, wrongT: 0, multi: inRoom() && players.length > 1 });
 }
 function kBegin(players, bots, inSec) {
   KR.players = players;
@@ -640,7 +649,7 @@ function kartStep(dt) {
     const r = KR.startAt - now, me = KR.me;
     ginfo.textContent = `starts in ${Math.max(0, Math.ceil(r))} s · hold ↑ as the 2 shows for a rocket start`;
     if (me) { const thr = GAME.keys.has("arrowup") || GAME.keys.has("w"); if (thr && me.revR === undefined) me.revR = r; if (!thr) me.revR = undefined; }
-    if (now >= KR.startAt) { KR.phase = "go"; KR.t = 0; for (const k of KR.karts) if (k.sim) kRocket(k); side(); }
+    if (now >= KR.startAt) { KR.phase = "go"; KR.t = 0; KR.hopReq = false; KR.itemPress = false; for (const k of KR.karts) if (k.sim) kRocket(k); side(); }
     return;
   }
   if (P !== "go" && P !== "done") { ginfo.textContent = ""; return; }
@@ -1001,9 +1010,9 @@ function kartMsg(from, name, d) {
   const owner = (KR.lobbies[d.id] && KR.lobbies[d.id].owner) || (KR.id === d.id ? KR.owner : "");
   const player = p => ({ id: String(p.id), name: String(p.name || "").slice(0, 40), car: kCar(String(p.car || "")).id });
   if (["open", "lobby", "start", "close"].includes(d.k) && owner && owner !== from) return;
-  if ((d.k === "open" || d.k === "lobby") && KTRACKS[d.track] && Array.isArray(d.players)) {
+  if ((d.k === "open" || d.k === "lobby") && kTrackOk(d.track) && Array.isArray(d.players)) {
     const fresh = !KR.lobbies[d.id];
-    KR.lobbies[d.id] = { id: d.id, track: d.track, laps: num(d.laps, 1, KT.LAPS_MAX) || 3, cls: num(d.cls, 0, KCLASSES.length - 1) | 0, fill: d.fill !== false,
+    KR.lobbies[d.id] = { id: d.id, track: d.track, laps: Math.round(num(d.laps, 1, KT.LAPS_MAX)) || 3, cls: num(d.cls, 0, KCLASSES.length - 1) | 0, fill: d.fill !== false,
       skill: num(d.skill, 0, 2) | 0, owner: from, ownerName: name, players: d.players.slice(0, KT.MAX).map(player), at: now };
     if (KR.id === d.id && KR.phase === "lobby") {
       const l = KR.lobbies[d.id];
@@ -1030,7 +1039,7 @@ function kartMsg(from, name, d) {
     const players = (Array.isArray(d.players) ? d.players : []).slice(0, KT.MAX).map(player);
     if (!players.some(p => p.id === myId())) { KR.phase = "pick"; KR.id = ""; return side(); }
     const bots = (Array.isArray(d.bots) ? d.bots : []).slice(0, KT.MAX - players.length).map((b, i) => ({ id: `bot:${i}`, name: String(b.name || "Bot").slice(0, 20), skill: num(b.skill, 0, 2) | 0, car: kCar(String(b.car || "")).id, bot: true }));
-    KR.laps = num(d.laps, 1, KT.LAPS_MAX) || KR.laps; KR.cls = num(d.cls, 0, KCLASSES.length - 1) | 0;
+    KR.laps = Math.round(num(d.laps, 1, KT.LAPS_MAX)) || KR.laps; KR.cls = num(d.cls, 0, KCLASSES.length - 1) | 0;
     kBegin(players, bots, num(d.in, 1, 10) || KT.START_IN);
     return;
   }
@@ -1078,7 +1087,7 @@ function kOpenLobbies() {
 registerGame("kart", {
   title: "🏁 Desk Karts",
   start: kartStart, step: kartStep, draw: kartDraw, side: kartSide, click: kartClick, msg: kartMsg,
-  leave: kLeave,
+  leave: () => { kLeave(); kReleaseGL(); },
   // Space / Shift: a hop (a drift when held while steering), or a trick off a ramp; E / X: the item
   key: (k, down) => {
     if (k === " " || k === "shift") { if (down && !KR.spaceDown) KR.hopReq = true; KR.spaceDown = down; }

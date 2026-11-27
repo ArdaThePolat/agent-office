@@ -172,7 +172,7 @@ function kLoad() {
   KR.state = "loading";
   const s = document.createElement("script");
   s.src = "vendor/three/three.min.js";
-  s.onload = () => kInitGL();
+  s.onload = () => { if (KR.state === "loading") kInitGL(); };
   s.onerror = () => { KR.state = "failed"; KR.err = "three.js did not load"; };
   document.head.appendChild(s);
 }
@@ -180,20 +180,40 @@ function kLoad() {
 /// hole there and draws the HUD on top): copying WebGL pixels into a 2D canvas every frame makes
 /// WebKit read them back from the GPU, and the frames stutter.
 function kInitGL() {
+  if (KR.renderer) return;                                   // lost: the one context comes back on its own
+  let c = null;
   try {
-    const c = document.createElement("canvas"); c.width = GW * KT.RES; c.height = GH * KT.RES;
-    c.addEventListener("webglcontextlost", e => { e.preventDefault(); KR.state = "lost"; });
-    c.addEventListener("webglcontextrestored", () => { KR.state = "ready"; });
+    c = document.createElement("canvas"); c.width = GW * KT.RES; c.height = GH * KT.RES;
+    c.addEventListener("webglcontextlost", e => { e.preventDefault(); if (KR.glc === c) KR.state = "lost"; });
+    c.addEventListener("webglcontextrestored", () => { if (KR.glc === c) KR.state = "ready"; });
     Object.assign(c.style, { position: "absolute", pointerEvents: "none", imageRendering: "pixelated", display: "none", zIndex: "0" });
     gcv.parentNode.style.position = "relative"; gcv.style.position = "relative"; gcv.style.zIndex = "1";
     gcv.parentNode.insertBefore(c, gcv);
-    KR.renderer = new THREE.WebGLRenderer({ canvas: c, antialias: false, powerPreference: "high-performance" });
+    KR.renderer = new THREE.WebGLRenderer({ canvas: c, antialias: false, powerPreference: "default" });
     KR.renderer.setPixelRatio(1); KR.renderer.setSize(GW * KT.RES, GH * KT.RES, false);
     KR.glc = c;
     KR.cam = new THREE.PerspectiveCamera(68, GW / GH, 0.3, 700);
     KR.camPos = new THREE.Vector3(); KR.camLook = new THREE.Vector3();
     KR.state = "ready";
-  } catch (e) { KR.state = "failed"; KR.err = "3D is not available here"; }
+  } catch (e) { kReleaseGL(c); KR.state = "failed"; KR.err = "3D is not available here"; }
+}
+/// Frees what a three.js object holds on the GPU: geometry, materials and their textures.
+function kDispose(root) {
+  root.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    for (const m of [].concat(o.material || [])) { if (m.map) m.map.dispose(); m.dispose(); }
+  });
+}
+/// Gives the GPU back when the game closes (or a start fails): scenes, caches, renderer and canvas
+/// go, and the state returns to "none" so the next open builds everything again.
+function kReleaseGL(canvas) {
+  for (const sc of KR.scenes) if (sc) kDispose(sc);
+  if (KR.preview) kDispose(KR.preview);
+  const r = KR.renderer, c = KR.glc || canvas;
+  KR.glc = null; KR.renderer = null;                         // before the context loss, so its events are ignored
+  if (r) { r.dispose(); if (r.forceContextLoss) r.forceContextLoss(); }
+  if (c && c.parentNode) c.parentNode.removeChild(c);
+  Object.assign(KR, { scenes: [], mats: {}, geos: {}, preview: null, cam: null, camPos: null, camLook: null, sceneOf: null, glKey: "", lastDraw: 0, state: "none" });
 }
 const kCol = c => new THREE.Color(c);
 function kMat(c, o) {
@@ -205,6 +225,7 @@ function kBasic(c, o) {
   return KR.mats[key] || (KR.mats[key] = new THREE.MeshBasicMaterial({ color: c, ...o }));
 }
 function kBoxG(w, h, d) { const key = `b${w},${h},${d}`; return KR.geos[key] || (KR.geos[key] = new THREE.BoxGeometry(w, h, d)); }
+function kConeG(r, h, n) { const key = `n${r},${h},${n}`; return KR.geos[key] || (KR.geos[key] = new THREE.ConeGeometry(r, h, n)); }
 function kCylG(r1, r2, h, n) { const key = `c${r1},${r2},${h},${n}`; return KR.geos[key] || (KR.geos[key] = new THREE.CylinderGeometry(r1, r2, h, n)); }
 function kAdd(parent, geo, mat, x, y, z) { const m = new THREE.Mesh(geo, mat); m.position.set(x || 0, y || 0, z || 0); parent.add(m); return m; }
 /// A small pixel texture drawn with the 2D canvas: nearest-neighbour, so it stays pixel art.
@@ -614,7 +635,7 @@ function kItemMesh(kind) {
     kAdd(g, kBoxG(0.4, 0.17, 0.4), kBasic("#e06c6c"), 0, 0.01, 0);
     kAdd(g, kBoxG(1.3, 0.16, 0.08), kMat("#c9c2b8"), 0.1, 0.01, 0.3); kAdd(g, kBoxG(1.3, 0.16, 0.08), kMat("#c9c2b8"), 0.1, 0.01, -0.3);
   } else {
-    const w = kAdd(g, new T.ConeGeometry(0.9, 2, 3), kMat("#f1ebe2", { side: T.DoubleSide })); w.rotation.z = -Math.PI / 2; w.scale.set(1, 1, 0.25);
+    const w = kAdd(g, kConeG(0.9, 2, 3), kMat("#f1ebe2", { side: T.DoubleSide })); w.rotation.z = -Math.PI / 2; w.scale.set(1, 1, 0.25);
   }
   return g;
 }
