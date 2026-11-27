@@ -37,6 +37,9 @@ const REASONS = { out: "the other team is out", time: "time ran out", boom: "the
 // it checks the size limit, and a fraction like 123.4 comes out as 123.40000000000001. So positions
 // travel as whole pixels and angles in hundredths of a radian.
 const ri = Math.round, ra = a => Math.round(a * 100);
+/// A peer's number as a finite one in lo..hi (d when it is not a number at all).
+const fin = (v, lo, hi, d = lo) => { v = typeof v === "number" ? v : NaN; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
+const PHASES = ["buy", "live", "planted", "end", "over"];
 
 // ---------- the maps: carved out of solid rock, a rectangle at a time ----------
 // # wall, x crate, . and , floor, A and B the bomb sites, a and d the attackers' and defenders' spawns
@@ -198,6 +201,7 @@ const roleOf = i => teamOf(i) === V.at ? "a" : "d";
 const alive = i => V && V.hp[i] > 0;
 const curW = () => (ME.sec ? 4 : ME.w);
 const mapNow = () => MAPS[DF.map];
+const validMap = i => Number.isInteger(i) && i >= 0 && i < MAPS.length;
 
 /// Where a player is now: you, a bot (from the referee), or a teammate (from their last word).
 function posOf(i) {
@@ -354,6 +358,15 @@ function refStep(dt) {
     if (teamOf(i) === att && V.hp[i] > 0 && p && Math.hypot(p.x - V.bomb.x, p.y - V.bomb.y) < 9) { V.bomb.s = "c"; V.bomb.c = i; break; }
   }
   if (V.bomb.s === "c" && V.bomb.c >= 0) { const p = posOf(V.bomb.c); if (p) { V.bomb.x = p.x; V.bomb.y = p.y; } }
+  // how long each defender has stood at the planted bomb: a defuse claim only counts after the hold time
+  if (V.ph !== "planted") V.dh = {};
+  else {
+    V.dh = V.dh || {};
+    for (let i = 0; i < n; i++) {
+      const p = posOf(i);
+      if (teamOf(i) !== att && V.hp[i] > 0 && p && Math.hypot(p.x - V.bomb.x, p.y - V.bomb.y) < 20) V.dh[i] = (V.dh[i] || 0) + dt; else delete V.dh[i];
+    }
+  }
   for (const [i, b] of Object.entries(V.bots)) botStep(+i, b, dt, m);
 }
 /// The referee's word: everything about the match that is not a player's own position.
@@ -366,23 +379,42 @@ function refState() {
   if (V.rw) st.rw = V.rw;
   return st;
 }
-/// The referee's word, on everyone else's Mac.
+/// The referee's word, on everyone else's Mac. It is a peer's message: every field is coerced to the
+/// shape the game indexes and prints, so nothing in it can reach the page as markup or index out of range.
 function applyState(st) {
-  const was = V.r, wasPh = V.ph;
-  if (st.ph === "planted" && wasPh !== "planted") { DF.banner = `Bomb planted on ${(st.bo || [])[4] || "a site"}`; DF.bannerAt = Date.now() / 1000; }
-  Object.assign(V, { r: st.r, ph: st.ph, t: st.tl / 10, sc: st.sc, at: st.at, hp: st.hp, kd: st.kd, quit: st.q || V.quit, rw: st.rw || null });
-  const b = st.bo || [];
-  V.bomb = { s: b[0], c: b[1], x: b[2], y: b[3], site: b[4], t: (b[5] || 0) / 10 };
-  V.feed = (st.fe || []).map(f => ({ n: f[0], k: f[1], v: f[2], w: f[3] }));
+  if (!st || typeof st !== "object") return;
+  const was = V.r, wasPh = V.ph, n = DF.players.length, m = mapNow(), PX = m.w * T, PY = m.h * T;
+  const arr = a => Array.isArray(a) ? a : [];
+  const int = (v, lo, hi, d = lo) => Math.round(fin(v, lo, hi, d));
+  const ph = PHASES.includes(st.ph) ? st.ph : V.ph, r = int(st.r, 0, 99, V.r), b = arr(st.bo);
+  const site = Object.prototype.hasOwnProperty.call(m.sites, b[4]) ? b[4] : "";
+  if (ph === "planted" && wasPh !== "planted") { DF.banner = `Bomb planted on ${site || "a site"}`; DF.bannerAt = Date.now() / 1000; }
+  let rw = null;
+  if (Array.isArray(st.rw)) rw = [int(st.rw[0], 0, 1), Object.prototype.hasOwnProperty.call(REASONS, st.rw[1]) ? st.rw[1] : "time", int(st.rw[2], -1, n - 1, -1)];
+  Object.assign(V, {
+    r, ph, t: fin(st.tl, 0, 6000) / 10, sc: [0, 1].map(t => int(arr(st.sc)[t], 0, 99)), at: int(st.at, 0, 1),
+    hp: Array.from({ length: n }, (_, k) => fin(arr(st.hp)[k], 0, 100)),
+    kd: Array.from({ length: n }, (_, k) => { const e = arr(arr(st.kd)[k]); return [int(e[0], 0, 99), int(e[1], 0, 99)]; }),
+    quit: Array.from({ length: n }, (_, k) => arr(st.q)[k] ? 1 : 0), rw,
+  });
+  V.bomb = { s: typeof b[0] === "string" && b[0].length === 1 && "cdpfx".includes(b[0]) ? b[0] : "c", c: int(b[1], -1, n - 1, -1), x: fin(b[2], 0, PX), y: fin(b[3], 0, PY), site, t: fin(b[5], 0, 6000) / 10 };
+  V.feed = arr(st.fe).slice(0, 5).filter(Array.isArray).map(f => ({ n: int(f[0], 0, 1e9), k: int(f[1], -1, n - 1, -1), v: int(f[2], 0, n - 1), w: int(f[3], -1, WEAPONS.length - 1, -1) }));
   const keep = {};
-  for (const [i, x, y, a100, w] of st.bp || []) {
-    const o = V.bots[i] || { dx: x, dy: y }, a = a100 / 100;
+  for (const e of arr(st.bp).slice(0, n)) {
+    if (!Array.isArray(e)) continue;
+    const i = e[0], x = fin(e[1], 0, PX), y = fin(e[2], 0, PY), a = fin(e[3], -1000, 1000) / 100, w = int(e[4], 0, WEAPONS.length - 1);
+    if (!Number.isInteger(i) || !DF.players[i] || !DF.players[i].b) continue;
+    const o = V.bots[i] || { dx: x, dy: y };
     keep[i] = Object.assign(o, { x, y, a, w });
     if (Math.hypot(o.dx - x, o.dy - y) > 40) { o.dx = x; o.dy = y; }             // a new round: no sliding across the map
   }
   V.bots = keep;
-  for (const [i, x, y] of st.bt || []) { const p = posOf(i); if (p) { DF.tracers.push({ x0: p.dx ?? p.x, y0: p.dy ?? p.y, x1: x, y1: y, at: performance.now() }); DF.shotAt[i] = performance.now(); } }
-  if (st.r !== was) { if (V.r === HALF + 1 && was === HALF) { DF.banner = "Switching sides"; DF.bannerAt = Date.now() / 1000; } newRound(); }
+  for (const e of arr(st.bt).slice(0, 8)) {
+    if (!Array.isArray(e) || !Number.isInteger(e[0])) continue;
+    const p = posOf(e[0]); if (!p) continue;
+    DF.tracers.push({ x0: p.dx ?? p.x, y0: p.dy ?? p.y, x1: fin(e[1], 0, PX), y1: fin(e[2], 0, PY), at: performance.now() }); DF.shotAt[e[0]] = performance.now();
+  }
+  if (r !== was) { if (V.r === HALF + 1 && was === HALF) { DF.banner = "Switching sides"; DF.bannerAt = Date.now() / 1000; } newRound(); }
 }
 
 // ---------- bots (on the referee's Mac) ----------
@@ -752,6 +784,8 @@ function dfDraw() {
   const m = mapNow();
   if (DF.phase !== "match" && DF.phase !== "done") return drawPreview(m);
   if (!V) return;
+  const tnow = performance.now();
+  DF.tracers = DF.tracers.filter(t => tnow - t.at < 90);        // pruned every frame, in either view
   const i0 = myIdx();
   if (DF.view === "fps") {
     const eye = eyeOf();
@@ -799,7 +833,6 @@ function dfDraw() {
     gx.fillStyle = `rgba(255,160,60,${0.7 * (1 - f)})`; gx.beginPath(); gx.arc(bo.x, bo.y, 10 + 60 * f, 0, Math.PI * 2); gx.fill();
   }
   // shots: a short streak that fades
-  DF.tracers = DF.tracers.filter(t => now - t.at < 90);
   for (const t of DF.tracers) {
     gx.strokeStyle = `rgba(255,236,160,${1 - (now - t.at) / 90})`; gx.lineWidth = t.mine ? 0.8 : 0.6;
     gx.beginPath(); gx.moveTo(t.x0, t.y0); gx.lineTo(t.x1, t.y1); gx.stroke();
@@ -1213,9 +1246,9 @@ function dfSide() {
     return `<div class="row"><span class="dot" style="background:${TEAMS[p.t].c}"></span><span class="n">${esc(p.name)}${k === i ? " (you)" : ""}</span><span class="v">${esc(st)}</span></div>`;
   };
   const role = t => V ? (t === V.at ? " · attack" : " · defend") : "";
-  let h = `<h3>${esc(MAPS[DF.map].name.toUpperCase())}${V ? ` · ROUND ${V.r}` : ""}</h3>`;
+  let h = `<h3>${esc(MAPS[DF.map].name.toUpperCase())}${V ? ` · ROUND ${esc(String(V.r))}` : ""}</h3>`;
   for (const t of [0, 1]) {
-    h += `<h3>${TEAMS[t].name.toUpperCase()}${V ? " · " + V.sc[t] : ""}${role(t)}</h3>` + (teams[t].map(row).join("") || `<div class="hint">nobody yet</div>`);
+    h += `<h3>${TEAMS[t].name.toUpperCase()}${V ? " · " + esc(String(V.sc[t])) : ""}${role(t)}</h3>` + (teams[t].map(row).join("") || `<div class="hint">nobody yet</div>`);
     if (DF.phase === "lobby") {
       const mine = i >= 0 && DF.players[i].t === t;
       h += `<div class="pick" style="margin-top:4px">${!mine && teams[t].length < MAX_TEAM ? `<button data-dteam="${t}">Join ${TEAMS[t].name}</button>` : ""}` +
@@ -1265,7 +1298,7 @@ function dfMsg(from, name, d) {
   const owner = (DF.lobbies[d.id] && DF.lobbies[d.id].owner) || (DF.id === d.id ? DF.owner : "");
   if (["open", "lobby", "start", "close"].includes(d.k) && owner && owner !== from) return;   // a match is its referee's
   const players = Array.isArray(d.players) ? d.players.slice(0, 10).map(p => ({ id: String(p.id), name: String(p.name || "").slice(0, 40), t: p.t ? 1 : 0, b: !!p.b })) : null;
-  if ((d.k === "open" || d.k === "lobby") && MAPS[d.map] && players) {
+  if ((d.k === "open" || d.k === "lobby") && validMap(d.map) && players) {
     const fresh = !DF.lobbies[d.id];
     DF.lobbies[d.id] = { id: d.id, map: d.map, owner: from, ownerName: name, players, at: now };
     if (DF.id === d.id && DF.phase === "lobby") {
@@ -1284,7 +1317,7 @@ function dfMsg(from, name, d) {
   if (DF.id !== d.id) return;
   if (d.k === "close" && DF.phase === "lobby") { DF.phase = "pick"; DF.id = ""; toast(`${esc(name)} closed the match`, null, 3000); side(); return; }
   if (d.k === "start" && DF.phase === "lobby" && players) {
-    DF.players = players; DF.map = MAPS[d.map] ? d.map : DF.map;
+    DF.players = players; DF.map = validMap(d.map) ? d.map : DF.map;
     if (myIdx() < 0) { DF.phase = "pick"; DF.id = ""; return side(); }
     beginMatch(+d.seed || 1);
     return;
@@ -1307,20 +1340,27 @@ function dfMsg(from, name, d) {
   if (k < 0) return;
   if (d.k === "p") {
     const o = DF.others[from] || (DF.others[from] = {});
-    Object.assign(o, { x: +d.x || 0, y: +d.y || 0, a: (+d.a || 0) / 100, w: Math.max(0, Math.min(4, d.w | 0)), at: now });
-    if (Array.isArray(d.s)) for (const s of d.s.slice(0, 6)) { DF.tracers.push({ x0: o.dx ?? o.x, y0: o.dy ?? o.y, x1: +s[0], y1: +s[1], at: performance.now() }); DF.shotAt[k] = performance.now(); }
+    const pm = mapNow();
+    Object.assign(o, { x: fin(d.x, 0, pm.w * T, 0), y: fin(d.y, 0, pm.h * T, 0), a: fin(d.a, -1000, 1000, 0) / 100, w: Math.max(0, Math.min(4, d.w | 0)), at: now });
+    if (Array.isArray(d.s)) for (const s of d.s.slice(0, 6)) { DF.tracers.push({ x0: o.dx ?? o.x, y0: o.dy ?? o.y, x1: fin(Array.isArray(s) ? s[0] : 0, 0, pm.w * T, 0), y1: fin(Array.isArray(s) ? s[1] : 0, 0, pm.h * T, 0), at: performance.now() }); DF.shotAt[k] = performance.now(); }
     if (amRef() && Array.isArray(d.s) && d.s.length) noise(o.x, o.y, teamOf(k));   // the bots hear them
     if (from === DF.owner && d.st) { DF.heard = now; applyState(d.st); }
     // the referee takes a shooter's hits while both are in and the round is on
     if (amRef() && Array.isArray(d.h) && V.hp[k] > 0 && (V.ph === "live" || V.ph === "planted")) {
       const W = WEAPONS[o.w];
-      for (const [v, dmg] of d.h.slice(0, 12)) if (DF.players[v] && teamOf(v) !== teamOf(k)) hurt(v, Math.min(+dmg || 0, W.dmg * (W.pel || 1)), k, o.w);
+      const hit = new Set();                         // each victim once per message
+      for (const e of d.h.slice(0, 12)) {
+        const v = Array.isArray(e) ? e[0] : -1;
+        if (!Number.isInteger(v) || v < 0 || v >= DF.players.length || hit.has(v)) continue;
+        hit.add(v);
+        if (teamOf(v) !== teamOf(k)) hurt(v, Math.min(fin(e[1], 0, 1000, 0), W.dmg * (W.pel || 1)), k, o.w);
+      }
     }
   }
   if (amRef() && d.k === "plant" && V.bomb.s === "c" && V.bomb.c === k && V.hp[k] > 0) plant(+d.x, +d.y, siteAt(mapNow(), +d.x, +d.y));
   if (amRef() && d.k === "defuse" && V.ph === "planted" && V.hp[k] > 0 && teamOf(k) !== V.at) {
     const o = DF.others[from];
-    if (o && Math.hypot(o.x - V.bomb.x, o.y - V.bomb.y) < 20) { V.bomb.s = "f"; winRound(1 - V.at, "cut", k); }
+    if (o && Math.hypot(o.x - V.bomb.x, o.y - V.bomb.y) < 20 && ((V.dh || {})[k] || 0) >= DEFUSE - 1) { V.bomb.s = "f"; winRound(1 - V.at, "cut", k); }
   }
   if (d.k === "quit") {
     if (amRef()) { V.quit[k] = 1; hurt(k, 999, -1, -1); }
@@ -1384,6 +1424,4 @@ registerGame("defuse", {
 });
 // the home's Join buttons for open matches
 gside.addEventListener("click", ev => { const b = ev.target.closest("button[data-djoinhome]"); if (b) joinMatch(b.dataset.djoinhome); });
-window.defuseTest = { DF, ME, MAPS, flow, nextStep, clear, spawnSpot, refState, applyState, get V() { return V; }, set V(v) { V = v; },
-  openMatch, addBot, startMatch, refStep, dfStep, dfDraw, dfSide, dfMsg, shoot, WEAPONS, drawFPS, zbuf, get fpsBuf() { return fpsBuf; } };
 })();

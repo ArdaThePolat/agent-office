@@ -470,6 +470,12 @@ function playCpu() {
   for (const e of HB.w.events) onEvent(e);
   refreshSide();
 }
+/// The challenges still open: one is dropped a minute after it came.
+function pruneAsks() {
+  const now = Date.now() / 1000;
+  for (const [id, a] of Object.entries(HB.asks)) if (now - a.at >= 60) delete HB.asks[id];
+  return Object.values(HB.asks);
+}
 function ask(id) {
   const m = roomMates().find(x => x.id === id); if (!m) return;
   Object.assign(HB, { id: myId() + "-" + Date.now(), mode: "net", me: 0, phase: "wait", opp: m.id, oppName: m.name, waitAt: Date.now() / 1000 });
@@ -553,7 +559,14 @@ function unpack(d) {
         meter: clamp(num(q[5]) / 100, 0, 1), armed: T(q[6]), frozen: T(q[7]), stun: T(q[8]), giant: T(q[9]), spring: T(q[10]), shield: T(q[11]),
         ground: num(q[12]) ? 1 : 0, headR: clamp(num(q[13]) / 10, 4, 20) || HEAD_R }; }),
     pu: Array.isArray(d.u) ? { type: clamp(num(d.u[0]) | 0, 0, POWERS.length - 1), x: X(d.u[1]), y: Y(d.u[2]), life: T(d.u[3]) } : null,
-    mega: T(d.m), events: Array.isArray(d.e) ? d.e.filter(Array.isArray).map(e => e.map(num)) : [] };
+    mega: T(d.m), events: Array.isArray(d.e) ? d.e.filter(Array.isArray).map(unpackEvent) : [] };
+}
+/// An event from the host with its side 0|1 and power index in range: onEvent indexes FX and POWERS with them.
+function unpackEvent(e) {
+  const v = e.map(num);
+  if (v[1] === EV.goal || v[1] === EV.arm) v[2] = v[2] ? 1 : 0;
+  if (v[1] === EV.pop) v[3] = clamp(Math.round(num(v[3])), 0, POWERS.length - 1);
+  return v;
 }
 function takeState(d) {
   const s = unpack(d), S = HB.snaps, now = Date.now();
@@ -606,6 +619,7 @@ function hbMsg(from, name, d) {
   const now = Date.now() / 1000;
   if (d.k === "ask") {
     if (d.to !== myId()) return;
+    pruneAsks();
     HB.asks[d.id] = { id: d.id, from, name, at: now };
     if (GAME.open) toast(`⚽ ${esc(name)} challenges you to Noggin Cup · click to accept`, () => accept(d.id), 15000);
     else note(`⚽ ${name} challenges you to Noggin Cup: Games tab → Accept`);
@@ -624,7 +638,7 @@ function hbMsg(from, name, d) {
   if (d.k === "in" && HB.me === 0 && HB.phase === "play" && HB.w) takeInput(d);
   if (d.k === "st" && isGuest() && HB.phase === "play") takeState(d);
   if (d.k === "end" && isGuest() && HB.phase === "play") {
-    for (const e of Array.isArray(d.e) ? d.e : []) if (Array.isArray(e) && num(e[0]) > HB.evSeen) { HB.evSeen = num(e[0]); onEvent(e.map(num)); }
+    for (const e of Array.isArray(d.e) ? d.e : []) if (Array.isArray(e) && num(e[0]) > HB.evSeen) { HB.evSeen = num(e[0]); onEvent(unpackEvent(e)); }
     const s = Array.isArray(d.s) ? d.s.map(num) : [0, 0];
     if (HB.view) HB.view = Object.assign({}, HB.view, { s, ph: "over" });
     finish(s);
@@ -1558,7 +1572,7 @@ function drawOverlay(V, info, t) {
 
 // ---------- the side panel, the Games tab ----------
 function hbSide() {
-  const now = Date.now() / 1000, asks = Object.values(HB.asks).filter(a => now - a.at < 60), mates = inRoom() ? roomMates() : [];
+  const now = Date.now() / 1000, asks = pruneAsks(), mates = inRoom() ? roomMates() : [];
   let h = "";
   if (HB.phase === "play") {
     const V = currentView(), s = V ? V.s : [0, 0];
@@ -1590,7 +1604,7 @@ function hbSide() {
 }
 function sideKey() {
   const V = currentView();
-  return [HB.phase, HB.mode, HB.diff, V && HB.phase === "play" ? V.s.join(":") : "", Object.keys(HB.asks).join(","), inRoom() ? roomMates().map(m => m.id).join(",") : ""].join("|");
+  return [HB.phase, HB.mode, HB.diff, V && HB.phase === "play" ? V.s.join(":") : "", pruneAsks().map(a => a.id).join(","), inRoom() ? roomMates().map(m => m.id).join(",") : ""].join("|");
 }
 const refreshSide = () => { if (GAME.open && GAME.view === ID) hbSide(); };
 const refreshSideIfChanged = () => { if (GAME.open && GAME.view === ID && sideKey() !== HB.sideKey) hbSide(); };
@@ -1603,7 +1617,7 @@ function hbClick(b) {
   if (b.dataset.hbyes) accept(b.dataset.hbyes);
   if (b.dataset.hbno) decline(b.dataset.hbno);
 }
-const openAsks = () => Object.values(HB.asks).filter(a => Date.now() / 1000 - a.at < 60);
+const openAsks = pruneAsks;
 
 ACHIEVEMENTS.push(["headball-win", "⚽", "Cup winner", "win a Noggin Cup match"],
                   ["headball-hard", "🤖", "Outplayed the robot", "beat the computer at Noggin Cup on Hard"],
@@ -1635,7 +1649,7 @@ registerGame(ID, {
     if (b.dataset.hbgask) { openGames("home"); gshow(ID); ask(b.dataset.hbgask); return true; }
     return false;
   },
-  tabKey: () => Object.keys(HB.asks).join(",") + (inRoom() ? roomMates().map(m => m.id).join(",") : ""),
+  tabKey: () => pruneAsks().map(a => a.id).join(",") + (inRoom() ? roomMates().map(m => m.id).join(",") : ""),
   homeHTML: () => { const a = openAsks(); return a.length ? `<h3>NOGGIN CUP CHALLENGES</h3>` + a.map(x => `<div class="row"><span class="n">${esc(x.name)}</span><button class="go" data-hbhome="${esc(x.id)}">Accept</button></div>`).join("") : ""; },
   // the home screen's icon: a little pitch, a goal, two big heads and a ball bouncing between them
   iconCenter: [0, 0],
@@ -1654,7 +1668,4 @@ registerGame(ID, {
 // the home panel's Accept buttons
 gside.addEventListener("click", ev => { const b = ev.target.closest("button[data-hbhome]"); if (b) accept(b.dataset.hbhome); });
 // for the tests (local/tests/headball): the match without the page
-window.headballTest = { HB, FX, POWERS, DIFFS, EV, PHASES, newWorld, tick, runWorld, aiStep, kickoff, goal, packState, unpack, guestView, between,
-  footPos, headY, launchBolt, touch, stepBall, hbStep, hbDraw, hbSide, hbMsg, hbKey, playCpu, startHost, finish, sideInfo, teamColors, observe,
-  C: { TICK, GROUND, CEIL, GOAL_W, NET_X, BAR_Y, BAR_R, HEAD_R, GIANT_R, NECK, BALL_R, MEGA_R, B_TOP, BOLT_V, ZIG_V, MATCH, GOLDEN, READY_T, GOAL_T, SEND, KICK_T, LAG } };
 })();
