@@ -42,7 +42,7 @@ const MX = (AX0 + AX1) / 2, MY = (AY0 + AY1) / 2;       // its middle
 const SHIP_R = 4.5, PILOT_R = 2.5, SHOT_R = 1.5;         // radii
 const SPEED = 66, TURN = 4.4, GRIP = 5, RECOIL = 14;     // px/s; rad/s; how quickly the drift follows the nose; a shot's kick
 const GK = 1 - Math.exp(-GRIP * TICK);
-const SHOT_V = 165, SHOT_LIFE = 1.45, RICO_LIFE = 2.4, AMMO = 3, RELOAD = 0.8, COOL = 0.13, MAX_SHOTS = 34;
+const SHOT_V = 165, SHOT_LIFE = 1.45, RICO_LIFE = 2.4, AMMO = 3, RELOAD = 0.8, COOL = 0.13, MAX_SHOTS = 24;   // = SEND_SHOTS: a shot a guest never saw cannot hit them
 const P_TURN = 7.5, PUFF = 50, P_DRAG = 1.9, P_MAX = 72, PUFF_CD = 0.25;   // a pilot on foot
 const RESPAWN = 5, EJECT_INV = 0.35, SPAWN_INV = 1.2;    // on foot this long: a new rocket; moments nothing can hurt you
 const READY_T = 1.9, END_T = 3.2, SD_AT = 45, SD_LEN = 26, SLOWMO = 0.7;
@@ -53,7 +53,7 @@ const FREEZE_T = 2.4, SHIELD_T = 10, RICO_T = 9;
 const HOLE_R = 7, HOLE_PULL = 38000;                     // Gravewell's black hole: its deadly core, its pull
 const HUB_R = 9, ARM_L = 40, ARM_W = 3, ROTOR_W = 0.8;  // Rotor Station's rotor: hub, arm length and half width, rad/s
 const PIST = [60, AX0 + AX1 - 60], PIST_H = 7, PIST_A = 52, PIST_P = 5.5;   // its sliding blocks: x, half size, swing, period
-const SEND = 1 / 15, GONE = 8, LAG = 0.11, LOBBY_PING = 20, LOBBY_GONE = 60, MAX_P = 6, SEND_SHOTS = 24;
+const SEND = 1 / 15, GONE = 8, LAG = 0.11, LOBBY_PING = 20, LOBBY_GONE = 60, MAX_P = 6, SEND_SHOTS = MAX_SHOTS, STATE_MAX = 1400, JOIN_WAIT = 2;
 const WINS = [3, 5, 7];
 const PH = ["ready", "fight", "end", "over"];
 const COLORS = ["#ff5a4e", "#4d9dff", "#5fe06a", "#ffd23f", "#ff6fcf", "#3fe3e0"];
@@ -800,6 +800,11 @@ function pack(W, h) {
   return { g: ID, k: "st", id: RB.id, h: Math.round(h), r: W.round, a: W.arena, ph: PH.indexOf(W.ph), pt: i10(W.phT), rt: Math.round(W.rt * 100), sd: Math.round(W.sd * 1000),
     s: W.score.slice(), kl: W.kills.slice(), w: W.winner, cw: W.champ, p, b, u, m, l, o, bk, e };
 }
+/// The relay drops a message over its cap without a word: shed the oldest shots until the state fits.
+function fitState(m) {
+  while (m.b.length >= 4 && JSON.stringify(m).length > STATE_MAX) m.b.splice(0, 4);
+  return m;
+}
 /// A state message back into a picture of the match (anything odd in it is clamped).
 function unpack(d) {
   const A = v => Array.isArray(v) ? v.map(num) : [], p = A(d.p), n = Math.min(MAX_P, Math.floor(p.length / 10));
@@ -849,7 +854,7 @@ function ahead(s, dt) {
 // every message, and gives its colour); b: a bot (run by the opener); c: a couch seat at the opener's keyboard.
 const RB = { phase: "pick", id: "", owner: "", ownerName: "", players: [], set: loadSet(), mset: null, lobbies: {}, w: null, demo: null, view: null,
   snaps: [], off: null, evSeen: 0, heard: 0, sent: 0, pinged: 0, dirty: 0, lobbySent: 0, held: new Set(), cnt: { f: 0, t: 0, td: -1 }, seen: {}, from: {},
-  t0: 0, result: "", sideKey: "", escAt: 0, ended: false, doneAt: 0 };
+  forfeit: false, joinedAt: 0, listed: false, t0: 0, result: "", sideKey: "", escAt: 0, ended: false, doneAt: 0 };
 function loadSet() {
   const s = store("rocketbrawlSet", {}) || {};
   return { ar: clamp(num(s.ar) | 0, -1, ARENAS.length - 1), df: clamp(s.df === undefined ? 1 : num(s.df) | 0, 0, 2), wn: WINS.includes(+s.wn) ? +s.wn : 5, tn: +s.tn === 2 ? 2 : 1 };
@@ -882,6 +887,7 @@ function joinMatch(id) {
   leaveCurrent();
   if (!GAME.open) openGames("home");
   Object.assign(RB, { phase: "lobby", id: l.id, owner: l.owner, ownerName: l.ownerName, players: l.players.slice(), set: Object.assign({}, l.set) });
+  RB.joinedAt = Date.now() / 1000; RB.listed = false;
   gsend({ g: ID, k: "join", id });
   gshow(ID);
 }
@@ -898,9 +904,8 @@ function addCouch() {
 }
 function removeCouch() { const i = RB.players.map(p => !!p.c).lastIndexOf(true); if (i >= 0) RB.players.splice(i, 1); }
 function leaveMatch() {
-  if (!RB.id) return;
-  if (RB.phase === "lobby") gsend({ g: ID, k: amHost() ? "close" : "leave", id: RB.id });
-  if (RB.phase === "match") gsend({ g: ID, k: "quit", id: RB.id });
+  if (RB.id && RB.phase === "lobby") gsend({ g: ID, k: amHost() ? "close" : "leave", id: RB.id });
+  if (RB.id && RB.phase === "match") gsend({ g: ID, k: "quit", id: RB.id });
   Object.assign(RB, { phase: "pick", id: "", owner: "", w: null, view: null, snaps: [], set: loadSet() });
   resetFX();
 }
@@ -912,7 +917,7 @@ function startMatch() {
 }
 function beginMatch(seed) {
   const S = RB.set, now = Date.now() / 1000;
-  Object.assign(RB, { phase: "match", mset: Object.assign({}, S), snaps: [], off: null, evSeen: 0, heard: now, sent: 0, ended: false, result: "", t0: Date.now(),
+  Object.assign(RB, { phase: "match", mset: Object.assign({}, S), snaps: [], off: null, evSeen: 0, heard: now, sent: 0, ended: false, forfeit: false, result: "", t0: Date.now(),
     seen: {}, from: {}, view: null, cnt: { f: 0, t: 0, td: -1 }, roundKills: 0 });
   resetFX();
   if (amHost()) {
@@ -937,12 +942,13 @@ function finish(why) {
   RB.phase = "done"; RB.doneAt = Date.now() / 1000;
   const V = RB.view, me = myIdx(), champ = V ? V.champ : -1;
   const won = !why && champ === me && me >= 0;
+  const earned = won && !RB.forfeit;      // everyone else quitting ends the match but earns no trophy
   RB.result = why || (won ? "You won the match!" : champ >= 0 && RB.players[champ] ? `${RB.players[champ].name} won the match` : "Match over");
   const rec = record();
   rec.played++; if (won) rec.won++;
   if (V && me >= 0) rec.kills += V.kills[me] || 0;
   keep("rocketbrawl", rec);
-  if (won) {
+  if (earned) {
     achieve("rocketbrawl-win");
     const bots = RB.players.filter(p => p.b);
     if (bots.length >= 3 && RB.mset && RB.mset.df === 2) achieve("rocketbrawl-hard");
@@ -967,6 +973,7 @@ function rbStep(dt) {
     RB.view = viewOf(RB.demo);
     if (RB.phase === "lobby") {
       if (amHost() && inRoom() && (RB.dirty && now - RB.lobbySent > 0.25 || now - RB.pinged > LOBBY_PING)) sendLobby();
+      if (!amHost() && !(RB.lobbies[RB.id] && now - RB.lobbies[RB.id].at <= LOBBY_GONE)) { RB.phase = "pick"; RB.id = ""; RB.set = loadSet(); toast("🚀 The match was closed", null, 3000); side(); return; }
       ginfo.textContent = `${RB.players.length} in the lobby · ${RB.set.ar < 0 ? "all three arenas" : ARENAS[RB.set.ar].name} · first to ${RB.set.wn}`;
     } else ginfo.textContent = "2 to 6 rockets · open a match or play bots (on the right)";
   } else if (RB.phase === "match") {
@@ -975,7 +982,7 @@ function rbStep(dt) {
       hostKeys(W);
       runWorld(W, dt);
       RB.players.forEach((p, i) => { if (!p.b && !p.c && p.id !== myId() && !W.q[i] && now - (RB.from[p.id] || RB.heard) > GONE) dropPlayer(i, "went quiet"); });
-      if (inRoom() && remotes() && now - RB.sent >= SEND) { RB.sent = now; gsend(pack(W, Date.now() - RB.t0)); }
+      if (inRoom() && remotes() && now - RB.sent >= SEND) { RB.sent = now; gsend(fitState(pack(W, Date.now() - RB.t0))); }
       RB.view = viewOf(W);
       if (W.ph === "over" && !RB.ended && W.phT > 0.2) {
         RB.ended = true;
@@ -1073,7 +1080,10 @@ function rbMsg(from, name, d) {
     RB.lobbies[d.id] = { id: d.id, owner: from, ownerName: name, players, set, at: now };
     if (RB.id === d.id && RB.phase === "lobby") {
       RB.players = players; RB.set = set;
-      if (!players.some(p => p.id === myId())) { RB.phase = "pick"; RB.id = ""; toast("🚀 That match is full", null, 3000); }
+      // a lobby sent just before the opener took our join does not list us yet: wait a moment before calling it full
+      const listed = players.some(p => p.id === myId());
+      if (listed) RB.listed = true;
+      if (!amHost() && !listed && (RB.listed || now - RB.joinedAt > JOIN_WAIT)) { RB.phase = "pick"; RB.id = ""; toast("🚀 That match is full", null, 3000); }
       side();
     } else if (fresh && d.k === "open") {
       if (GAME.open) toast(`🚀 ${esc(name)} opened a Rocket Rumpus match · click to join`, () => joinMatch(d.id), 10000);
@@ -1673,6 +1683,7 @@ function onEvent(e) {
       feedLine(b, a, "hole");
       break;
     case EV.pick:
+      if (!Number.isInteger(b) || !POWERS[b]) break;
       ring(x, y, 3, 60, 0.4, POWERS[b].c, 1); burst(x, y, 14, [POWERS[b].c, "#ffffff"], 50, 0.45, 1, 2);
       if (!isDemo()) FX.labels.push({ text: POWERS[b].name, x, y: y - 12, t: 0, c: POWERS[b].c });
       break;
@@ -1691,7 +1702,7 @@ function onEvent(e) {
       if ((RB.roundKills || 0) >= 3) achieve("rocketbrawl-triple");
       break;
     }
-    case EV.over: if (a >= 0) confetti(col(a)); break;
+    case EV.over: RB.forfeit = b === 1; if (a >= 0) confetti(col(a)); break;
     case EV.gone: burst(x, y, 12, ["#8a8098", "#ffffff"], 30, 0.5, 1, 2); feedLine(-1, a, "gone"); break;
   }
 }
@@ -2296,10 +2307,4 @@ registerGame(ID, {
 });
 // the home panel's Join buttons
 gside.addEventListener("click", ev => { const b = ev.target.closest("button[data-rbjoinhome]"); if (b) joinMatch(b.dataset.rbjoinhome); });
-// for headless tests: the match without the page
-window.rocketbrawlTest = { RB, FX, ARENAS, POWERS, DIFFS, EV, PH, SEATS, COLORS, newWorld, newRound, tick, runWorld, botStep, newBot, pack, unpack, between, guestView, viewOf,
-  rbStep, rbDraw, rbSide, rbMsg, rbKey, rbClick, killShip, killPilot, fire, take, hitWalls, fence, onEvent, observe, openMatch, startMatch, beginMatch, leaveMatch, finish,
-  shipPic, pilotPic, capsulePic, arenaBg, rotorPic, holePic, crystalPic, minePic, rockPic, fireballPic, iconPic, drawIcon, get buf() { return buf; },
-  C: { TICK, TS, COLS, ROWS, AX0, AY0, AX1, AY1, MX, MY, SHIP_R, PILOT_R, SHOT_R, SPEED, TURN, AMMO, RELOAD, RESPAWN, READY_T, END_T, SD_AT, SD_LEN, PU_LIFE, PU_FIRST,
-    SEND, LAG, GONE, MAX_SHOTS, SEND_SHOTS, MINE_ARM, LANCE_CHARGE, LANCE_T, FREEZE_T, SHIELD_T, RICO_T, HOLE_R, HUB_R, ARM_L, PIST, PIST_H, SHOT_V, EJECT_INV, SPAWN_INV } };
 })();
