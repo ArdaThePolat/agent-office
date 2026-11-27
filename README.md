@@ -634,7 +634,7 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 
 The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
 (or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes
-(in a Rocket Rumpus match the first Esc only asks, so one press never leaves a match).
+(in a Defuse, Noggin Cup or Rocket Rumpus match the first Esc only asks, so one press never leaves a match).
 
 - **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
   **↑/W** go, **↓/S** brake, **←→/AD** steer. Three numbered checkpoints stand across each track:
@@ -674,6 +674,29 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   formations get harder as you go, and every fifth wave a gunship comes. Shot-down planes may drop
   **P** (more guns), **S** (a shield) or **1UP**. Three lives; the best flight goes on the
   leaderboard (leaving mid-flight keeps what you scored so far).
+- **💣 Defuse:** a top-down team shooter, 1 on 1 up to 5 on 5, on two maps: **Dune**, a desert town
+  with site A in the west, B in the east and a courtyard between, and **Depot**, a small warehouse.
+  One team attacks: it carries a bomb to a site and plants it (hold **E** there for 3 s); the other
+  defends, and defuses a planted bomb (hold **E** at it for 5 s). A round ends when a side is out,
+  the bomb goes off (35 s) or is defused, or the clock runs out, which goes to the defenders. First
+  to 5 rounds; sides swap after round 4. It plays in **first person** (the default) or **from
+  above**; **V** switches, and each player picks their own. In first person **W S** go forward and
+  back, **A D** step aside and the mouse turns: the first click locks the mouse to the game, and
+  **← →** turn too. From above, **WASD** move and the mouse aims. In a match one **Esc** never
+  leaves: it frees the locked mouse (or asks), and a second Esc leaves. Either way a click shoots,
+  **Shift** walks (a steadier aim), **R** reloads, **Q** swaps to the pistol, and **1–4** at buy
+  time pick a rifle, SMG, shotgun or sniper. You see enemies only in your line of sight. In a room,
+  **Open a match to the room** makes a lobby teammates join; the opener picks the teams, adds bots
+  to fill places and starts it. Alone, it is you and bots. Whoever opened the match runs it (health, the
+  bomb, the clock, the bots): their window has to stay open, and when they leave the match ends.
+- **⚽ Noggin Cup:** side-view football, one on one, with big heads: your profile picture is your
+  head. **← →/AD** run, **↑/W** jump (jumping into the ball heads it), **Space/S** kick. Touches fill
+  a lightning bar; full, **Shift** (or **X**) arms a lightning shot that zigzags at the goal and zaps
+  whoever it hits. Now and then a power-up floats down in a bubble: a mega ball, frost for the other
+  player, a big noggin, a guard across your goal, or spring boots. A match is 90 seconds; level after
+  that, a golden goal (45 seconds more, then a draw). Against the computer (Easy, Normal or Hard) or
+  a teammate: challenge them from the Games tab or the game's panel; they **Accept**. The
+  challenger's Mac runs the match. In a match the first **Esc** asks, and a second leaves.
 - **🚀 Rocket Rumpus:** a top-down arena brawl for 2 to 6 rockets. A rocket always flies forward and
   turns one way only: **← /A** turns it and **→ /D** or **Space** fires. If whoever opens the match
   picks "both ways", **← → / A D** turn and **↑ /W** or **Space** fires. Three shots, refilled one
@@ -690,9 +713,9 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** twenty-nine of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** thirty-six of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship, a pilot run over…), kept on your Mac and listed
+  one end, a gunship, a defused bomb, a lightning-shot goal, a pilot run over…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -718,7 +741,10 @@ on your Mac).
 What crosses the network for the games: your name and medal, which race, round, pond or match you
 opened or joined, your car's position ten times a second while racing, the ball and paddles fifteen
 times a second in ping-pong, your bobber's place while fishing, which bug or fish you went for,
-finish times, catches and scores. In Rocket Rumpus, whoever opened the match sends it fifteen times
+finish times, catches and scores. In Defuse, every player's position, facing, gun, shots and hits
+ten times a second, a planted or defused bomb, and from whoever runs the match its state (health,
+kills, the score, the bomb, the clock and where the bots are). In Noggin Cup, as in ping-pong, the
+challenger's Mac sends the match fifteen times a second and the other sends its keys. In Rocket Rumpus, whoever opened the match sends it fifteen times
 a second and every other player sends their keys.
 
 ## Trying a change: the dev app
