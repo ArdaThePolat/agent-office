@@ -1,7 +1,7 @@
 // Agent Office — the lounge's mini-games: the shell they share. Loaded by office.html after its own
 // script (it uses its globals: room, bridge, esc, snap, SHIRTS, hash, roomMates, openSession,
 // peopleKey), then each game registers itself: games-race.js, games-fish.js, games-bugs.js,
-// games-pong.js, games-archery.js, games-sky.js, games-defuse.js, games-headball.js.
+// games-pong.js, games-archery.js, games-sky.js, games-defuse.js, games-headball.js, games-rocketbrawl.js.
 //
 // A game opens over the whole office. With a room, game messages go through the room's host
 // ({game: …} to the app, gameIn(…) back; Room.swift relays them as they are, {g: <game>, k: <kind>,
@@ -73,7 +73,7 @@ document.head.appendChild(gstyle);
 
 // ---------- shared ----------
 const GAME = { open: false, view: "home", keys: new Set(), last: 0, raf: 0 };
-const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave }
+const GAMES = {};                                   // id → { title, start, step, draw, side, key, mouse, cancel, click, msg, tab, tabClick, leave, escape }
 function registerGame(id, g) { GAMES[id] = g; }
 const myName = () => (snap && snap.manager && snap.manager.name) || "You";
 const inRoom = () => room.status === "joined";
@@ -265,7 +265,7 @@ window.addEventListener("keydown", ev => {
   const k = ev.key.toLowerCase();
   if (ev.key === "Escape") {
     ev.preventDefault();
-    // a game may keep the first Esc for itself (Defuse frees a locked mouse with it)
+    // a game may keep the first Esc for itself (Defuse frees a locked mouse with it, Rocket Rumpus asks before leaving a match)
     const g = GAMES[GAME.view]; if (g && g.escape && g.escape()) return;
     return GAME.view === "home" ? closeGames() : gshow("home");
   }
@@ -301,7 +301,7 @@ function homeSide() {
       <button class="go" data-play="race">🏎 Race</button><button class="go" data-play="fish">🎣 Fishing</button>
       <button class="go" data-play="bugs">🪲 Bug Whack</button><button class="go" data-play="pong">🏓 Ping-pong</button>
       <button class="go" data-play="archery">🏹 Archery</button><button class="go" data-play="sky">✈ Sky Patrol</button>
-      <button class="go" data-play="defuse">💣 Defuse</button><button class="go" data-play="headball">⚽ Noggin Cup</button></div>
+      <button class="go" data-play="defuse">💣 Defuse</button><button class="go" data-play="headball">⚽ Noggin Cup</button><button class="go" data-play="rocketbrawl">🚀 Rocket Rumpus</button></div>
     <h3>📅 TODAY'S CHALLENGE</h3><div class="hint">${esc(GAMES.race.trackName(d.track))} (best lap) and the biggest ${esc(GAMES.fish.speciesName(d.fish))}: the same for everyone today.</div>
     <div class="grid" style="margin-top:5px"><button data-play="race" data-arg="daily">Race today's track</button><button data-play="fish" data-arg="daily">Fish for today's</button></div>
     ${extra}
@@ -342,6 +342,7 @@ window.gamesTabHTML = () => {
     <div class="g"><span class="gn">✈ Sky Patrol</span><button data-gplay="sky">Play</button></div>
     <div class="g"><span class="gn">💣 Defuse · 1v1 to 5v5</span><button data-gplay="defuse">Play</button></div>
     <div class="g"><span class="gn">⚽ Noggin Cup · 1 on 1</span><button data-gplay="headball">Play</button></div>
+    <div class="g"><span class="gn">🚀 Rocket Rumpus · 2 to 6 rockets</span><button data-gplay="rocketbrawl">Play</button></div>
     <div class="empty">${inRoom() ? "Races, rounds and challenges you start are open to the room. G opens the games." : "On your own for now: join a room to play together. G opens the games."}</div></div>`;
 };
 window.scoresTabHTML = () => `<div class="list">${boardsHTML(true)}<div class="gh">ACHIEVEMENTS</div><div class="sc">${
@@ -353,7 +354,7 @@ window.gamesPanelClick = b => {
 };
 window.gamesKey = () => Object.values(GAMES).map(g => g.tabKey ? g.tabKey() : "").join("|") + JSON.stringify(boardsNow()) + Object.keys(achieved()).length;
 
-// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky, defuse or headball opens one
+// the demo (office.html opened without the app): ?game=race, fish, bugs, pong, archery, sky, defuse, headball or rocketbrawl opens one
 if (!bridge) {
   const want = new URLSearchParams(location.search).get("game") || "";
   if (want) setTimeout(() => { openGames("home"); if (GAMES[want]) GAMES[want].start("demo"); }, 300);

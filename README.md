@@ -634,7 +634,7 @@ rm -rf ~/.local/state/agent-office            # session files and the event log
 
 The lounge's right-hand panel has three tabs: **Room** (the people), **Games** and **Scores**. **G**
 (or Room → Mini-Games…) opens the games over the office; **Esc** goes back, and Esc again closes
-(in a Defuse or Noggin Cup match the first Esc only asks, so one press never leaves a match).
+(in a Defuse, Noggin Cup or Rocket Rumpus match the first Esc only asks, so one press never leaves a match).
 
 - **🏎 Race:** five top-down tracks (Oval, Hairpin, Snake, Chicane, Grand Loop), 1 to 10 laps.
   **↑/W** go, **↓/S** brake, **←→/AD** steer. Three numbered checkpoints stand across each track:
@@ -697,14 +697,25 @@ The lounge's right-hand panel has three tabs: **Room** (the people), **Games** a
   that, a golden goal (45 seconds more, then a draw). Against the computer (Easy, Normal or Hard) or
   a teammate: challenge them from the Games tab or the game's panel; they **Accept**. The
   challenger's Mac runs the match. In a match the first **Esc** asks, and a second leaves.
+- **🚀 Rocket Rumpus:** a top-down arena brawl for 2 to 6 rockets. A rocket always flies forward and
+  turns one way only: **← /A** turns it and **→ /D** or **Space** fires. If whoever opens the match
+  picks "both ways", **← → / A D** turn and **↑ /W** or **Space** fires. Three shots, refilled one
+  every 0.8 s. A hit blows the rocket up and throws its pilot out on foot (the same keys spin it and
+  puff its jetpack): a pilot who lasts 5 s gets a new rocket, one shot or run over is out of the
+  round. The last one left takes the round; first to 3, 5 or 7. After 45 s the fence closes in and
+  no new rockets come, so every round ends. Three arenas (Crystal Quarry, Gravewell with a black
+  hole, Rotor Station) and six power-ups (ion lance, spike mines, fan shot, cryo shot, bubble shield,
+  bounce rounds). Open a match to the room: teammates join from the Games tab, bots (Easy, Normal or
+  Hard) fill the places, and extra people at the opener's keyboard can play too (turn, fire: Z X,
+  V B, K L; with both ways turn, turn, fire: Z C X, V N B, J L K). Whoever opened the match runs it.
 - **📅 Daily challenge:** today's track and today's fish, picked from the UTC date, so the same for
   everyone in the room wherever they are, with their own boards (the best lap on today's track, the
   biggest of today's fish). It changes at 00:00 UTC. The host keeps the last 7 days and takes a
   daily score only for yesterday, today or tomorrow in UTC, so a Mac whose clock is a little off
   still counts.
-- **🏅 Achievements:** thirty-one of them (finish on all five tracks, a 10-lap race, win against a
+- **🏅 Achievements:** thirty-six of them (finish on all five tracks, a 10-lap race, win against a
   teammate, a golden koi, a perfect catch, 50 in a Bug Whack round, beat the computer, three 10s in
-  one end, a gunship, a defused bomb, a lightning-shot goal…), kept on your Mac and listed
+  one end, a gunship, a defused bomb, a lightning-shot goal, a pilot run over…), kept on your Mac and listed
   in the games and the Scores tab. How many you have shows next to your name in the lounge, for your
   teammates too.
 - **Leaderboard (Scores tab):** in a room it is the room's: the host keeps it in `leaderboard.json`
@@ -733,7 +744,8 @@ times a second in ping-pong, your bobber's place while fishing, which bug or fis
 finish times, catches and scores. In Defuse, every player's position, facing, gun, shots and hits
 ten times a second, a planted or defused bomb, and from whoever runs the match its state (health,
 kills, the score, the bomb, the clock and where the bots are). In Noggin Cup, as in ping-pong, the
-challenger's Mac sends the match fifteen times a second and the other sends its keys.
+challenger's Mac sends the match fifteen times a second and the other sends its keys. In Rocket Rumpus, whoever opened the match sends it fifteen times
+a second and every other player sends their keys.
 
 ## Trying a change: the dev app
 
